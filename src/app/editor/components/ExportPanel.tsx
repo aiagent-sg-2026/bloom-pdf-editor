@@ -12,7 +12,7 @@ import {
   Check,
   Loader2,
 } from 'lucide-react';
-import type { PDFDocumentData } from '@/engine';
+import type { PDFDocumentData } from '@/engine/browser-core';
 import {
   EXPORT_FORMATS,
   exportDocument,
@@ -56,7 +56,7 @@ interface ExportPanelProps {
   isOpen: boolean;
   onClose: () => void;
   doc: PDFDocumentData | null;
-  engine: typeof import('@/engine') | null;
+  engine: typeof import('@/engine/browser-core') | null;
   fileName: string;
   totalPages: number;
   currentPage: number;

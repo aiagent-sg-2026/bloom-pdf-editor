@@ -2,7 +2,7 @@
 
 import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { Image as ImageIcon, Replace, X } from 'lucide-react';
-import type { ImageItem } from '@/engine';
+import type { ImageItem } from '@/engine/browser-core';
 
 interface EmbeddedImageOverlayProps {
   item: ImageItem;

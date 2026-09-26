@@ -6,11 +6,11 @@
 import { useEffect, useRef, useState, useCallback } from 'react';
 import { useRouter } from 'next/navigation';
 import { loadPdfFromStorage } from '@/lib/pdfStorage';
-import type { PDFDocumentData, PdfPermissions } from '@/engine';
+import type { PDFDocumentData, PdfPermissions } from '@/engine/browser-core';
 
-export function usePdfDocument(onParsed?: (doc: PDFDocumentData, engine: typeof import('@/engine')) => void) {
+export function usePdfDocument(onParsed?: (doc: PDFDocumentData, engine: typeof import('@/engine/browser-core')) => void) {
   const router = useRouter();
-  const engineRef = useRef<typeof import('@/engine') | null>(null);
+  const engineRef = useRef<typeof import('@/engine/browser-core') | null>(null);
   const pendingEncryptedRef = useRef<PDFDocumentData | null>(null);
   const [doc, setDoc] = useState<PDFDocumentData | null>(null);
   const [fileName, setFileName] = useState('');
@@ -32,7 +32,7 @@ export function usePdfDocument(onParsed?: (doc: PDFDocumentData, engine: typeof 
         if (cancelled) return;
         setFileName(stored.fileName);
 
-        const engine = await import('@/engine');
+        const engine = await import('@/engine/browser-core');
         engineRef.current = engine;
 
         const pdfBytes = new Uint8Array(stored.bytes);

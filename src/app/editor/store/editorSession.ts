@@ -3,7 +3,7 @@
  */
 
 import { create } from 'zustand';
-import type { PDFDocumentData, TextLine, EditableObject, AcroFormWidget } from '@/engine';
+import type { PDFDocumentData, TextLine, EditableObject, AcroFormWidget } from '@/engine/browser-core';
 import type { EditorTool } from '../types';
 
 export type SaveModeUI = 'quick' | 'optimized';

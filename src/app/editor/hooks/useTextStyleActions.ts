@@ -3,7 +3,7 @@
  */
 
 import { useCallback } from 'react';
-import type { PDFDocumentData, TextLine, TextStylePatch } from '@/engine';
+import type { PDFDocumentData, TextLine, TextStylePatch } from '@/engine/browser-core';
 import { hexToRGB } from '../utils';
 
 export interface TextStyleUI {
@@ -18,7 +18,7 @@ export interface TextStyleUI {
 }
 
 export function useTextStyleActions(
-  engineRef: React.MutableRefObject<typeof import('@/engine') | null>,
+  engineRef: React.MutableRefObject<typeof import('@/engine/browser-core') | null>,
   doc: PDFDocumentData | null,
   currentPage: number,
   selectedLine: TextLine | null,

@@ -8,7 +8,8 @@
     "lint": "eslint",
     "test": "vitest run",
     "test:watch": "vitest",
-    "verify:browser-only": "node scripts/verify-browser-only.mjs"
+    "verify:browser-only": "node scripts/verify-browser-only.mjs",
+    "verify:browser-core": "node scripts/verify-browser-core.mjs"
   },
   "dependencies": {
     "@radix-ui/react-dialog": "^1.1.15",

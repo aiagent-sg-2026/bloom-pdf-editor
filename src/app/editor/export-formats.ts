@@ -1,6 +1,6 @@
 /** Client-side export formats for images and plain text. */
 
-import type { PDFDocumentData } from '@/engine';
+import type { PDFDocumentData } from '@/engine/browser-core';
 
 // ─── Types ─────────────────────────────────────────────────────────────────────
 
@@ -97,7 +97,7 @@ export interface SizeEstimation {
 export async function exportPageToImage(
   doc: PDFDocumentData,
   pageIndex: number,
-  engine: typeof import('@/engine'),
+  engine: typeof import('@/engine/browser-core'),
   format: 'png' | 'jpeg' = 'png',
   dpi: number = 150,
   quality: number = 0.92,
@@ -121,7 +121,7 @@ export async function exportPageToImage(
 
 export async function exportToImages(
   doc: PDFDocumentData,
-  engine: typeof import('@/engine'),
+  engine: typeof import('@/engine/browser-core'),
   options: ExportOptions,
   onProgress?: (current: number, total: number) => void,
 ): Promise<ExportResult> {
@@ -161,7 +161,7 @@ export async function exportToImages(
 export async function exportPageToSVG(
   doc: PDFDocumentData,
   pageIndex: number,
-  engine: typeof import('@/engine'),
+  engine: typeof import('@/engine/browser-core'),
 ): Promise<string> {
   const page = doc.pages[pageIndex];
   if (!page) throw new Error(`Page ${pageIndex} not found`);
@@ -185,7 +185,7 @@ export async function exportPageToSVG(
 
 export async function exportToSVG(
   doc: PDFDocumentData,
-  engine: typeof import('@/engine'),
+  engine: typeof import('@/engine/browser-core'),
   options: ExportOptions,
   onProgress?: (current: number, total: number) => void,
 ): Promise<ExportResult> {
@@ -222,7 +222,7 @@ export async function exportToSVG(
 
 export async function exportToPlainText(
   doc: PDFDocumentData,
-  engine: typeof import('@/engine'),
+  engine: typeof import('@/engine/browser-core'),
   options: ExportOptions,
   onProgress?: (current: number, total: number) => void,
 ): Promise<ExportResult> {
@@ -246,7 +246,7 @@ export async function exportToPlainText(
 
 export async function exportDocument(
   doc: PDFDocumentData,
-  engine: typeof import('@/engine'),
+  engine: typeof import('@/engine/browser-core'),
   options: ExportOptions,
   onProgress?: (current: number, total: number) => void,
 ): Promise<ExportResult> {

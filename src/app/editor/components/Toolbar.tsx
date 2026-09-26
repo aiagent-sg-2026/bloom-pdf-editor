@@ -3,7 +3,7 @@ import Image from 'next/image';
 import Link from 'next/link';
 import { ChevronLeft, ChevronRight, ZoomOut, ZoomIn, X, Undo2, Redo2, Search, FileOutput, Sun, Moon } from 'lucide-react';
 import type { DrawnPath } from '../types';
-import type { PDFDocumentData } from '@/engine';
+import type { PDFDocumentData } from '@/engine/browser-core';
 import { DownloadDropdown } from './DownloadDropdown';
 import { useTheme } from '@/app/theme/ThemeProvider';
 

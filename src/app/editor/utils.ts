@@ -1,4 +1,4 @@
-import type { TextRun, ImageItem, PathItem, FontData, TextLine } from '@/engine';
+import type { TextRun, ImageItem, PathItem, FontData, TextLine } from '@/engine/browser-core';
 import {
   hitTestTextLine,
   findNearestTextLine,
@@ -6,7 +6,7 @@ import {
   lineXFromCaretIndex,
   computeEditPreview,
   computeLineHeight,
-} from '@/engine';
+} from '@/engine/browser-core';
 
 export { hitTestTextLine, findNearestTextLine, caretIndexFromLineX, lineXFromCaretIndex, computeEditPreview, computeLineHeight };
 

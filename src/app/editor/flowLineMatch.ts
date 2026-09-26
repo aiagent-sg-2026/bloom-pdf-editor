@@ -3,7 +3,7 @@
  * Never commit using synthetic Bloom-only lines.
  */
 
-import type { TextLine } from '@/engine';
+import type { TextLine } from '@/engine/browser-core';
 
 export function findMatchingFlowLine(
   candidate: TextLine,

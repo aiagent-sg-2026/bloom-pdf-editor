@@ -2,8 +2,8 @@
  * Bridge helpers: Bloom blocks ↔ editor TextLine selection UI.
  */
 
-import type { BloomBlock, BloomPage, TextLine, TextRun } from '@/engine';
-import { blockPlainText } from '@/engine';
+import type { BloomBlock, BloomPage, TextLine, TextRun } from '@/engine/browser-core';
+import { blockPlainText } from '@/engine/browser-core';
 
 /** Build a synthetic TextLine so existing sidebars keep working. */
 export function bloomBlockToTextLine(block: BloomBlock): TextLine {

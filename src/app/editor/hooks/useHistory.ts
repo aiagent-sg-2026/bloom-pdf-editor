@@ -3,8 +3,8 @@
  */
 
 import { useCallback, useRef, useState } from 'react';
-import { TransactionStack } from '@/engine';
-import type { PDFDocumentData } from '@/engine';
+import { TransactionStack } from '@/engine/browser-core';
+import type { PDFDocumentData } from '@/engine/browser-core';
 
 export function useHistory() {
   const txStackRef = useRef(new TransactionStack());
@@ -34,7 +34,7 @@ export function useHistory() {
 
   const undo = useCallback(async (
     doc: PDFDocumentData,
-    engine: typeof import('@/engine'),
+    engine: typeof import('@/engine/browser-core'),
     onRestored: (pageIndex: number) => void,
   ) => {
     const snap = txStackRef.current.undo();
@@ -47,7 +47,7 @@ export function useHistory() {
 
   const redo = useCallback(async (
     doc: PDFDocumentData,
-    engine: typeof import('@/engine'),
+    engine: typeof import('@/engine/browser-core'),
     onRestored: (pageIndex: number) => void,
   ) => {
     const snap = txStackRef.current.redo();

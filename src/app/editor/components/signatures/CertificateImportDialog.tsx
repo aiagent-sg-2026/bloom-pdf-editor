@@ -7,7 +7,7 @@ import {
   getCertificateManager,
   formatCertificateSummary,
   type ManagedIdentity,
-} from '@/engine';
+} from '@/engine/browser-core';
 
 interface CertificateImportDialogProps {
   open: boolean;

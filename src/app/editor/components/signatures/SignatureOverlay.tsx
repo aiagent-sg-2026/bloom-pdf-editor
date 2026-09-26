@@ -2,7 +2,7 @@
 
 import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { PenLine, Lock, Trash2, RotateCw, X } from 'lucide-react';
-import type { VisualSignature } from '@/engine';
+import type { VisualSignature } from '@/engine/browser-core';
 
 export interface SignatureOverlayProps {
   signature: VisualSignature;

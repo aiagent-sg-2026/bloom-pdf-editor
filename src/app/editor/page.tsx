@@ -13,7 +13,7 @@ import { X, Loader2, ChevronLeft, Image, Type } from 'lucide-react';
 
 // We import types only — the engine modules are loaded dynamically
 // because they require browser APIs (canvas, DecompressionStream)
-import type { PDFDocumentData, RenderResult, TextRun, TextLine, ImageItem, PathItem, DisplayItem, TextWatermark, ImageWatermark, Watermark, DetectedWatermark, AcroFormWidget, BloomPage, DetectedTable, VisualSignature, SignatureLibraryEntry, SignatureField, ManagedIdentity, ValidationReport, LtvStatus, ManagedSignature, RevisionViewEntry } from '@/engine';
+import type { PDFDocumentData, RenderResult, TextRun, TextLine, ImageItem, PathItem, DisplayItem, TextWatermark, ImageWatermark, Watermark, DetectedWatermark, AcroFormWidget, BloomPage, DetectedTable, VisualSignature, SignatureLibraryEntry, SignatureField, ManagedIdentity, ValidationReport, LtvStatus, ManagedSignature, RevisionViewEntry } from '@/engine/browser-core';
 
 import type { EditorTool, ToolDef, PathType, DrawnPath, FloatingText, FloatingImage, DrawMode } from './types';
 import { TOOLS } from './types';
@@ -22,8 +22,8 @@ import {
   hitTestTextLine, findNearestTextLine, caretIndexFromLineX,
   getLineBounds, getOverlayFontFamily, getOverlayFontStyle, getDisplayFontFamily,
 } from './utils';
-import { buildDisplayListIndex, hitTestDisplayList, isSelectableDisplayItem, EditorHistory, captureHistoryEntry, restoreAnnotSnapshot, parseOverlaySnapshot, deleteObject, visualFontSize, resolveRunStyleFlags, transformObject, applyObjectTransform, distributeTextChangeToSegments, segmentAtIndex, createVisualSignature, hitTestSignature, moveSignature, resizeSignature, rotateSignature, setSignatureOpacity, setSignatureLocked, deleteSignature, updateSignature, getSignatureLibrary, DEFAULT_SIGNATURE_SIZE, detectSignatureFieldsOnPage, hitTestSignatureField, createSignatureFieldAtPoint, applySignatureFieldAppearanceAsync, getCertificateManager, signDocumentCryptographic, validateDocumentSignatures, enableLongTermValidation, getLtvStatus, listManagedSignatures, buildRevisionViewer, lockSignaturesAfterSigning, pushRecentSignatureId, orderLibraryByRecent, SIGNATURE_SHORTCUTS } from '@/engine';
-import type { QuadTree, SelectableItem, EditableObject } from '@/engine';
+import { buildDisplayListIndex, hitTestDisplayList, isSelectableDisplayItem, EditorHistory, captureHistoryEntry, restoreAnnotSnapshot, parseOverlaySnapshot, deleteObject, visualFontSize, resolveRunStyleFlags, transformObject, applyObjectTransform, distributeTextChangeToSegments, segmentAtIndex, createVisualSignature, hitTestSignature, moveSignature, resizeSignature, rotateSignature, setSignatureOpacity, setSignatureLocked, deleteSignature, updateSignature, getSignatureLibrary, DEFAULT_SIGNATURE_SIZE, detectSignatureFieldsOnPage, hitTestSignatureField, createSignatureFieldAtPoint, applySignatureFieldAppearanceAsync, getCertificateManager, signDocumentCryptographic, validateDocumentSignatures, enableLongTermValidation, getLtvStatus, listManagedSignatures, buildRevisionViewer, lockSignaturesAfterSigning, pushRecentSignatureId, orderLibraryByRecent, SIGNATURE_SHORTCUTS } from '@/engine/browser-core';
+import type { QuadTree, SelectableItem, EditableObject } from '@/engine/browser-core';
 import { findMatchingFlowLine } from './flowLineMatch';
 
 import { Toolbar } from './components/Toolbar';
@@ -374,8 +374,8 @@ export default function EditorPage() {
   const lastErasePosRef = useRef<{ x: number; y: number } | null>(null);
   /** True if the current erase gesture removed anything (for one undo step). */
   const eraseChangedRef = useRef(false);
-  const [pageLinks, setPageLinks] = useState<import('@/engine').PageLinkInfo[]>([]);
-  const [selectedLink, setSelectedLink] = useState<import('@/engine').PageLinkInfo | null>(null);
+  const [pageLinks, setPageLinks] = useState<import('@/engine/browser-core').PageLinkInfo[]>([]);
+  const [selectedLink, setSelectedLink] = useState<import('@/engine/browser-core').PageLinkInfo | null>(null);
   const [linkDraftUrl, setLinkDraftUrl] = useState('');
   const [linkDisplayDraft, setLinkDisplayDraft] = useState('');
   /** Only after "Scan for links" — highlights + hover popovers on the PDF. */
@@ -533,8 +533,8 @@ export default function EditorPage() {
   const overlayRef = useRef<HTMLCanvasElement>(null);
   const hiddenInputRef = useRef<HTMLTextAreaElement>(null);
   const blurTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const engineRef = useRef<typeof import('@/engine') | null>(null);
-  const [engineModule, setEngineModule] = useState<typeof import('@/engine') | null>(null);
+  const engineRef = useRef<typeof import('@/engine/browser-core') | null>(null);
+  const [engineModule, setEngineModule] = useState<typeof import('@/engine/browser-core') | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const pdfCanvasRef = useRef<HTMLCanvasElement | null>(null);
 
@@ -576,7 +576,7 @@ export default function EditorPage() {
     setIsDirty(true);
   }, [pushEditorHistory]);
 
-  const applyHistoryEntry = useCallback(async (entry: import('@/engine').EditorHistoryEntry) => {
+  const applyHistoryEntry = useCallback(async (entry: import('@/engine/browser-core').EditorHistoryEntry) => {
     if (!doc || !engineRef.current) return;
     const engine = engineRef.current;
     const page = doc.pages[entry.pageIndex];
@@ -884,7 +884,7 @@ export default function EditorPage() {
         if (!stored) { router.push('/'); return; }
         if (cancelled) return;
 
-        const engine = await import('@/engine');
+        const engine = await import('@/engine/browser-core');
         engineRef.current = engine;
         setEngineModule(engine);
 
@@ -2484,7 +2484,7 @@ export default function EditorPage() {
     return () => document.removeEventListener('keydown', handler);
   }, [handleUndo, handleRedo]);
 
-  const resolveLinkDisplay = useCallback((link: import('@/engine').PageLinkInfo) => {
+  const resolveLinkDisplay = useCallback((link: import('@/engine/browser-core').PageLinkInfo) => {
     const lines = renderResult?.textLines ?? [];
     if (!lines.length) return { text: '', line: null as TextLine | null, start: 0, end: 0 };
     const cx = link.rect.x + link.rect.width / 2;
@@ -2947,7 +2947,7 @@ export default function EditorPage() {
       const lw = p.size / scale;
       const rgb = hexToRGB(p.color);
 
-      let annotation: import('@/engine').Annotation | null = null;
+      let annotation: import('@/engine/browser-core').Annotation | null = null;
 
       if (kind !== 'freehand' && p.start && p.end) {
         const a = toPdf(p.start.x, p.start.y);
@@ -3024,7 +3024,7 @@ export default function EditorPage() {
 
       const { dict, appearanceStream } = engine.createAnnotationDict(annotation, currentObjNum++);
       if (appearanceStream) {
-        doc.objects.set(`${currentObjNum}_0`, appearanceStream as import('@/engine').PDFObject);
+        doc.objects.set(`${currentObjNum}_0`, appearanceStream as import('@/engine/browser-core').PDFObject);
         currentObjNum++;
       }
 
@@ -3305,7 +3305,7 @@ export default function EditorPage() {
     drawDraggedRef.current = false;
   }, [isDrawing, activeTool, drawMode, drawColor, drawSize, highlightColor, highlightSize, pushEditorHistory]);
 
-  const openLinkHover = useCallback((link: import('@/engine').PageLinkInfo) => {
+  const openLinkHover = useCallback((link: import('@/engine/browser-core').PageLinkInfo) => {
     if (linkHoverTimerRef.current) {
       clearTimeout(linkHoverTimerRef.current);
       linkHoverTimerRef.current = null;
