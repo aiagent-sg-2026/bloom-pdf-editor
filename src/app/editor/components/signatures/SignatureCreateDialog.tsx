@@ -14,7 +14,7 @@ import {
   listAppearanceTemplates,
   type SignatureSourceKind,
   type SignatureLibraryEntry,
-} from '@/engine';
+} from '@/engine/browser-core';
 
 export interface SignatureCreateResult {
   entry: Omit<SignatureLibraryEntry, 'id' | 'createdAt' | 'updatedAt' | 'favorite'>;

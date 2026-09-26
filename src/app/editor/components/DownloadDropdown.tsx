@@ -10,7 +10,7 @@ import {
   HardDrive,
   Info,
 } from 'lucide-react';
-import type { PDFDocumentData } from '@/engine';
+import type { PDFDocumentData } from '@/engine/browser-core';
 import {
   estimateDocumentSize,
   formatFileSize,

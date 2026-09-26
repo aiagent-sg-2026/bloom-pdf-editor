@@ -6,7 +6,7 @@ import {
   ArrowRight, Square, Circle, PanelLeftClose,
 } from 'lucide-react';
 import type { DrawMode, EditorTool } from '../types';
-import type { TextRun, ImageItem, PathItem, AcroFormWidget, VisualSignature, SignatureLibraryEntry, SignatureField, ManagedIdentity, ValidationReport, LtvStatus, ManagedSignature, RevisionViewEntry } from '@/engine';
+import type { TextRun, ImageItem, PathItem, AcroFormWidget, VisualSignature, SignatureLibraryEntry, SignatureField, ManagedIdentity, ValidationReport, LtvStatus, ManagedSignature, RevisionViewEntry } from '@/engine/browser-core';
 
 interface PropertiesSidebarProps {
   onClose?: () => void;

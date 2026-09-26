@@ -1,7 +1,7 @@
 'use client';
 
 import { useState, useRef, useEffect } from 'react';
-import type * as Engine from '@/engine';
+import type * as Engine from '@/engine/browser-core';
 
 /**
  * Lightweight PDF parse debugger.
@@ -15,7 +15,7 @@ export default function DebugPage() {
   const engineRef = useRef<typeof Engine | null>(null);
 
   useEffect(() => {
-    import('@/engine').then((m) => {
+    import('@/engine/browser-core').then((m) => {
       engineRef.current = m;
     });
   }, []);

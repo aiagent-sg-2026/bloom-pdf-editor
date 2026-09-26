@@ -1,7 +1,7 @@
 'use client';
 
 import { useEffect, useState } from 'react';
-import type { PDFDocumentData } from '@/engine';
+import type { PDFDocumentData } from '@/engine/browser-core';
 
 interface WatermarkPreviewProps {
   doc: PDFDocumentData | null;

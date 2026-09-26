@@ -1,7 +1,7 @@
 import React from 'react';
 import type { EditorTool } from '../types';
 import { TOOLS } from '../types';
-import type { TextRun, RenderResult, PDFDocumentData } from '@/engine';
+import type { TextRun, RenderResult, PDFDocumentData } from '@/engine/browser-core';
 
 interface StatusBarProps {
   renderResult: RenderResult | null;

@@ -14,11 +14,11 @@ import {
   Loader2,
   PanelLeftClose,
 } from 'lucide-react';
-import type { PDFDocumentData, FullSecurityReport } from '@/engine';
+import type { PDFDocumentData, FullSecurityReport } from '@/engine/browser-core';
 
 interface SecurityPanelProps {
   doc: PDFDocumentData | null;
-  engine: typeof import('@/engine') | null;
+  engine: typeof import('@/engine/browser-core') | null;
   onDocChange: (doc: PDFDocumentData) => void;
   markDirty?: () => void;
   onClose?: () => void;
