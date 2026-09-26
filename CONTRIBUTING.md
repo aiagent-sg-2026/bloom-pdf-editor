@@ -16,10 +16,11 @@ npm run dev
 | Command | What It Does |
 |---------|-------------|
 | `npm run dev` | Start the Next.js development server |
-| `npm run build` | Build the Next.js application |
+| `npm run build` | Build the static export into `out/` |
 | `npm test` | Run client engine tests |
 | `npm run test:watch` | Run tests in watch mode |
 | `npm run lint` | Run ESLint |
+| `npm run verify:browser-only` | Check for server-runtime regressions |
 
 ## Project Structure
 
@@ -27,6 +28,8 @@ npm run dev
 - `src/app/` — Next.js application and editor UI
 - `src/lib/pdfStorage.ts` — IndexedDB document persistence
 - `docs/` — engine documentation
+
+The application runtime is browser-only. Production builds are static exports in `out/`; do not add server conversion routes or packages that require a server runtime.
 
 Keep browser behavior local and preserve the engine boundaries. Changes must not bypass native content-stream editing, annotations, forms, page operations, PDF save paths, renderer behavior, or IndexedDB storage without a focused design discussion.
 
@@ -45,6 +48,7 @@ Before opening a pull request, run:
 npm test
 npm run lint
 npm run build
+npm run verify:browser-only
 ```
 
 Document behavior changes and preserve existing attribution. Follow Conventional Commits (`feat:`, `fix:`, `docs:`, `test:`, `refactor:`, `chore:`).

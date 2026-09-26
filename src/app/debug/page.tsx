@@ -5,7 +5,7 @@ import type * as Engine from '@/engine';
 
 /**
  * Lightweight PDF parse debugger.
- * Document conversion debugging moves to the Bloom server engine.
+ * PDF parsing debugging stays in the browser engine.
  */
 export default function DebugPage() {
   const [loading, setLoading] = useState(false);
@@ -34,7 +34,7 @@ export default function DebugPage() {
       const parsed = await engineRef.current.parsePDF(pdfBytes);
       setSummary(
         `Parsed ${file.name}: ${parsed.pages.length} page(s), PDF ${parsed.version}. ` +
-          `Document conversion is handled by the Bloom server engine.`,
+          `Parsing and conversion-related PDF work runs in the browser engine.`,
       );
     } catch (err: unknown) {
       setError(err instanceof Error ? err.message : String(err));
@@ -47,7 +47,7 @@ export default function DebugPage() {
     <div className="p-8 max-w-5xl mx-auto font-sans">
       <h1 className="text-3xl font-bold mb-4">PDF Parse Debugger</h1>
       <p className="mb-6 text-gray-600">
-        Upload a PDF to verify the in-browser parser. Word/Markdown conversion runs on the Bloom server.
+        Upload a PDF to verify the in-browser parser. PDF processing stays local to this browser.
       </p>
 
       <input

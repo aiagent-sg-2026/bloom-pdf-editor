@@ -4,12 +4,11 @@
   "private": true,
   "scripts": {
     "dev": "next dev --webpack",
-    "build:next": "next build",
-    "build": "npm run build:next",
-    "start": "next start",
+    "build": "next build",
     "lint": "eslint",
     "test": "vitest run",
-    "test:watch": "vitest"
+    "test:watch": "vitest",
+    "verify:browser-only": "node scripts/verify-browser-only.mjs"
   },
   "dependencies": {
     "@radix-ui/react-dialog": "^1.1.15",

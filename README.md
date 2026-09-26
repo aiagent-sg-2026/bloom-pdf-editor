@@ -16,7 +16,7 @@
 
 ## ✨ What is Bloom?
 
-Bloom is a full-featured PDF editor built with Next.js and React. Its custom TypeScript engine parses, renders, edits, and serializes PDFs in the browser without a server conversion service.
+Bloom is a full-featured PDF editor built with Next.js and React. Its custom TypeScript engine parses, renders, edits, and serializes PDFs in the browser. The application is a browser-only client and exports as static files to `out/`; it has no server conversion runtime.
 
 The editor supports native PDF content-stream editing, annotations, forms, page operations, signatures, browser-side PNG/JPEG/SVG/TXT export, and PDF save/optimization.
 
@@ -58,10 +58,12 @@ Open [http://localhost:3000](http://localhost:3000).
 ```bash
 npm run dev       # Next.js development server
 npm run build     # Next.js production build
-npm run start     # Start the production server
 npm run lint      # ESLint
 npm test          # Vitest
+npm run verify:browser-only # Check for server-runtime regressions
 ```
+
+`npm run build` produces the static export in `out/`, which can be hosted by any static web server or CDN.
 
 ## 📁 Project Structure
 
