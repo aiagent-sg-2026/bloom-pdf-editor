@@ -1,12 +1,6 @@
-/**
- * Client-side export for editor-only formats (images + plain text).
- *
- * Document conversion (DOCX / Markdown / XLSX / …) lives in the Bloom
- * server engine (`server/`) via the Intermediate Document Model.
- */
+/** Client-side export formats for images and plain text. */
 
 import type { PDFDocumentData } from '@/engine';
-import type { ConvertTarget } from '@/lib/bloom-api';
 
 // ─── Types ─────────────────────────────────────────────────────────────────────
 
@@ -70,109 +64,6 @@ export const EXPORT_FORMATS: ExportFormatInfo[] = [
     supportsPageRange: true,
   },
 ];
-
-export type ConvertFormatGroup = 'office' | 'web' | 'data';
-
-export interface ConvertFormatInfo {
-  id: ConvertTarget;
-  label: string;
-  description: string;
-  extension: string;
-  group: ConvertFormatGroup;
-}
-
-export const CONVERT_FORMATS: ConvertFormatInfo[] = [
-  {
-    id: 'docx',
-    label: 'Word (DOCX)',
-    description: 'Editable Word document from document structure',
-    extension: '.docx',
-    group: 'office',
-  },
-  {
-    id: 'xlsx',
-    label: 'Excel (XLSX)',
-    description: 'Worksheets from detected tables',
-    extension: '.xlsx',
-    group: 'office',
-  },
-  {
-    id: 'pptx',
-    label: 'PowerPoint (PPTX)',
-    description: 'Editable slides from pages',
-    extension: '.pptx',
-    group: 'office',
-  },
-  {
-    id: 'odt',
-    label: 'OpenDocument',
-    description: 'ODT text package',
-    extension: '.odt',
-    group: 'office',
-  },
-  {
-    id: 'rtf',
-    label: 'Rich Text',
-    description: 'RTF with basic formatting',
-    extension: '.rtf',
-    group: 'office',
-  },
-  {
-    id: 'html',
-    label: 'HTML',
-    description: 'Semantic HTML5 from reading order',
-    extension: '.html',
-    group: 'web',
-  },
-  {
-    id: 'markdown',
-    label: 'Markdown',
-    description: 'ATX headings, lists, GFM tables',
-    extension: '.md',
-    group: 'web',
-  },
-  {
-    id: 'epub',
-    label: 'EPUB',
-    description: 'Ebook package from sections',
-    extension: '.epub',
-    group: 'web',
-  },
-  {
-    id: 'txt',
-    label: 'Plain text',
-    description: 'Reading-order text (structure convert)',
-    extension: '.txt',
-    group: 'web',
-  },
-  {
-    id: 'json',
-    label: 'JSON',
-    description: 'UDM summary tree (no heavy character arrays)',
-    extension: '.json',
-    group: 'data',
-  },
-  {
-    id: 'xml',
-    label: 'XML',
-    description: 'Well-formed document model',
-    extension: '.xml',
-    group: 'data',
-  },
-  {
-    id: 'svg',
-    label: 'SVG (structure)',
-    description: 'Editable text + vectors from UDM',
-    extension: '.svg',
-    group: 'data',
-  },
-];
-
-export const CONVERT_GROUP_LABELS: Record<ConvertFormatGroup, string> = {
-  office: 'Office',
-  web: 'Web & ebook',
-  data: 'Data',
-};
 
 export interface ExportOptions {
   format: ExportFormat;
