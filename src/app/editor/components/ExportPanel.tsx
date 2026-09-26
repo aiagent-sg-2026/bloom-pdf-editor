@@ -11,26 +11,13 @@ import {
   ChevronRight,
   Check,
   Loader2,
-  FileText,
-  AlertCircle,
 } from 'lucide-react';
 import type { PDFDocumentData } from '@/engine';
 import {
-  checkBloomHealth,
-  convertAndDownload,
-  BLOOM_JOB_STATE_LABELS,
-  type BloomJob,
-  type ConvertTarget,
-} from '@/lib/bloom-api';
-import {
   EXPORT_FORMATS,
-  CONVERT_FORMATS,
-  CONVERT_GROUP_LABELS,
   exportDocument,
   type ExportFormat,
   type ExportOptions,
-  type ConvertFormatGroup,
-  type ConvertFormatInfo,
 } from '../export-formats';
 
 // ─── Icon mapping ───────────────────────────────────────────────────────────────
@@ -63,8 +50,6 @@ const FORMAT_RING: Record<ExportFormat, string> = {
   txt: 'ring-zinc-500/40',
 };
 
-type ExportMode = 'render' | 'convert';
-
 // ─── Props ──────────────────────────────────────────────────────────────────────
 
 interface ExportPanelProps {
@@ -75,8 +60,6 @@ interface ExportPanelProps {
   fileName: string;
   totalPages: number;
   currentPage: number;
-  /** Current edited PDF bytes (after committing drawings). */
-  getPdfBytes?: () => Promise<Uint8Array>;
 }
 
 // ─── Component ──────────────────────────────────────────────────────────────────
@@ -89,11 +72,8 @@ export function ExportPanel({
   fileName,
   totalPages,
   currentPage,
-  getPdfBytes,
 }: ExportPanelProps) {
-  const [mode, setMode] = useState<ExportMode>('render');
   const [selectedFormat, setSelectedFormat] = useState<ExportFormat>('png');
-  const [selectedConvert, setSelectedConvert] = useState<ConvertTarget>('docx');
   const [pageRange, setPageRange] = useState<'all' | 'current' | 'custom'>('all');
   const [customFrom, setCustomFrom] = useState(1);
   const [customTo, setCustomTo] = useState(totalPages);
@@ -102,39 +82,19 @@ export function ExportPanel({
   const [isExporting, setIsExporting] = useState(false);
   const [exportProgress, setExportProgress] = useState(0);
   const [exportTotal, setExportTotal] = useState(0);
-  const [jobLabel, setJobLabel] = useState<string | null>(null);
-  const [jobProgress, setJobProgress] = useState(0);
   const [exportDone, setExportDone] = useState(false);
   const [exportError, setExportError] = useState<string | null>(null);
-  const [engineOnline, setEngineOnline] = useState<boolean | null>(null);
-  const [enginePhase, setEnginePhase] = useState<string | null>(null);
   const panelRef = useRef<HTMLDivElement>(null);
-  const abortRef = useRef<AbortController | null>(null);
 
-  const convertInfo =
-    CONVERT_FORMATS.find((f) => f.id === selectedConvert) ?? CONVERT_FORMATS[0]!;
   const formatInfo = EXPORT_FORMATS.find((f) => f.id === selectedFormat)!;
 
-  // Reset + health check when panel opens
+  // Reset panel state when it opens.
   useEffect(() => {
     if (!isOpen) return;
     setExportDone(false);
     setExportError(null);
     setExportProgress(0);
-    setJobLabel(null);
-    setJobProgress(0);
     setCustomTo(totalPages);
-    setEngineOnline(null);
-    let cancelled = false;
-    void checkBloomHealth().then((h) => {
-      if (cancelled) return;
-      setEngineOnline(h.ok);
-      setEnginePhase(h.phase ?? null);
-    });
-    return () => {
-      cancelled = true;
-      abortRef.current?.abort();
-    };
   }, [isOpen, totalPages]);
 
   useEffect(() => {
@@ -172,7 +132,6 @@ export function ExportPanel({
     setExportDone(false);
     setExportError(null);
     setExportProgress(0);
-    setJobLabel(null);
 
     try {
       const title = fileName.replace(/\.pdf$/i, '') || 'export';
@@ -199,79 +158,10 @@ export function ExportPanel({
     }
   }, [doc, engine, fileName, selectedFormat, getPageIndices, dpi, jpegQuality, triggerDownload]);
 
-  const handleConvertExport = useCallback(async () => {
-    if (!getPdfBytes) {
-      setExportError('PDF bytes unavailable — reload the document and try again.');
-      return;
-    }
-    if (engineOnline === false) {
-      setExportError('Convert API unavailable — restart the Next.js app (npm run dev).');
-      return;
-    }
-
-    abortRef.current?.abort();
-    const ac = new AbortController();
-    abortRef.current = ac;
-
-    setIsExporting(true);
-    setExportDone(false);
-    setExportError(null);
-    setJobProgress(0);
-    setJobLabel('Preparing…');
-
-    try {
-      const bytes = await getPdfBytes();
-      if (bytes.byteLength < 5) {
-        throw new Error('PDF is empty or not ready');
-      }
-      const name = fileName.endsWith('.pdf') ? fileName : `${fileName || 'document'}.pdf`;
-      const onProgress = (job: BloomJob) => {
-        setJobLabel(BLOOM_JOB_STATE_LABELS[job.state] ?? job.state);
-        setJobProgress(Math.max(0, Math.min(100, job.progress ?? 0)));
-      };
-
-      const { blob, filename } = await convertAndDownload(
-        bytes,
-        name,
-        selectedConvert,
-        getPageIndices(),
-        { onProgress, signal: ac.signal },
-      );
-      triggerDownload(blob, filename);
-      setExportDone(true);
-      setJobLabel(BLOOM_JOB_STATE_LABELS.Completed);
-      setJobProgress(100);
-    } catch (err) {
-      if (err instanceof DOMException && err.name === 'AbortError') return;
-      console.error('[Convert] Failed:', err);
-      setExportError(err instanceof Error ? err.message : String(err));
-    } finally {
-      setIsExporting(false);
-    }
-  }, [
-    getPdfBytes,
-    engineOnline,
-    fileName,
-    selectedConvert,
-    getPageIndices,
-    triggerDownload,
-  ]);
-
-  const handleExport = mode === 'render' ? handleRenderExport : handleConvertExport;
-
   if (!isOpen) return null;
 
-  const progressPct =
-    mode === 'convert'
-      ? jobProgress
-      : exportTotal > 0
-        ? Math.round((exportProgress / exportTotal) * 100)
-        : 0;
-
-  const groups: ConvertFormatGroup[] = ['office', 'web', 'data'];
-  const convertDisabled = engineOnline === false || !getPdfBytes;
-  const primaryDisabled =
-    mode === 'render' ? !doc || !engine : convertDisabled || isExporting;
+  const progressPct = exportTotal > 0 ? Math.round((exportProgress / exportTotal) * 100) : 0;
+  const primaryDisabled = !doc || !engine || isExporting;
 
   return (
     <>
@@ -308,37 +198,7 @@ export function ExportPanel({
             className="flex-1 overflow-y-auto px-6 py-5 space-y-6"
             style={{ scrollbarWidth: 'thin', scrollbarColor: '#3f3f46 transparent' }}
           >
-            {/* Mode tabs */}
-            <div className="flex gap-1.5 p-1 bg-zinc-800/60 rounded-xl border border-zinc-800">
-              {(
-                [
-                  { value: 'render' as const, label: 'Images & text' },
-                  { value: 'convert' as const, label: 'Document convert' },
-                ] as const
-              ).map((opt) => (
-                <button
-                  key={opt.value}
-                  onClick={() => {
-                    setMode(opt.value);
-                    setExportDone(false);
-                    setExportError(null);
-                  }}
-                  className={`
-                    flex-1 px-3 py-2 text-xs font-medium rounded-lg transition-all duration-200
-                    ${
-                      mode === opt.value
-                        ? 'bg-zinc-700 text-white shadow-sm'
-                        : 'text-zinc-500 hover:text-zinc-300'
-                    }
-                  `}
-                >
-                  {opt.label}
-                </button>
-              ))}
-            </div>
-
-            {mode === 'render' ? (
-              <div>
+            <div>
                 <label className="text-xs font-medium text-zinc-400 uppercase tracking-widest mb-3 block">
                   Render format
                 </label>
@@ -391,56 +251,7 @@ export function ExportPanel({
                   ))}
                 </div>
                 <p className="mt-3 text-xs text-zinc-500 leading-relaxed">{formatInfo.description}</p>
-              </div>
-            ) : (
-              <div className="space-y-4">
-                <div className="flex items-start gap-2">
-                  {engineOnline === null ? (
-                    <p className="text-xs text-zinc-500 flex items-center gap-1.5">
-                      <Loader2 size={12} className="animate-spin" />
-                      Checking Bloom engine…
-                    </p>
-                  ) : engineOnline ? (
-                    <p className="text-xs text-emerald-400/90 flex items-center gap-1.5">
-                      <Check size={12} />
-                      Convert ready
-                      {enginePhase ? ` · phases ${enginePhase}` : ''} (in Next.js)
-                    </p>
-                  ) : (
-                    <p className="text-xs text-amber-400/90 flex items-start gap-1.5">
-                      <AlertCircle size={12} className="mt-0.5 flex-shrink-0" />
-                      <span>
-                        Convert API failed to load. Restart with{' '}
-                        <code className="text-amber-300/90">npm run dev</code>.
-                      </span>
-                    </p>
-                  )}
-                </div>
-
-                {groups.map((group) => {
-                  const items = CONVERT_FORMATS.filter((f) => f.group === group);
-                  return (
-                    <div key={group}>
-                      <label className="text-xs font-medium text-zinc-400 uppercase tracking-widest mb-2 block">
-                        {CONVERT_GROUP_LABELS[group]}
-                      </label>
-                      <div className="grid grid-cols-2 gap-2">
-                        {items.map((fmt) => (
-                          <ConvertFormatButton
-                            key={fmt.id}
-                            fmt={fmt}
-                            selected={selectedConvert === fmt.id}
-                            disabled={engineOnline === false}
-                            onSelect={() => setSelectedConvert(fmt.id)}
-                          />
-                        ))}
-                      </div>
-                    </div>
-                  );
-                })}
-                <p className="text-xs text-zinc-500 leading-relaxed">{convertInfo.description}</p>
-              </div>
-            )}
+            </div>
 
             {/* Page Range */}
             <div>
@@ -503,7 +314,7 @@ export function ExportPanel({
               )}
             </div>
 
-            {mode === 'render' && (formatInfo.supportsDpi || formatInfo.supportsQuality) && (
+            {(formatInfo.supportsDpi || formatInfo.supportsQuality) && (
               <div className="space-y-4">
                 <label className="text-xs font-medium text-zinc-400 uppercase tracking-widest block">
                   Quality Settings
@@ -579,7 +390,7 @@ export function ExportPanel({
             {exportDone && (
               <div className="p-3 rounded-xl bg-emerald-500/10 border border-emerald-500/20 text-emerald-400 text-xs flex items-center gap-2">
                 <Check size={14} />
-                {mode === 'convert' ? 'Conversion complete — file downloaded!' : 'Export complete — file downloaded!'}
+                Export complete — file downloaded!
               </div>
             )}
           </div>
@@ -590,12 +401,10 @@ export function ExportPanel({
                 <div className="flex items-center justify-between text-xs">
                   <span className="text-zinc-400 flex items-center gap-1.5">
                     <Loader2 size={12} className="animate-spin" />
-                    {mode === 'convert' ? (jobLabel ?? 'Converting…') : 'Exporting…'}
+                    Exporting…
                   </span>
                   <span className="text-zinc-300 font-mono">
-                    {mode === 'convert'
-                      ? `${jobProgress}%`
-                      : `${exportProgress}/${exportTotal}`}
+                    {exportProgress}/{exportTotal}
                   </span>
                 </div>
                 <div className="h-1.5 bg-zinc-800 rounded-full overflow-hidden">
@@ -607,7 +416,7 @@ export function ExportPanel({
               </div>
             ) : (
               <button
-                onClick={() => void handleExport()}
+                onClick={() => void handleRenderExport()}
                 disabled={primaryDisabled}
                 className="
                   w-full flex items-center justify-center gap-2.5 px-4 py-3
@@ -620,10 +429,8 @@ export function ExportPanel({
                   active:scale-[0.98]
                 "
               >
-                {mode === 'convert' ? <FileText size={16} /> : <Download size={16} />}
-                {mode === 'convert'
-                  ? `Convert to ${convertInfo.label}`
-                  : `Export as ${formatInfo.label}`}
+                <Download size={16} />
+                {`Export as ${formatInfo.label}`}
                 <ChevronRight size={14} className="opacity-50" />
               </button>
             )}
@@ -642,46 +449,5 @@ export function ExportPanel({
         }
       `}</style>
     </>
-  );
-}
-
-function ConvertFormatButton({
-  fmt,
-  selected,
-  disabled,
-  onSelect,
-}: {
-  fmt: ConvertFormatInfo;
-  selected: boolean;
-  disabled: boolean;
-  onSelect: () => void;
-}) {
-  return (
-    <button
-      type="button"
-      disabled={disabled}
-      onClick={onSelect}
-      className={`
-        group relative flex items-center gap-2.5 px-3 py-3 rounded-xl border text-left
-        transition-all duration-200 ease-out disabled:opacity-40 disabled:cursor-not-allowed
-        ${
-          selected
-            ? 'bg-gradient-to-br from-[#E8607A]/15 to-[#D94D6A]/5 border-zinc-600/80 ring-2 ring-[#E8607A]/35 shadow-lg'
-            : 'bg-zinc-800/40 border-zinc-800 hover:bg-zinc-800/80 hover:border-zinc-700'
-        }
-      `}
-    >
-      <div className="min-w-0 flex-1">
-        <div className={`text-sm font-medium truncate ${selected ? 'text-white' : 'text-zinc-300'}`}>
-          {fmt.label}
-        </div>
-        <div className="text-[10px] text-zinc-500 truncate mt-0.5">{fmt.extension}</div>
-      </div>
-      {selected && (
-        <div className="flex-shrink-0 w-5 h-5 rounded-full flex items-center justify-center text-[#E8607A] bg-white/10">
-          <Check size={12} strokeWidth={3} />
-        </div>
-      )}
-    </button>
   );
 }

@@ -3,26 +3,14 @@
   "version": "0.1.0",
   "private": true,
   "scripts": {
-    "postinstall": "npm run server:install",
-    "server:install": "npm --prefix server ci --include=dev",
-    "dev": "npm run server:build && next dev --webpack",
-    "build:next": "npm run server:install && npm run server:build && next build",
-    "build:worker": "npx @opennextjs/cloudflare build --skipNextBuild",
-    "build": "npm run build:next && npm run build:worker",
-    "start": "next start",
+    "dev": "next dev --webpack",
+    "build": "next build",
     "lint": "eslint",
     "test": "vitest run",
     "test:watch": "vitest",
-    "server:dev": "npm --prefix server run dev",
-    "server:test": "npm --prefix server test",
-    "server:build": "npm --prefix server run build",
-    "dev:worker": "wrangler dev",
-    "preview": "npm run build && npx @opennextjs/cloudflare preview",
-    "deploy": "npm run build && npx @opennextjs/cloudflare deploy"
+    "verify:browser-only": "node scripts/verify-browser-only.mjs"
   },
   "dependencies": {
-    "server-only": "^0.0.1",
-    "uuid": "^11.1.0",
     "@radix-ui/react-dialog": "^1.1.15",
     "@radix-ui/react-dropdown-menu": "^2.1.16",
     "@radix-ui/react-popover": "^1.1.15",
@@ -53,9 +41,7 @@
     "eslint-config-next": "16.2.11",
     "happy-dom": "^20.10.6",
     "tailwindcss": "^4",
-    "@opennextjs/cloudflare": "^1",
     "typescript": "^5.9.3",
-    "vitest": "^3.2.7",
-    "wrangler": "^4"
+    "vitest": "^3.2.7"
   }
 }
