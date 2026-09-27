@@ -9,7 +9,8 @@
 export { PDFName, PDFRef } from './types';
 export type { PDFObject, PDFDocumentData } from './types';
 
-export { parsePDF, getPageContentBytes } from './parser/parser';
+export { parsePDF } from './worker/client';
+export { getPageContentBytes } from './parser/parser';
 export { interpretPage } from './content/interpreter';
 export type { TextRun, PathItem, ImageItem, DisplayItem } from './content/interpreter';
 
@@ -70,7 +71,7 @@ export {
 } from './editor/link';
 
 export { getNextObjNum } from './writer/serializer';
-export { saveQuick, saveOptimized, saveDocument } from './writer/save-pipeline';
+export { saveQuick, saveOptimized, saveDocument } from './worker/client';
 export {
   deletePage,
   rotatePageBy,
