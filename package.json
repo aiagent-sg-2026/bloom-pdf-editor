@@ -4,7 +4,8 @@
   "private": true,
   "scripts": {
     "dev": "next dev --webpack",
-    "build": "next build",
+    "build": "next build --webpack",
+    "verify:pdf-worker": "node scripts/verify-pdf-worker.mjs",
     "lint": "eslint",
     "test": "vitest run",
     "test:watch": "vitest",
