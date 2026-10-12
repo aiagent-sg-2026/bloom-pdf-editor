@@ -345,6 +345,8 @@ export default function EditorPage() {
   const [editStyleOverrides, setEditStyleOverrides] = useState<EditStyleOverride[]>([]);
   /** CSS-pixel offset of the edit box from its natural position. */
   const [editOffsetCss, setEditOffsetCss] = useState({ x: 0, y: 0 });
+  /** Snap guide positions (CSS px in page overlay space) shown while dragging a text box. */
+  const [snapGuides, setSnapGuides] = useState<{ x: number | null; y: number | null }>({ x: null, y: null });
   /** Manual size override in CSS px (null = auto-grow from content). */
   const [editManualSize, setEditManualSize] = useState<{ w: number | null; h: number | null }>({ w: null, h: null });
   const [isSaving, setIsSaving] = useState(false);
@@ -3864,6 +3866,15 @@ export default function EditorPage() {
       return;
     }
     if (!editingLine) return;
+    if (e.altKey && ['ArrowLeft', 'ArrowRight', 'ArrowUp', 'ArrowDown'].includes(e.key)) {
+      // Alt+Arrow nudges the whole text box (1pt, +Shift = 10pt); plain arrows move the caret.
+      e.preventDefault();
+      const step = (e.shiftKey ? 10 : 1) * scale;
+      const dx = e.key === 'ArrowLeft' ? -step : e.key === 'ArrowRight' ? step : 0;
+      const dy = e.key === 'ArrowUp' ? -step : e.key === 'ArrowDown' ? step : 0;
+      setEditOffsetCss(o => ({ x: o.x + dx, y: o.y + dy }));
+      return;
+    }
     if (e.key === 'Enter' && !e.shiftKey) {
       e.preventDefault();
       handleEditSubmit();
@@ -5715,11 +5726,56 @@ export default function EditorPage() {
                   offsetCssY={editOffsetCss.y}
                   manualWidth={editManualSize.w}
                   manualHeight={editManualSize.h}
-                  onOffsetChange={(x, y) => setEditOffsetCss({ x, y })}
+                  onOffsetChange={(x, y, noSnap) => {
+                    if (noSnap) {
+                      setSnapGuides({ x: null, y: null });
+                      setEditOffsetCss({ x, y });
+                      return;
+                    }
+                    // Snap the box's left/center/right and baseline to other lines on the page.
+                    const TH = 6;
+                    const lines = renderResult.documentFlow?.lines ?? [];
+                    const boxL = left + x;
+                    const boxXs = [boxL, boxL + naturalWidth / 2, boxL + naturalWidth];
+                    const baseCss = origin.cssY + y;
+                    let bestX: { d: number; at: number } | null = null;
+                    let bestY: { d: number; at: number } | null = null;
+                    for (const ln of lines) {
+                      if (ln.id === anchor.id) continue;
+                      const b = getLineBounds(ln);
+                      const l = pdfToCanvas(b.x, ln.baseline, scale, renderResult.pageHeight, mediaBox.x, mediaBox.y);
+                      const w = b.width * scale;
+                      for (const tx of [l.cssX, l.cssX + w / 2, l.cssX + w]) {
+                        for (const bx of boxXs) {
+                          const d = tx - bx;
+                          if (Math.abs(d) <= TH && (!bestX || Math.abs(d) < Math.abs(bestX.d))) bestX = { d, at: tx };
+                        }
+                      }
+                      const dy = l.cssY - baseCss;
+                      if (Math.abs(dy) <= TH && (!bestY || Math.abs(dy) < Math.abs(bestY.d))) bestY = { d: dy, at: l.cssY };
+                    }
+                    setSnapGuides({ x: bestX ? bestX.at : null, y: bestY ? bestY.at : null });
+                    setEditOffsetCss({ x: x + (bestX ? bestX.d : 0), y: y + (bestY ? bestY.d : 0) });
+                  }}
+                  onDragEnd={() => setSnapGuides({ x: null, y: null })}
                   onSizeChange={(w, h) => setEditManualSize({ w, h })}
                 />
               );
             })()}
+
+            {/* Snap guides while dragging a text box */}
+            {editingLine && snapGuides.x !== null && (
+              <div
+                className="absolute top-0 bottom-0 w-px bg-[#E8607A] pointer-events-none z-[45]"
+                style={{ left: snapGuides.x }}
+              />
+            )}
+            {editingLine && snapGuides.y !== null && (
+              <div
+                className="absolute left-0 right-0 h-px bg-[#E8607A] pointer-events-none z-[45]"
+                style={{ top: snapGuides.y }}
+              />
+            )}
 
             {/* Link hover / edit popovers on the PDF (after Scan for links) */}
             {linksHighlighted && selectedLink && linkPopoverMode && renderResult && doc && (() => {

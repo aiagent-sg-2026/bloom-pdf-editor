@@ -41,7 +41,9 @@ export interface EditableLineBoxProps {
   onSelect?: (start: number, end: number) => void;
   onBlur: () => void;
   /** Called when the box is moved (delta in CSS pixels from session start). */
-  onOffsetChange: (cssDx: number, cssDy: number) => void;
+  onOffsetChange: (cssDx: number, cssDy: number, noSnap?: boolean) => void;
+  /** Called when a drag gesture ends (used to hide snap guides). */
+  onDragEnd?: () => void;
   /** Called when the user manually resizes (CSS px). */
   onSizeChange: (width: number, height: number) => void;
   /** Current drag offset from original position (CSS px). */
@@ -66,7 +68,7 @@ export function EditableLineBox(props: EditableLineBoxProps) {
     left, top, naturalWidth, naturalHeight,
     fontSizeCss, fontFamily, fontWeight, fontStyle, underline, color,
     segments, text, caretStart, caretEnd,
-    textRef, onTextInput, onKeyDown, onSelect, onBlur,
+    textRef, onTextInput, onKeyDown, onSelect, onBlur, onDragEnd,
     onOffsetChange, onSizeChange,
     offsetCssX, offsetCssY, manualWidth, manualHeight,
   } = props;
@@ -268,7 +270,7 @@ export function EditableLineBox(props: EditableLineBoxProps) {
     const dy = e.clientY - dragStart.current.y;
 
     if (mode === 'move') {
-      onOffsetChange(dragStart.current.ox + dx, dragStart.current.oy + dy);
+      onOffsetChange(dragStart.current.ox + dx, dragStart.current.oy + dy, e.altKey);
     } else if (mode === 'resize-e') {
       onSizeChange(Math.max(40, dragStart.current.w + dx), height);
     } else if (mode === 'resize-s') {
@@ -283,9 +285,10 @@ export function EditableLineBox(props: EditableLineBoxProps) {
 
   const endDrag = useCallback(() => {
     dragMode.current = null;
+    onDragEnd?.();
     window.removeEventListener('pointermove', onPointerMove);
     window.removeEventListener('pointerup', endDrag);
-  }, [onPointerMove]);
+  }, [onPointerMove, onDragEnd]);
 
   const startDrag = useCallback((mode: DragMode, e: React.PointerEvent) => {
     e.preventDefault();
