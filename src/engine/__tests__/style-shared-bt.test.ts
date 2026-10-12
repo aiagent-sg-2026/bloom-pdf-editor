@@ -72,3 +72,20 @@ describe('style on one line of a shared BT', () => {
     expect(text).toMatch(/Bold/);
   });
 });
+
+describe('underline on a flipped-CTM page', () => {
+  it('draws the stroke just below the text, not mirrored', () => {
+    const content = '1 0 0 -1 0 792 cm\nBT\n10 0 0 -10 50 100 Tm\n/F1 1 Tf\n[(AAAA)] TJ\nET\n';
+    const { bytes, page, objects } = makePage(content);
+    const flow = buildDocumentFlow(interpretPage(bytes, page, objects).textRuns);
+    const line = flow.lines[0];
+    const res = applyStyleToSelection(bytes, page, objects, line, 0, 4, { underline: true });
+    const text = new TextDecoder().decode(res.newContentBytes);
+    const m = text.match(/([\d.]+) ([\d.]+) m\n([\d.]+) ([\d.]+) l/);
+    expect(m).toBeTruthy();
+    const uy = Number(m![2]);
+    expect(uy).toBeGreaterThan(100);
+    expect(uy).toBeLessThan(103);
+    expect(Math.abs(Number(m![1]) - 50)).toBeLessThan(1);
+  });
+});
