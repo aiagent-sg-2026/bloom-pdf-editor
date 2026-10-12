@@ -485,6 +485,57 @@ describe('object-editor: resize image', () => {
     expect(img.clipPaths.length).toBe(0);
   });
 
+  it('moves an image on a page whose content opens with a flip cm (cairo/Firefox style)', async () => {
+    // Synthetic page: `1 0 0 -1 0 842 cm` stays live to the end of the stream,
+    // so the appended placement must be expressed relative to it. Regression:
+    // the image used to jump to the page bottom and render mirrored.
+    const { doc, page } = buildTestDoc(
+      '1 0 0 -1 0 842 cm\n' +
+      'q\n50 0 0 -50 100 300 cm\n/Im1 Do\nQ\n' +
+      'BT\n/F1 12 Tf\n1 0 0 -1 72 100 Tm\n(Keep me) Tj\nET\n',
+    );
+    const before = interpretDoc(doc, page);
+    const imgBefore = before.find((d): d is ImageItem => d.type === 'image')!;
+    const scene = buildSceneGraph(before);
+    const imageObj = scene.find((o) => o.kind === 'image')!;
+
+    const moved = transformObject(imageObj, { dx: 20, dy: -30 });
+    await applyObjectTransform(doc, 0, imageObj, moved.ctm);
+
+    const after = interpretDoc(doc, page);
+    const img = after.find((d): d is ImageItem => d.type === 'image')!;
+    expect(img.x).toBeCloseTo(imgBefore.x + 20, 1);
+    expect(img.y).toBeCloseTo(imgBefore.y - 30, 1);
+    expect(img.width).toBeCloseTo(imgBefore.width, 1);
+    expect(img.height).toBeCloseTo(imgBefore.height, 1);
+    // Orientation preserved (not mirrored).
+    expect(Math.sign(img.ctm.d)).toBe(Math.sign(imgBefore.ctm.d));
+    expect(Math.sign(img.ctm.a)).toBe(Math.sign(imgBefore.ctm.a));
+    // Other content untouched.
+    const text = after.find((d): d is TextRun => d.type === 'text')!;
+    expect(text.text).toContain('Keep me');
+  });
+
+  it('moves an image when a scale cm is left open at the end of the stream', async () => {
+    // Unbalanced q: the live CTM at the end of the stream is the 2x scale, so
+    // the appended placement must be divided by it.
+    const { doc, page } = buildTestDoc(
+      'q\n2 0 0 2 0 0 cm\nq\n25 0 0 25 50 100 cm\n/Im1 Do\nQ\n',
+    );
+    const before = interpretDoc(doc, page);
+    const imgBefore = before.find((d): d is ImageItem => d.type === 'image')!;
+    const imageObj = buildSceneGraph(before).find((o) => o.kind === 'image')!;
+
+    const moved = transformObject(imageObj, { dx: 40, dy: 10 });
+    await applyObjectTransform(doc, 0, imageObj, moved.ctm);
+
+    const img = interpretDoc(doc, page).find((d): d is ImageItem => d.type === 'image')!;
+    expect(img.x).toBeCloseTo(imgBefore.x + 40, 1);
+    expect(img.y).toBeCloseTo(imgBefore.y + 10, 1);
+    expect(img.width).toBeCloseTo(imgBefore.width, 1);
+    expect(img.height).toBeCloseTo(imgBefore.height, 1);
+  });
+
   it('does not disturb text when moving an image inside a shared clip', async () => {
     const { doc, page } = buildTestDoc(
       'q\n50 50 400 700 re\nW\nn\n' +

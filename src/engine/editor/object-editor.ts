@@ -13,6 +13,7 @@ import { getPageContentBytes } from '../parser/parser';
 import { parseContentStream, type CSInstruction } from '../content/operator-lexer';
 import { compileInstructions } from './text-editor';
 import { updatePageContent } from './stream-compiler';
+import { IDENTITY, mulMatrix, invertMatrix, ctmAtEnd } from './matrix';
 import type { EditableObject } from '../editing/scene-graph';
 import type { ImageItem } from '../content/interpreter';
 
@@ -162,11 +163,22 @@ async function applyImageTransform(
     }
   }
 
-  const simple =
-    Math.abs(newCtm[1]) < 0.001 && Math.abs(newCtm[2]) < 0.001;
+  // Remove old placement first, then append an unclipped placement at the
+  // end so the image paints above existing content and never mutates shared
+  // clips.
+  instructions.splice(removeStart, removeEnd - removeStart + 1);
+
+  // `newCtm` is expressed in page space. The appended `cm` is applied on top
+  // of whatever CTM is live at the end of the stream (e.g. the
+  // `1 0 0 -1 0 842 cm` flip that cairo/Firefox PDFs open with), so convert:
+  //   M × base = newCtm  →  M = newCtm × base⁻¹
+  const base = ctmAtEnd(instructions);
+  const local = mulMatrix(newCtm, invertMatrix(base) ?? IDENTITY);
+
+  const simple = Math.abs(local[1]) < 0.001 && Math.abs(local[2]) < 0.001;
   const placementCtm = simple
-    ? [newCtm[0], 0, 0, newCtm[3], newCtm[4], newCtm[5]]
-    : [...newCtm];
+    ? [local[0], 0, 0, local[3], local[4], local[5]]
+    : local;
 
   const placement: CSInstruction[] = [
     op('q'),
@@ -174,10 +186,6 @@ async function applyImageTransform(
     op('Do', [new PDFName(imgName)]),
     op('Q'),
   ];
-
-  // Remove old placement, then append unclipped placement at end so the
-  // image paints above existing content and never mutates shared clips.
-  instructions.splice(removeStart, removeEnd - removeStart + 1);
   instructions.push(...placement);
 
   const next = compileInstructions(instructions);

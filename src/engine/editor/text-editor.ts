@@ -16,6 +16,7 @@
  * recompiles the stream.
  */
 
+import { ctmBefore, deltaThroughInverse } from './matrix';
 import { parseContentStream, type CSInstruction } from '../content/operator-lexer';
 import { interpretPage, type TextRun } from '../content/interpreter';
 import {
@@ -303,6 +304,26 @@ export function applyRunPositionShifts(
     return -1;
   };
 
+
+  // Shifts arrive in page space. Convert to the space the edited operand lives
+  // in: user space (inverse of the CTM before the op) for Tm / cm, and text
+  // space (additionally the inverse of the live text matrix' linear part) for
+  // Td / TD. Identity pages are unaffected.
+  const toOperandSpace = (opIndex: number, dx: number, dy: number, text: boolean) => {
+    const user = deltaThroughInverse(ctmBefore(instructions, opIndex), dx, dy);
+    if (!text) return user;
+    let tm: number[] | null = null;
+    for (let i = opIndex - 1; i >= 0; i--) {
+      const o = instructions[i].operator;
+      if (o === 'BT') break;
+      if (o === 'Tm' && instructions[i].operands.length >= 6) {
+        tm = instructions[i].operands.slice(0, 6).map(numVal);
+        break;
+      }
+    }
+    return tm ? deltaThroughInverse(tm, user.dx, user.dy) : user;
+  };
+
   // True when mutating `posIndex` would also move a run that is not in this
   // shift batch (shared BT Tm/Td or outer cm). Resume streams often park a
   // whole line under one cm — nudging a trailer would drag earlier runs and
@@ -320,9 +341,10 @@ export function applyRunPositionShifts(
   };
 
   const injectLocalTd = (textIndex: number, dx: number, dy: number) => {
+    const d = toOperandSpace(textIndex, dx, dy, true);
     instructions.splice(textIndex, 0, {
       operator: 'Td',
-      operands: [new PDFNumber(dx), new PDFNumber(dy)],
+      operands: [new PDFNumber(d.dx), new PDFNumber(d.dy)],
       offset: 0,
     });
     bumpIndicesFrom(textIndex, 1);
@@ -330,6 +352,8 @@ export function applyRunPositionShifts(
 
   // One local Td advances the text matrix for later showing ops in the same BT.
   const localTdByBt = new Map<number, { dx: number; dy: number }>();
+  // Last shifted show-op index per BT (kept in sync with inserts below).
+  const lastShiftedShow = new Map<number, number>();
 
   for (let i = 0; i < items.length; i++) {
     const item = items[i];
@@ -396,12 +420,21 @@ export function applyRunPositionShifts(
 
     const inst = instructions[pos.index];
     if ((pos.kind === 'Tm' || pos.kind === 'cm') && inst.operands.length >= 6) {
-      inst.operands[4] = new PDFNumber(numVal(inst.operands[4]) + remainDx);
-      inst.operands[5] = new PDFNumber(numVal(inst.operands[5]) + remainDy);
+      const d = toOperandSpace(pos.index, remainDx, remainDy, false);
+      inst.operands[4] = new PDFNumber(numVal(inst.operands[4]) + d.dx);
+      inst.operands[5] = new PDFNumber(numVal(inst.operands[5]) + d.dy);
       appliedToOp.set(pos.index, {
         dx: already.dx + remainDx,
         dy: already.dy + remainDy,
       });
+      if (pos.kind === 'Tm') {
+        // An absolute Tm restarts the relative-Td chain at this shift.
+        const bt = findBtIndex(item.textIndex);
+        if (bt >= 0) {
+          localTdByBt.set(bt, { dx: item.dx, dy: item.dy });
+          lastShiftedShow.set(bt, item.textIndex);
+        }
+      }
     } else if (pos.kind === 'Td' || inst.operator === 'Td' || inst.operator === 'TD') {
       // Relative Td/TD: applying the full absolute dx to every glyph's Td
       // stacks shifts (Type3 per-letter score cards explode to the right).
@@ -414,11 +447,13 @@ export function applyRunPositionShifts(
         continue;
       }
       if (inst.operands.length >= 2) {
-        inst.operands[0] = new PDFNumber(numVal(inst.operands[0]) + needDx);
-        inst.operands[1] = new PDFNumber(numVal(inst.operands[1]) + needDy);
+        const d = toOperandSpace(pos.index, needDx, needDy, true);
+        inst.operands[0] = new PDFNumber(numVal(inst.operands[0]) + d.dx);
+        inst.operands[1] = new PDFNumber(numVal(inst.operands[1]) + d.dy);
       }
       if (bt >= 0) {
         localTdByBt.set(bt, { dx: prevLocal.dx + needDx, dy: prevLocal.dy + needDy });
+        lastShiftedShow.set(bt, item.textIndex);
       }
       appliedToOp.set(pos.index, {
         dx: already.dx + needDx,
@@ -435,6 +470,26 @@ export function applyRunPositionShifts(
       continue;
     }
   }
+
+  // Relative Td chains: the shift applied to a Td also moves every later run
+  // that is positioned relative to it. Cancel it on the first relative op after
+  // the last shifted run so the rest of the BT stays put (an absolute Tm ends
+  // the chain, nothing to cancel).
+  localTdByBt.forEach((cum, bt) => {
+    if (Math.abs(cum.dx) < 0.01 && Math.abs(cum.dy) < 0.01) return;
+    const from = lastShiftedShow.get(bt);
+    if (from === undefined) return;
+    for (let i = from + 1; i < instructions.length; i++) {
+      const o = instructions[i].operator;
+      if (o === 'ET' || o === 'Tm') break;
+      if ((o === 'Td' || o === 'TD') && instructions[i].operands.length >= 2) {
+        const d = toOperandSpace(i, -cum.dx, -cum.dy, true);
+        instructions[i].operands[0] = new PDFNumber(numVal(instructions[i].operands[0]) + d.dx);
+        instructions[i].operands[1] = new PDFNumber(numVal(instructions[i].operands[1]) + d.dy);
+        break;
+      }
+    }
+  });
 
   return compileInstructions(instructions);
 }
