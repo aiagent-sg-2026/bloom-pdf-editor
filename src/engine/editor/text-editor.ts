@@ -36,6 +36,7 @@ import { loadFont, type FontData, charCodeToUnicode } from '../fonts/font-parser
 import { ensureFallbackFont } from '../fonts/font-augmentation';
 import { resolveRunStyleFlags } from '../flow/metrics';
 import { serializeToString } from './stream-compiler';
+import { isolateBaseCtm } from './content-append';
 
 /** Visual size for Tf when switching to the Helvetica fallback. */
 function runFontSize(run: TextRun): number {
@@ -636,9 +637,10 @@ export function insertTextRun(
   const injectionBytes = enc.encode(injection);
 
   // Concat using a helper
-  const newBytes = new Uint8Array(contentBytes.length + injectionBytes.length);
-  newBytes.set(contentBytes);
-  newBytes.set(injectionBytes, contentBytes.length);
+  const base = isolateBaseCtm(contentBytes);
+  const newBytes = new Uint8Array(base.length + injectionBytes.length);
+  newBytes.set(base);
+  newBytes.set(injectionBytes, base.length);
 
   return newBytes;
 }

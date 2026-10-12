@@ -2,6 +2,7 @@ import { PDFDict, PDFName, PDFNumber, PDFStream, PDFRef } from '../types';
 import type { PDFDocumentData, PDFPageInfo, PDFObject } from '../types';
 import type { ImageItem } from '../content/interpreter';
 import { getResource } from '../parser/parser';
+import { isolateBaseCtm } from './content-append';
 
 /**
  * Inserts an image into the PDF content stream by creating an Image XObject.
@@ -86,9 +87,10 @@ export async function insertImageRun(
   const enc = new TextEncoder();
   const injectionBytes = enc.encode(injection);
 
-  const newContentBytes = new Uint8Array(contentBytes.length + injectionBytes.length);
-  newContentBytes.set(contentBytes);
-  newContentBytes.set(injectionBytes, contentBytes.length);
+  const base = isolateBaseCtm(contentBytes);
+  const newContentBytes = new Uint8Array(base.length + injectionBytes.length);
+  newContentBytes.set(base);
+  newContentBytes.set(injectionBytes, base.length);
 
   return { newContentBytes };
 }
