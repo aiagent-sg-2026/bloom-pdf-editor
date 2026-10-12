@@ -1364,7 +1364,7 @@ export function patchTJPreservingGaps(
       return null;
     }
   }
-  if (!hasBig || total !== oldText.length) return null;
+  if (total !== oldText.length) return null;
 
   const minLen = Math.min(oldText.length, newText.length);
   let p = 0;

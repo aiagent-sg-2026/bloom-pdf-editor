@@ -35,8 +35,10 @@ describe('patchTJPreservingGaps', () => {
     expect(nums).toContain(-9000);
   });
 
-  it('declines when there is no large adjustment or text does not line up', () => {
-    expect(patchTJPreservingGaps(arr('A', -80, 'B'), 'AB', 'AXB', null)).toBeNull();
+  it('keeps kerning; declines when text does not line up', () => {
+    // small kerning is preserved too (re-encoding would drop it and shift the line ~1pt)
+    const kerned = patchTJPreservingGaps(arr('AV', 74, 'ATE'), 'AVATE', 'AVATEX', null)!;
+    expect(kerned.items.some((x) => x instanceof PDFNumber && x.value === 74)).toBe(true);
     expect(patchTJPreservingGaps(old, 'something else', 'x', null)).toBeNull();
   });
 });
