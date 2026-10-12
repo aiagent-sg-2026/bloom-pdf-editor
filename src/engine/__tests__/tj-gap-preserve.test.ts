@@ -41,6 +41,20 @@ describe('patchTJPreservingGaps', () => {
   });
 });
 
+describe('label : value rows with modest gaps', () => {
+  // Real cairo row: "PAYMENT TERMS : 30 DAYS" with -703 / -555 gaps (no space glyphs).
+  const row = arr('P', 74, 'A', 74, 'YMENT TERMS', -703, ':', -555, '30 DA', 75, 'YS');
+  const rowText = 'PAYMENT TERMS:30 DAYS';
+
+  it('keeps the colon and value in place when the value is edited', () => {
+    const out = patchTJPreservingGaps(row, rowText, 'PAYMENT TERMS:30 DA888888YS', null)!;
+    expect(out).not.toBeNull();
+    const nums = out.asNumbers().filter((n) => !Number.isNaN(n));
+    expect(nums).toContain(-703);
+    expect(nums).toContain(-555);
+  });
+});
+
 describe('applyLineTextEdit on a one-TJ table row', () => {
   it('does not move the other columns when the first cell grows', () => {
     const content =

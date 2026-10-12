@@ -264,6 +264,16 @@ function collectPeerShiftsAfter(
     shifts.push({ run, dx, dy: 0 });
   }
 
+  // Only push the peers when the grown line would actually run into the nearest
+  // one. Otherwise they belong to a different block that merely shares the
+  // baseline (e.g. an address on the left and a "DATE : ..." header on the
+  // right) and must stay where they are.
+  if (shifts.length > 0) {
+    const newRight = afterX + dx;
+    const nearest = Math.min(...shifts.map(s => s.run.x));
+    if (nearest > newRight + 2) return [];
+  }
+
   return shifts;
 }
 
@@ -395,6 +405,20 @@ export function applyLineTextEdit(
   const inTable = flow
     ? findCellForLine(detectTablesOnPage(flow.lines), primaryLine.id) !== null
     : false;
+  // Trailing segments are only pushed when the grown text would run into them;
+  // otherwise they are separate columns and must stay where they are.
+  let keepColumns = false;
+  {
+    const trailing = horizShifts.filter(s => s.run.x >= peerAfterX - 1);
+    if (trailing.length > 0) {
+      const nearestX = Math.min(...trailing.map(s => s.run.x));
+      const collides = nearestX < peerAfterX + peerDx + 2;
+      if (!collides) {
+        horizShifts = horizShifts.filter(s => s.run.x < peerAfterX - 1);
+        keepColumns = true;
+      }
+    }
+  }
   const peerShifts = (inTable ? [] : collectPeerShiftsAfter(primaryLine, flow, peerAfterX, peerDx))
     .filter(s => !(s.run.sourceInstructionIndices ?? []).some(idx => shiftedOps.has(idx)));
   if (peerShifts.length > 0) {
@@ -426,6 +450,7 @@ export function applyLineTextEdit(
 
   if (
     !options?.skipResidualCorrection
+    && !keepColumns
     && !skipResidualForSpaces
     && primarySegmentEdits
     && primarySegmentEdits.length > 1

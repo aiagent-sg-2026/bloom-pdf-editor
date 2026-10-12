@@ -655,6 +655,48 @@ export interface StyleApplyOptions {
 /**
  * Apply style to a character range on a line — safe in-BT patches only.
  */
+/** x translation (operand e) of the nearest Tm at/before `idx` inside its BT block. */
+function tmXBeforeIndex(contentBytes: Uint8Array, idx: number): number | null {
+  const instructions = parseContentStream(contentBytes);
+  const range = findBtEtRange(instructions, idx);
+  if (!range) return null;
+  for (let i = idx; i >= range.bt; i--) {
+    if (instructions[i].operator === 'Tm' && instructions[i].operands.length >= 6) {
+      const n = instructions[i].operands[4];
+      return n instanceof PDFNumber ? n.value : null;
+    }
+  }
+  return null;
+}
+
+function setTmXBeforeIndex(contentBytes: Uint8Array, idx: number, x: number): Uint8Array {
+  const instructions = parseContentStream(contentBytes);
+  const range = findBtEtRange(instructions, idx);
+  if (!range) return contentBytes;
+  for (let i = idx; i >= range.bt; i--) {
+    if (instructions[i].operator === 'Tm' && instructions[i].operands.length >= 6) {
+      instructions[i].operands[4] = new PDFNumber(x);
+      return compileInstructions(instructions);
+    }
+  }
+  return contentBytes;
+}
+
+/** Group a run's source instruction indices by the BT..ET block they belong to. */
+function groupIndicesByTextBlock(contentBytes: Uint8Array, run: TextRun): number[][] {
+  const indices = run.sourceInstructionIndices ?? [];
+  if (indices.length < 2) return [];
+  const instructions = parseContentStream(contentBytes);
+  const groups = new Map<number, number[]>();
+  for (const idx of indices) {
+    const r = findBtEtRange(instructions, idx);
+    const key = r ? r.bt : -1;
+    const arr = groups.get(key);
+    if (arr) arr.push(idx); else groups.set(key, [idx]);
+  }
+  return [...groups.entries()].sort((a, b) => a[0] - b[0]).map(([, v]) => v);
+}
+
 export function applyStyleToSelection(
   contentBytes: Uint8Array,
   page: PDFPageInfo,
@@ -712,6 +754,28 @@ export function applyStyleToSelection(
   }
 
   for (const [run, range] of byRun) {
+    // A merged run can come from several BT..ET blocks (e.g. a title whose first
+    // word has a different colour). Whole-run styles must patch every block, not
+    // just the first one, so apply them group by group (last block first so the
+    // earlier instruction indices stay valid when `rg` gets inserted).
+    const whole = range.localStart <= 0 && range.localEnd >= run.text.length;
+    const groups = whole ? groupIndicesByTextBlock(bytes, run) : [];
+    if (groups.length > 1) {
+      // Original x of each block's Tm, so blocks keep their spacing when the size changes.
+      const origX = groups.map((g) => tmXBeforeIndex(bytes, g[0]));
+      const ratio = style.fontSize != null ? style.fontSize / Math.max(0.01, visualFontSize(run)) : 1;
+      for (let gi = groups.length - 1; gi >= 0; gi--) {
+        if (gi > 0 && Math.abs(ratio - 1) > 1e-6 && origX[0] != null && origX[gi] != null) {
+          bytes = setTmXBeforeIndex(bytes, groups[gi][0], origX[0]! + (origX[gi]! - origX[0]!) * ratio);
+        }
+        const sub: TextRun = { ...run, sourceInstructionIndices: groups[gi] };
+        const patched = patchRunStyle(bytes, sub, style, page, objects, 0, run.text.length);
+        bytes = patched.bytes;
+        addedUnderline = addedUnderline || patched.addedUnderline;
+        removedUnderline = removedUnderline || patched.removedUnderline;
+      }
+      continue;
+    }
     const patched = patchRunStyle(
       bytes, run, style, page, objects, range.localStart, range.localEnd,
     );
