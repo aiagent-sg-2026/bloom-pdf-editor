@@ -89,3 +89,15 @@ describe('underline on a flipped-CTM page', () => {
     expect(Math.abs(Number(m![1]) - 50)).toBeLessThan(1);
   });
 });
+
+describe('remove underline on a flipped-CTM page', () => {
+  it('removes a path underline drawn in flipped user space', () => {
+    const content =
+      '1 0 0 -1 0 792 cm\n0 0 0 RG q 1 0 0 1 0 0 cm\n50 101.2 m 90 101.2 l S Q\nBT\n10 0 0 -10 50 100 Tm\n/F1 1 Tf\n[(AAAA)] TJ\nET\n';
+    const { bytes, page, objects } = makePage(content);
+    const flow = buildDocumentFlow(interpretPage(bytes, page, objects).textRuns);
+    const res = applyStyleToSelection(bytes, page, objects, flow.lines[0], 0, 4, { underline: false });
+    const text = new TextDecoder().decode(res.newContentBytes);
+    expect(text).not.toMatch(/ l\s+S/);
+  });
+});

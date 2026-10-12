@@ -1438,12 +1438,19 @@ function removeUnderlineNearRun(instructions: CSInstruction[], run: TextRun): bo
   let removed = false;
 
   const tryRemoveSpan = (mIdx: number, lIdx: number, from: number, to: number): boolean => {
-    const mx = instructions[mIdx].operands[0];
-    const my = instructions[mIdx].operands[1];
-    const lx = instructions[lIdx].operands[0];
-    const ly = instructions[lIdx].operands[1];
-    if (!(mx instanceof PDFNumber) || !(my instanceof PDFNumber)) return false;
-    if (!(lx instanceof PDFNumber) || !(ly instanceof PDFNumber)) return false;
+    const mxo = instructions[mIdx].operands[0];
+    const myo = instructions[mIdx].operands[1];
+    const lxo = instructions[lIdx].operands[0];
+    const lyo = instructions[lIdx].operands[1];
+    if (!(mxo instanceof PDFNumber) || !(myo instanceof PDFNumber)) return false;
+    if (!(lxo instanceof PDFNumber) || !(lyo instanceof PDFNumber)) return false;
+    // Strokes live in user space; run.x/y are page-space (flip `cm` on cairo/Firefox pages).
+    const m = ctmBefore(instructions, mIdx);
+    const toPage = (x: number, y: number) => ({ x: x * m[0] + y * m[2] + m[4], y: x * m[1] + y * m[3] + m[5] });
+    const pa = toPage(mxo.value, myo.value);
+    const pb = toPage(lxo.value, lyo.value);
+    const mx = { value: pa.x }; const my = { value: pa.y };
+    const lx = { value: pb.x }; const ly = { value: pb.y };
     if (Math.abs(my.value - ly.value) > 0.5) return false;
     if (Math.abs(my.value - targetY) > fs * 0.35) return false;
     const strokeLeft = Math.min(mx.value, lx.value);
