@@ -13,8 +13,8 @@ interface EmbeddedImageOverlayProps {
   scale: number;
   /** Commit move (PDF units). */
   onCommitMove: (pdfDx: number, pdfDy: number) => Promise<void>;
-  /** Commit SE resize (new PDF width/height; top-left screen corner stays fixed). */
-  onCommitResize: (newWidth: number, newHeight: number) => Promise<void>;
+  /** Commit a corner resize as the new PDF bbox (the opposite corner stays fixed). */
+  onCommitResize: (box: { x: number; y: number; width: number; height: number }) => Promise<void>;
   onReplace: () => void;
   onDeselect: () => void;
 }
@@ -39,7 +39,8 @@ export function EmbeddedImageOverlay(props: EmbeddedImageOverlayProps) {
     setLive({ x: item.x, y: item.y, width: item.width, height: item.height });
   }, [item.x, item.y, item.width, item.height, item.name]);
 
-  const dragMode = useRef<'move' | 'resize-se' | null>(null);
+  type Corner = 'nw' | 'ne' | 'sw' | 'se';
+  const dragMode = useRef<'move' | `resize-${Corner}` | null>(null);
   const origin = useRef({
     clientX: 0, clientY: 0,
     x: 0, y: 0, width: 0, height: 0,
@@ -61,13 +62,16 @@ export function EmbeddedImageOverlay(props: EmbeddedImageOverlayProps) {
         height: origin.current.height,
       });
     } else {
-      // SE resize: keep PDF top edge (y+height) and left (x) fixed
-      const newW = Math.max(8, origin.current.width + dxCss / scale);
-      const newH = Math.max(8, origin.current.height + dyCss / scale);
-      const top = origin.current.y + origin.current.height;
+      const corner = mode.slice('resize-'.length) as Corner;
+      const o = origin.current;
+      const east = corner === 'ne' || corner === 'se';
+      const north = corner === 'nw' || corner === 'ne';
+      // PDF y grows upward; screen-down drag (dy < 0 in PDF units) shrinks a north edge.
+      const newW = Math.max(8, east ? o.width + dx : o.width - dx);
+      const newH = Math.max(8, north ? o.height + dy : o.height - dy);
       setLive({
-        x: origin.current.x,
-        y: top - newH,
+        x: east ? o.x : o.x + (o.width - newW),
+        y: north ? o.y : o.y + (o.height - newH),
         width: newW,
         height: newH,
       });
@@ -93,7 +97,7 @@ export function EmbeddedImageOverlay(props: EmbeddedImageOverlayProps) {
         Math.abs(cur.width - origin.current.width) > 0.25 ||
         Math.abs(cur.height - origin.current.height) > 0.25
       ) {
-        await onCommitResize(cur.width, cur.height);
+        await onCommitResize({ x: cur.x, y: cur.y, width: cur.width, height: cur.height });
       }
     } catch (err) {
       console.error('[EmbeddedImageOverlay] commit failed', err);
@@ -106,7 +110,7 @@ export function EmbeddedImageOverlay(props: EmbeddedImageOverlayProps) {
     }
   }, [onCommitMove, onCommitResize, onPointerMove]);
 
-  const begin = useCallback((mode: 'move' | 'resize-se', e: React.PointerEvent) => {
+  const begin = useCallback((mode: 'move' | `resize-${Corner}`, e: React.PointerEvent) => {
     e.preventDefault();
     e.stopPropagation();
     dragMode.current = mode;
@@ -161,11 +165,12 @@ export function EmbeddedImageOverlay(props: EmbeddedImageOverlayProps) {
         </button>
       </div>
 
-      {([[0, 0], [1, 0], [0, 1], [1, 1]] as const).map(([hx, hy]) => (
+      {([['nw', 0, 0], ['ne', 1, 0], ['sw', 0, 1], ['se', 1, 1]] as const).map(([corner, hx, hy]) => (
         <div
-          key={`${hx}-${hy}`}
-          className={`absolute w-2.5 h-2.5 bg-[#3b82f6] border border-white rounded-sm ${
-            hx === 1 && hy === 1 ? 'cursor-se-resize z-40' : 'pointer-events-none'
+          key={corner}
+          data-handle={corner}
+          className={`absolute w-2.5 h-2.5 bg-[#3b82f6] border border-white rounded-sm z-40 ${
+            corner === 'nw' || corner === 'se' ? 'cursor-nwse-resize' : 'cursor-nesw-resize'
           }`}
           style={{
             left: hx === 0 ? -5 : undefined,
@@ -173,7 +178,7 @@ export function EmbeddedImageOverlay(props: EmbeddedImageOverlayProps) {
             top: hy === 0 ? -5 : undefined,
             bottom: hy === 1 ? -5 : undefined,
           }}
-          onPointerDown={hx === 1 && hy === 1 ? (e) => begin('resize-se', e) : undefined}
+          onPointerDown={(e) => begin(`resize-${corner}`, e)}
         />
       ))}
     </div>

@@ -3626,14 +3626,11 @@ export default function EditorPage() {
     setRenderKey(k => k + 1);
   }, [doc, currentPage, selectedDisplayItem, toEditableImage, pushEditorHistory]);
 
-  const handleEmbeddedImageResize = useCallback(async (newWidth: number, newHeight: number) => {
+  const handleEmbeddedImageResize = useCallback(async (box: { x: number; y: number; width: number; height: number }) => {
     if (!doc || !engineRef.current || selectedDisplayItem?.type !== 'image') return;
     const item = selectedDisplayItem as ImageItem;
     const editable = toEditableImage(item);
-    // Keep screen top-left fixed → PDF x fixed, top (y+h) fixed
-    const top = item.y + item.height;
-    const newY = top - newHeight;
-    const newCtm = [newWidth, 0, 0, newHeight, item.x, newY];
+    const newCtm = [box.width, 0, 0, box.height, box.x, box.y];
     await applyObjectTransform(doc, currentPage, editable, newCtm);
     pushEditorHistory('resize-image');
     setIsDirty(true);
