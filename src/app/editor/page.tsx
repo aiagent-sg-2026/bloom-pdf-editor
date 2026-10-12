@@ -3614,7 +3614,7 @@ export default function EditorPage() {
     source: item,
   }), []);
 
-  const handleEmbeddedImageMove = useCallback(async (pdfDx: number, pdfDy: number) => {
+  const handleEmbeddedImageMove = useCallback(async (pdfDx: number, pdfDy: number, keepSelection = false) => {
     if (!doc || !engineRef.current || selectedDisplayItem?.type !== 'image') return;
     const item = selectedDisplayItem as ImageItem;
     const editable = toEditableImage(item);
@@ -3622,18 +3622,49 @@ export default function EditorPage() {
     await applyObjectTransform(doc, currentPage, editable, moved.ctm);
     pushEditorHistory('move-image');
     setIsDirty(true);
-    setSelectedDisplayItem(null);
+    if (keepSelection) {
+      // Keep the image selected so repeated arrow presses keep nudging it.
+      const m = moved.ctm;
+      setSelectedDisplayItem({
+        ...item,
+        x: item.x + pdfDx,
+        y: item.y + pdfDy,
+        ctm: item.ctm ? { ...item.ctm, e: m[4], f: m[5] } : item.ctm,
+      } as ImageItem);
+    } else {
+      setSelectedDisplayItem(null);
+    }
     setRenderKey(k => k + 1);
   }, [doc, currentPage, selectedDisplayItem, toEditableImage, pushEditorHistory]);
 
-  const handleEmbeddedImageResize = useCallback(async (newWidth: number, newHeight: number) => {
+  // Arrow keys nudge the selected embedded image (1pt, Shift = 10pt).
+  useEffect(() => {
+    if (selectedDisplayItem?.type !== 'image') return;
+    let busy = false;
+    function onArrow(e: KeyboardEvent) {
+      const t = e.target as HTMLElement | null;
+      if (t && (t.tagName === 'INPUT' || t.tagName === 'TEXTAREA' || t.isContentEditable)) return;
+      const step = e.shiftKey ? 10 : 1;
+      let dx = 0, dy = 0;
+      if (e.key === 'ArrowLeft') dx = -step;
+      else if (e.key === 'ArrowRight') dx = step;
+      else if (e.key === 'ArrowUp') dy = step;       // PDF y axis points up
+      else if (e.key === 'ArrowDown') dy = -step;
+      else return;
+      e.preventDefault();
+      if (busy) return;
+      busy = true;
+      void handleEmbeddedImageMove(dx, dy, true).finally(() => { busy = false; });
+    }
+    window.addEventListener('keydown', onArrow);
+    return () => window.removeEventListener('keydown', onArrow);
+  }, [selectedDisplayItem, handleEmbeddedImageMove]);
+
+  const handleEmbeddedImageResize = useCallback(async (box: { x: number; y: number; width: number; height: number }) => {
     if (!doc || !engineRef.current || selectedDisplayItem?.type !== 'image') return;
     const item = selectedDisplayItem as ImageItem;
     const editable = toEditableImage(item);
-    // Keep screen top-left fixed → PDF x fixed, top (y+h) fixed
-    const top = item.y + item.height;
-    const newY = top - newHeight;
-    const newCtm = [newWidth, 0, 0, newHeight, item.x, newY];
+    const newCtm = [box.width, 0, 0, box.height, box.x, box.y];
     await applyObjectTransform(doc, currentPage, editable, newCtm);
     pushEditorHistory('resize-image');
     setIsDirty(true);
