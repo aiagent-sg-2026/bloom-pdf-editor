@@ -48,7 +48,7 @@ import {
   resolveRunStyleFlags,
   visualFontSize,
 } from './metrics';
-import type { FontData } from '../fonts/font-parser';
+import { charCodeToUnicode, type FontData } from '../fonts/font-parser';
 
 export interface TextStylePatch {
   fontSize?: number;
@@ -595,6 +595,9 @@ function findSiblingFontKey(
   let best: string | null = null;
   let bestScore = -1;
   for (const f of fonts) {
+    // Subset fonts (ABCDEF+Name) only carry glyphs used by their own text —
+    // typing/restyling other text with them drops characters.
+    if (/^[A-Z]{6}\+/.test(f.baseFont)) continue;
     const flags = fontNameStyleFlags(f.baseFont);
     if (flags.bold !== wantBold || flags.italic !== wantItalic) continue;
     const fFamily = stripStyleTokens(f.baseFont).toLowerCase();
@@ -1077,7 +1080,10 @@ function patchRunStyle(
 
       // 2) Fall back to Standard14 face we can inject
       if (!fontKey) {
-        const desired = resolveStyledFontName(run.fontName, wantBold, wantItalic);
+        // run.fontName is an opaque resource key (F2…): use the real BaseFont.
+        const realName = (fontDataForFlags?.baseFont || fontDataForFlags?.name || run.fontName).replace(/^.*\+/, '');
+        let desired = resolveStyledFontName(realName, wantBold, wantItalic);
+        if (!/^(Helvetica|Times|Courier)/i.test(desired)) desired = mapUIFamilyToStandard14(realName, wantBold, wantItalic);
         fontKey = ensureStandard14Font(page, objects, desired);
       }
     }
@@ -1101,10 +1107,10 @@ function patchRunStyle(
       );
       if (!splitOk) {
         // Fall through to whole-run patch if split failed
-        applyWholeRunFontPatch(instructions, run, textIndex, range, style, fontKey);
+        applyWholeRunFontPatch(instructions, run, textIndex, range, style, fontKey, fontDataForFlags);
       }
     } else {
-      applyWholeRunFontPatch(instructions, run, textIndex, range, style, fontKey);
+      applyWholeRunFontPatch(instructions, run, textIndex, range, style, fontKey, fontDataForFlags);
     }
   }
 
@@ -1148,8 +1154,64 @@ function applyWholeRunFontPatch(
   range: { bt: number; et: number },
   style: TextStylePatch,
   fontKey: string | null,
+  fontData: FontData | null = null,
 ): void {
   const range2 = findBtEtRange(instructions, textIndex) ?? range;
+
+  // Swapping a composite (Identity-H subset) font for a WinAnsi Standard14 face:
+  // the 2-byte CIDs would be read as garbage, so re-encode the shown text.
+  if (fontKey && fontData?.isComposite) {
+    const inst = instructions[textIndex];
+    const reencode = (o: PDFObject): PDFObject => {
+      if (!(o instanceof PDFString || o instanceof PDFHexString)) return o;
+      const b = o.toBytes();
+      let t = '';
+      for (let i = 0; i + 1 < b.length; i += 2) t += charCodeToUnicode((b[i] << 8) | b[i + 1], fontData) || ' ';
+      return encodeTextWinAnsi(t).pdfString;
+    };
+    if (inst && inst.operator === 'Tj') {
+      inst.operands = [reencode(inst.operands[0])];
+    } else if (inst && inst.operator === 'TJ' && inst.operands[0] instanceof PDFArray) {
+      const arr = inst.operands[0] as PDFArray;
+      const out = new PDFArray();
+      for (let i = 0; i < arr.length; i++) out.push(reencode(arr.get(i)!));
+      inst.operands = [out];
+    }
+  }
+
+  // Cairo/Firefox emit many lines in ONE BT sharing a single Tf/Tm. Editing that
+  // Tf/Tm would restyle every later line, so scope the change to this run only:
+  // new Tf right before its text, original Tf right after.
+  {
+    const SHOW = new Set(['Tj', 'TJ', "'", '"']);
+    const runIdx = new Set(run.sourceInstructionIndices ?? [textIndex]);
+    let other = false;
+    const mine: number[] = [];
+    for (let k = range2.bt; k <= range2.et; k++) {
+      if (!SHOW.has(instructions[k].operator)) continue;
+      if (runIdx.has(k)) mine.push(k); else other = true;
+    }
+    let tfIdx = -1;
+    for (let k = (mine[0] ?? textIndex); k >= range2.bt; k--) {
+      if (instructions[k].operator === 'Tf' && instructions[k].operands.length >= 2) { tfIdx = k; break; }
+    }
+    if (other && mine.length > 0 && tfIdx >= 0 && (style.fontSize != null || fontKey)) {
+      const oName = instructions[tfIdx].operands[0];
+      const oSize = instructions[tfIdx].operands[1];
+      const curTf = oSize instanceof PDFNumber ? oSize.value : run.fontSize;
+      const visual = Math.max(0.1, visualFontSize(run));
+      let newSize: PDFObject = oSize;
+      if (style.fontSize != null) {
+        const scaled = curTf > 0 && curTf <= 1.5 && Math.abs(visual - curTf) > 1;
+        newSize = new PDFNumber(scaled ? (style.fontSize / visual) * curTf : style.fontSize);
+      }
+      const first = mine[0];
+      const last = mine[mine.length - 1];
+      instructions.splice(last + 1, 0, op('Tf', [oName, oSize]));
+      instructions.splice(first, 0, op('Tf', [fontKey ? new PDFName(fontKey) : oName, newSize]));
+      return;
+    }
+  }
 
   for (let i = textIndex; i >= range2.bt; i--) {
     if (instructions[i].operator === 'Tf' && instructions[i].operands.length >= 2) {

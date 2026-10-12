@@ -3062,9 +3062,12 @@ export default function EditorPage() {
         newContentBytes = b;
       }
 
-      engine.updatePageContent(page.contentRefs, newContentBytes, doc.objects).catch((e: Error) => {
+      // Must finish before the caller saves — otherwise Download exports without the new text/images.
+      try {
+        await engine.updatePageContent(page.contentRefs, newContentBytes, doc.objects);
+      } catch (e) {
         console.error('[Editor] Failed to commit content:', e);
-      });
+      }
     }
 
     const clearedOverlays = { drawnPaths: [] as DrawnPath[], floatingTexts: [] as FloatingText[], floatingImages: [] as FloatingImage[] };
