@@ -36,6 +36,7 @@ import {
   type RunPositionShift,
 } from '../editor/text-editor';
 import { ensureFallbackFont } from '../fonts/font-augmentation';
+import { ctmBefore, invertMatrix } from '../editor/matrix';
 import { updatePageContent } from '../editor/stream-compiler';
 import { parseContentStream, type CSInstruction } from '../content/operator-lexer';
 import { interpretPage } from '../content/interpreter';
@@ -1127,17 +1128,25 @@ function patchRunStyle(
       endX = run.x + Math.max(run.width, endX - run.x, visualFontSize(run) * 0.5);
     }
     const w = Math.max(endX - startX, visualFontSize(run) * 0.5);
+    const range2 = findBtEtRange(instructions, Math.min(...(run.sourceInstructionIndices ?? [textIndex])));
+    const insertAt = (range2?.et ?? range.et) + 1;
+    // run.x / run.y are page-space; the stream may sit under a flip/scale `cm`
+    // (cairo/Firefox), so map the stroke back into the CTM active at insertion.
+    const inv = invertMatrix(ctmBefore(instructions, insertAt));
+    const mapPt = (px: number, py: number): [number, number] =>
+      inv ? [px * inv[0] + py * inv[2] + inv[4], px * inv[1] + py * inv[3] + inv[5]] : [px, py];
+    const lineScale = inv ? Math.max(1e-6, Math.hypot(inv[0], inv[1])) : 1;
+    const [ax, ay] = mapPt(startX, y);
+    const [bx, by] = mapPt(startX + w, y);
     const ul: CSInstruction[] = [
       op('q'),
       op('RG', [new PDFNumber(color[0]), new PDFNumber(color[1]), new PDFNumber(color[2])]),
-      op('w', [new PDFNumber(Math.max(0.4, visualFontSize(run) * 0.05))]),
-      op('m', [new PDFNumber(startX), new PDFNumber(y)]),
-      op('l', [new PDFNumber(startX + w), new PDFNumber(y)]),
+      op('w', [new PDFNumber(Math.max(0.4, visualFontSize(run) * 0.05) * lineScale)]),
+      op('m', [new PDFNumber(ax), new PDFNumber(ay)]),
+      op('l', [new PDFNumber(bx), new PDFNumber(by)]),
       op('S'),
       op('Q'),
     ];
-    const range2 = findBtEtRange(instructions, Math.min(...(run.sourceInstructionIndices ?? [textIndex])));
-    const insertAt = (range2?.et ?? range.et) + 1;
     instructions.splice(insertAt, 0, ...ul);
     addedUnderline = true;
   } else if (style.underline === false) {
@@ -1429,12 +1438,19 @@ function removeUnderlineNearRun(instructions: CSInstruction[], run: TextRun): bo
   let removed = false;
 
   const tryRemoveSpan = (mIdx: number, lIdx: number, from: number, to: number): boolean => {
-    const mx = instructions[mIdx].operands[0];
-    const my = instructions[mIdx].operands[1];
-    const lx = instructions[lIdx].operands[0];
-    const ly = instructions[lIdx].operands[1];
-    if (!(mx instanceof PDFNumber) || !(my instanceof PDFNumber)) return false;
-    if (!(lx instanceof PDFNumber) || !(ly instanceof PDFNumber)) return false;
+    const mxo = instructions[mIdx].operands[0];
+    const myo = instructions[mIdx].operands[1];
+    const lxo = instructions[lIdx].operands[0];
+    const lyo = instructions[lIdx].operands[1];
+    if (!(mxo instanceof PDFNumber) || !(myo instanceof PDFNumber)) return false;
+    if (!(lxo instanceof PDFNumber) || !(lyo instanceof PDFNumber)) return false;
+    // Strokes live in user space; run.x/y are page-space (flip `cm` on cairo/Firefox pages).
+    const m = ctmBefore(instructions, mIdx);
+    const toPage = (x: number, y: number) => ({ x: x * m[0] + y * m[2] + m[4], y: x * m[1] + y * m[3] + m[5] });
+    const pa = toPage(mxo.value, myo.value);
+    const pb = toPage(lxo.value, lyo.value);
+    const mx = { value: pa.x }; const my = { value: pa.y };
+    const lx = { value: pb.x }; const ly = { value: pb.y };
     if (Math.abs(my.value - ly.value) > 0.5) return false;
     if (Math.abs(my.value - targetY) > fs * 0.35) return false;
     const strokeLeft = Math.min(mx.value, lx.value);
