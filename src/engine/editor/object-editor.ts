@@ -29,6 +29,50 @@ function doOperandName(inst: CSInstruction): string {
   return op0 instanceof PDFName ? op0.name.replace(/^\//, '') : '';
 }
 
+type Matrix = number[];
+const IDENTITY: Matrix = [1, 0, 0, 1, 0, 0];
+
+/** PDF matrix product: apply `m` first, then `n` (row-vector convention). */
+function mulMatrix(m: Matrix, n: Matrix): Matrix {
+  return [
+    m[0] * n[0] + m[1] * n[2],
+    m[0] * n[1] + m[1] * n[3],
+    m[2] * n[0] + m[3] * n[2],
+    m[2] * n[1] + m[3] * n[3],
+    m[4] * n[0] + m[5] * n[2] + n[4],
+    m[4] * n[1] + m[5] * n[3] + n[5],
+  ];
+}
+
+function invertMatrix(m: Matrix): Matrix | null {
+  const det = m[0] * m[3] - m[1] * m[2];
+  if (Math.abs(det) < 1e-12) return null;
+  return [
+    m[3] / det,
+    -m[1] / det,
+    -m[2] / det,
+    m[0] / det,
+    (m[2] * m[5] - m[3] * m[4]) / det,
+    (m[1] * m[4] - m[0] * m[5]) / det,
+  ];
+}
+
+/** CTM in effect after the last instruction (tracks cm / q / Q). */
+function ctmAtEnd(instructions: CSInstruction[]): Matrix {
+  let ctm: Matrix = IDENTITY;
+  const stack: Matrix[] = [];
+  for (const inst of instructions) {
+    if (inst.operator === 'q') {
+      stack.push(ctm);
+    } else if (inst.operator === 'Q') {
+      ctm = stack.pop() ?? ctm;
+    } else if (inst.operator === 'cm' && inst.operands.length >= 6) {
+      ctm = mulMatrix(inst.operands.slice(0, 6).map(numVal), ctm);
+    }
+  }
+  return ctm;
+}
+
 /**
  * Apply a full CTM to an object by wrapping/replacing its placement matrix.
  */
@@ -162,11 +206,22 @@ async function applyImageTransform(
     }
   }
 
-  const simple =
-    Math.abs(newCtm[1]) < 0.001 && Math.abs(newCtm[2]) < 0.001;
+  // Remove old placement first, then append an unclipped placement at the
+  // end so the image paints above existing content and never mutates shared
+  // clips.
+  instructions.splice(removeStart, removeEnd - removeStart + 1);
+
+  // `newCtm` is expressed in page space. The appended `cm` is applied on top
+  // of whatever CTM is live at the end of the stream (e.g. the
+  // `1 0 0 -1 0 842 cm` flip that cairo/Firefox PDFs open with), so convert:
+  //   M × base = newCtm  →  M = newCtm × base⁻¹
+  const base = ctmAtEnd(instructions);
+  const local = mulMatrix(newCtm, invertMatrix(base) ?? IDENTITY);
+
+  const simple = Math.abs(local[1]) < 0.001 && Math.abs(local[2]) < 0.001;
   const placementCtm = simple
-    ? [newCtm[0], 0, 0, newCtm[3], newCtm[4], newCtm[5]]
-    : [...newCtm];
+    ? [local[0], 0, 0, local[3], local[4], local[5]]
+    : local;
 
   const placement: CSInstruction[] = [
     op('q'),
@@ -174,10 +229,6 @@ async function applyImageTransform(
     op('Do', [new PDFName(imgName)]),
     op('Q'),
   ];
-
-  // Remove old placement, then append unclipped placement at end so the
-  // image paints above existing content and never mutates shared clips.
-  instructions.splice(removeStart, removeEnd - removeStart + 1);
   instructions.push(...placement);
 
   const next = compileInstructions(instructions);
