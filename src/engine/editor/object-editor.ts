@@ -13,6 +13,7 @@ import { getPageContentBytes } from '../parser/parser';
 import { parseContentStream, type CSInstruction } from '../content/operator-lexer';
 import { compileInstructions } from './text-editor';
 import { updatePageContent } from './stream-compiler';
+import { IDENTITY, mulMatrix, invertMatrix, ctmAtEnd } from './matrix';
 import type { EditableObject } from '../editing/scene-graph';
 import type { ImageItem } from '../content/interpreter';
 
@@ -27,50 +28,6 @@ function numVal(obj: PDFObject | undefined): number {
 function doOperandName(inst: CSInstruction): string {
   const op0 = inst.operands[0];
   return op0 instanceof PDFName ? op0.name.replace(/^\//, '') : '';
-}
-
-type Matrix = number[];
-const IDENTITY: Matrix = [1, 0, 0, 1, 0, 0];
-
-/** PDF matrix product: apply `m` first, then `n` (row-vector convention). */
-function mulMatrix(m: Matrix, n: Matrix): Matrix {
-  return [
-    m[0] * n[0] + m[1] * n[2],
-    m[0] * n[1] + m[1] * n[3],
-    m[2] * n[0] + m[3] * n[2],
-    m[2] * n[1] + m[3] * n[3],
-    m[4] * n[0] + m[5] * n[2] + n[4],
-    m[4] * n[1] + m[5] * n[3] + n[5],
-  ];
-}
-
-function invertMatrix(m: Matrix): Matrix | null {
-  const det = m[0] * m[3] - m[1] * m[2];
-  if (Math.abs(det) < 1e-12) return null;
-  return [
-    m[3] / det,
-    -m[1] / det,
-    -m[2] / det,
-    m[0] / det,
-    (m[2] * m[5] - m[3] * m[4]) / det,
-    (m[1] * m[4] - m[0] * m[5]) / det,
-  ];
-}
-
-/** CTM in effect after the last instruction (tracks cm / q / Q). */
-function ctmAtEnd(instructions: CSInstruction[]): Matrix {
-  let ctm: Matrix = IDENTITY;
-  const stack: Matrix[] = [];
-  for (const inst of instructions) {
-    if (inst.operator === 'q') {
-      stack.push(ctm);
-    } else if (inst.operator === 'Q') {
-      ctm = stack.pop() ?? ctm;
-    } else if (inst.operator === 'cm' && inst.operands.length >= 6) {
-      ctm = mulMatrix(inst.operands.slice(0, 6).map(numVal), ctm);
-    }
-  }
-  return ctm;
 }
 
 /**
