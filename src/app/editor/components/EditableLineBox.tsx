@@ -318,6 +318,9 @@ export function EditableLineBox(props: EditableLineBoxProps) {
     }
     e.preventDefault();
     e.stopPropagation();
+    // React nulls e.currentTarget once the handler returns, so capture it for the
+    // async pointermove listener below (it threw and broke drag-to-select).
+    const hitEl = e.currentTarget as HTMLElement;
     rebuildCharEnds();
     const idx = xToIndex(hitLocalX(e));
     selectDrag.current = { anchor: idx };
@@ -325,7 +328,7 @@ export function EditableLineBox(props: EditableLineBoxProps) {
 
     const onMove = (ev: PointerEvent) => {
       if (!selectDrag.current) return;
-      const box = (e.currentTarget as HTMLElement).getBoundingClientRect();
+      const box = hitEl.getBoundingClientRect();
       const localX = ev.clientX - box.left;
       const cur = xToIndex(localX);
       const a = selectDrag.current.anchor;
