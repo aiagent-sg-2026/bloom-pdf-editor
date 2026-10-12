@@ -1734,6 +1734,8 @@ export default function EditorPage() {
       if (moved) {
         const shifts = targetLine.runs.map(run => ({ run, dx: pdfDx, dy: pdfDy }));
         bytes = engine.applyRunPositionShifts(bytes, shifts);
+        // underline strokes are separate paths — carry them with the text
+        bytes = engine.moveUnderlinesWithRuns(bytes, targetLine.runs, pdfDx, pdfDy);
       }
 
       await engine.updatePageContent(page.contentRefs, bytes, doc.objects);

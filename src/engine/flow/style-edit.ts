@@ -36,7 +36,7 @@ import {
   type RunPositionShift,
 } from '../editor/text-editor';
 import { ensureFallbackFont } from '../fonts/font-augmentation';
-import { ctmBefore, invertMatrix } from '../editor/matrix';
+import { ctmBefore, deltaThroughInverse, invertMatrix } from '../editor/matrix';
 import { updatePageContent } from '../editor/stream-compiler';
 import { parseContentStream, type CSInstruction } from '../content/operator-lexer';
 import { interpretPage } from '../content/interpreter';
@@ -1037,6 +1037,9 @@ function patchRunStyle(
   const textIndex = resolveTextShowingIndex(instructions, indices);
   const range = findBtEtRange(instructions, textIndex);
   if (!range) return { bytes: contentBytes, addedUnderline: false, removedUnderline: false };
+  // Earlier steps splice instructions (Tf scoping, stroke removal), so keep a handle on the
+  // text op itself and re-find it instead of trusting the original index.
+  const textAnchor = instructions[textIndex];
 
   let addedUnderline = false;
   let removedUnderline = false;
@@ -1128,8 +1131,10 @@ function patchRunStyle(
       endX = run.x + Math.max(run.width, endX - run.x, visualFontSize(run) * 0.5);
     }
     const w = Math.max(endX - startX, visualFontSize(run) * 0.5);
-    const range2 = findBtEtRange(instructions, Math.min(...(run.sourceInstructionIndices ?? [textIndex])));
-    const insertAt = (range2?.et ?? range.et) + 1;
+    let anchorIdx = instructions.indexOf(textAnchor);
+    if (anchorIdx < 0) anchorIdx = Math.min(textIndex, instructions.length - 1);
+    const range2 = findBtEtRange(instructions, anchorIdx);
+    const insertAt = Math.min(instructions.length, (range2?.et ?? anchorIdx) + 1);
     // run.x / run.y are page-space; the stream may sit under a flip/scale `cm`
     // (cairo/Firefox), so map the stroke back into the CTM active at insertion.
     const inv = invertMatrix(ctmBefore(instructions, insertAt));
@@ -1430,7 +1435,12 @@ function splitRunTextStyle(
 }
 
 /** Remove horizontal underline strokes near a run (q-wrapped or bare m/l/S). */
-function removeUnderlineNearRun(instructions: CSInstruction[], run: TextRun): boolean {
+function removeUnderlineNearRun(
+  instructions: CSInstruction[],
+  run: TextRun,
+  /** When set, translate matching strokes by this page-space delta instead of removing them. */
+  shift?: { dx: number; dy: number; done?: Set<CSInstruction> },
+): boolean {
   const fs = visualFontSize(run);
   const targetY = run.y - fs * 0.12;
   const runLeft = run.x - fs * 0.5;
@@ -1457,6 +1467,16 @@ function removeUnderlineNearRun(instructions: CSInstruction[], run: TextRun): bo
     const strokeRight = Math.max(mx.value, lx.value);
     if (strokeRight < runLeft || strokeLeft > runRight) return false;
     if (strokeRight - strokeLeft < fs * 0.3) return false;
+    if (shift) {
+      if (shift.done?.has(instructions[mIdx])) return false; // one stroke, one shift
+      shift.done?.add(instructions[mIdx]);
+      const d = deltaThroughInverse(m, shift.dx, shift.dy);
+      instructions[mIdx].operands[0] = new PDFNumber(mxo.value + d.dx);
+      instructions[mIdx].operands[1] = new PDFNumber(myo.value + d.dy);
+      instructions[lIdx].operands[0] = new PDFNumber(lxo.value + d.dx);
+      instructions[lIdx].operands[1] = new PDFNumber(lyo.value + d.dy);
+      return true;
+    }
     instructions.splice(from, to - from + 1);
     return true;
   };
@@ -1479,6 +1499,7 @@ function removeUnderlineNearRun(instructions: CSInstruction[], run: TextRun): bo
       if (mIdx >= 0 && lIdx >= 0 && sIdx >= 0 && qIdx >= 0) {
         if (tryRemoveSpan(mIdx, lIdx, i, qIdx)) {
           removed = true;
+          if (shift) { i = qIdx; continue; }
           i--;
           continue;
         }
@@ -1498,7 +1519,7 @@ function removeUnderlineNearRun(instructions: CSInstruction[], run: TextRun): bo
         }
         if (tryRemoveSpan(i, i + 1, from, i + 2)) {
           removed = true;
-          i = Math.max(-1, from - 1);
+          i = shift ? i + 2 : Math.max(-1, from - 1);
         }
       }
     }
@@ -1682,3 +1703,24 @@ function shiftInstructionsY(instructions: CSInstruction[], dy: number): void {
   }
 }
 
+
+
+/**
+ * Underlines on cairo/Firefox pages are separate stroked paths, not part of the text.
+ * When text is moved, translate the strokes sitting under it by the same page-space delta.
+ */
+export function moveUnderlinesWithRuns(
+  contentBytes: Uint8Array,
+  runs: TextRun[],
+  dx: number,
+  dy: number,
+): Uint8Array {
+  if (runs.length === 0 || (Math.abs(dx) < 0.01 && Math.abs(dy) < 0.01)) return contentBytes;
+  const instructions = parseContentStream(contentBytes);
+  let any = false;
+  const done = new Set<CSInstruction>();
+  for (const run of runs) {
+    if (removeUnderlineNearRun(instructions, run, { dx, dy, done })) any = true;
+  }
+  return any ? compileInstructions(instructions) : contentBytes;
+}

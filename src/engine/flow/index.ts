@@ -73,6 +73,7 @@ export {
 export { shapeText, measureText, layoutShapedGlyphs } from './shaping';
 export {
   applyStyleToSelection,
+  moveUnderlinesWithRuns,
   applyStyleToLine,
   applyStyleToSelectionOnPage,
   collectBatchedFontSizeTrailingShifts,
