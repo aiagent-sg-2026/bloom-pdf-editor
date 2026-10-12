@@ -1350,7 +1350,7 @@ export function patchTJPreservingGaps(
   /** Advance of one character in text-space em (1 = font size); enables gap compensation. */
   emWidth?: (ch: string) => number,
 ): PDFArray | null {
-  const BIG_ADJUST = 1500;
+  const BIG_ADJUST = 400;
   let hasBig = false;
   let total = 0;
   for (const it of oldArr.items) {
