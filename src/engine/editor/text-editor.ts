@@ -194,13 +194,22 @@ export function applyTextEdits(
 
     // Spaces: subset fonts often have ~0 space advance (live CSS shows gaps,
     // PDF does not). Emit TJ with explicit advances instead of a bare string.
-    applyEncodedShowingOperands(
-      matched.instruction,
-      edit.newText,
-      encoded,
-      fontData,
-      !!useFallbackFont,
-    );
+    const tjArr = matched.instruction.operator === 'TJ' ? matched.instruction.operands[0] : null;
+    const patched =
+      !useFallbackFont && tjArr instanceof PDFArray
+        ? patchTJPreservingGaps(tjArr, edit.targetRun.text, edit.newText, fontData, runEmWidth(edit.targetRun, fontData))
+        : null;
+    if (patched) {
+      matched.instruction.operands = [patched];
+    } else {
+      applyEncodedShowingOperands(
+        matched.instruction,
+        edit.newText,
+        encoded,
+        fontData,
+        !!useFallbackFont,
+      );
+    }
 
     // Switch to Helvetica when the original subset font can't encode the typed text.
     // Restore the prior font afterward so later Type3 letters in the same BT
@@ -1318,6 +1327,122 @@ function applyGroupedTextEdit(
     );
   }
   return 0;
+}
+
+/**
+ * Edit a TJ array without destroying large position adjustments.
+ *
+ * Firefox/cairo print-to-PDF puts whole table rows into one TJ, using huge
+ * negative numbers (e.g. -6462) as column gaps. Rebuilding the array from the
+ * plain text drops them and collapses the columns. This keeps every original
+ * string/number outside the changed span (common prefix/suffix diff) and only
+ * re-encodes the changed middle.
+ *
+ * Returns null (caller falls back to the normal rebuild) unless the array has a
+ * large adjustment, only plain strings, and its characters line up 1:1 with the
+ * run text.
+ */
+export function patchTJPreservingGaps(
+  oldArr: PDFArray,
+  oldText: string,
+  newText: string,
+  fontData: FontData | null,
+  /** Advance of one character in text-space em (1 = font size); enables gap compensation. */
+  emWidth?: (ch: string) => number,
+): PDFArray | null {
+  const BIG_ADJUST = 1500;
+  let hasBig = false;
+  let total = 0;
+  for (const it of oldArr.items) {
+    if (it instanceof PDFNumber) {
+      if (Math.abs(it.value) >= BIG_ADJUST) hasBig = true;
+    } else if (it instanceof PDFString) {
+      total += it.value.length;
+    } else {
+      return null;
+    }
+  }
+  if (!hasBig || total !== oldText.length) return null;
+
+  const minLen = Math.min(oldText.length, newText.length);
+  let p = 0;
+  while (p < minLen && oldText[p] === newText[p]) p++;
+  let sfx = 0;
+  while (sfx < minLen - p && oldText[oldText.length - 1 - sfx] === newText[newText.length - 1 - sfx]) sfx++;
+  const oldEnd = oldText.length - sfx;
+  const newMid = newText.slice(p, newText.length - sfx);
+
+  // Relative gaps would carry the width change into every later column, so
+  // take it back out of the first large gap after the edit (thousandths of em).
+  const newItems = newMid ? buildTJWithSpaceAdvances(newMid, fontData, false).items : [];
+  let newAdv = 0;
+  let oldAdv = 0;
+  if (emWidth) {
+    for (const ch of newMid) newAdv += emWidth(ch);
+    for (const ch of oldText.slice(p, oldEnd)) oldAdv += emWidth(ch);
+  }
+  for (const it of newItems) if (it instanceof PDFNumber) newAdv -= it.value / 1000;
+  let compensated = false;
+
+  const out: PDFObject[] = [];
+  let inserted = false;
+  const insert = () => {
+    if (inserted) return;
+    inserted = true;
+    out.push(...newItems);
+  };
+
+  let pos = 0;
+  for (const it of oldArr.items) {
+    if (it instanceof PDFNumber) {
+      const afterEdit = pos >= oldEnd && (pos > p || p === oldEnd);
+      if (pos <= p && !afterEdit) out.push(it);
+      else if (!afterEdit) oldAdv -= it.value / 1000;
+      else if (afterEdit) {
+        insert();
+        const compensate = emWidth ? Math.round((newAdv - oldAdv) * 1000) : 0;
+        if (!compensated && compensate !== 0 && Math.abs(it.value) >= BIG_ADJUST) {
+          compensated = true;
+          const next = it.value < 0 ? Math.min(-200, it.value + compensate) : Math.max(200, it.value - compensate);
+          out.push(new PDFNumber(next));
+        } else {
+          out.push(it);
+        }
+      }
+      continue;
+    }
+    const str = (it as PDFString).value;
+    const len = str.length;
+    if (pos < p) out.push(new PDFString(str.slice(0, Math.min(len, p - pos))));
+    if (pos + len >= p) insert();
+    if (pos + len > oldEnd) out.push(new PDFString(str.slice(Math.max(0, oldEnd - pos))));
+    pos += len;
+  }
+  insert();
+  return new PDFArray(out);
+}
+
+/** Per-character advance (text-space em) measured from an interpreted run. */
+function runEmWidth(run: TextRun, fontData: FontData | null): (ch: string) => number {
+  const byChar = new Map<string, number>();
+  let sum = 0;
+  let n = 0;
+  for (const g of run.glyphs) {
+    if (g.unicode && g.textSpaceWidth > 0 && !byChar.has(g.unicode)) byChar.set(g.unicode, g.textSpaceWidth);
+    if (g.textSpaceWidth > 0) { sum += g.textSpaceWidth; n++; }
+  }
+  const avg = n > 0 ? sum / n : 0.5;
+  return (ch: string) => {
+    const seen = byChar.get(ch);
+    if (seen !== undefined) return seen;
+    // Unseen character: use the font's own width for its code when known.
+    try {
+      const ps = encodeTextForFont(ch, fontData).pdfString;
+      const w = ps instanceof PDFString ? fontData?.widths?.get(ps.value.charCodeAt(0)) : undefined;
+      if (w && w > 0) return w / 1000;
+    } catch { /* fall through */ }
+    return avg;
+  };
 }
 
 /** Em-fraction per Space via TJ (negative number → next glyph moves right). */

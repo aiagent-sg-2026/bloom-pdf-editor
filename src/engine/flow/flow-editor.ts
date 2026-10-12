@@ -2,6 +2,7 @@
  * Flow-aware text editing — commit full-line edits across styled runs.
  */
 
+import { detectTablesOnPage, findCellForLine } from './table-detect';
 import { interpretPage } from '../content/interpreter';
 import type { TextRun } from '../content/interpreter';
 import type { PDFObject, PDFPageInfo } from '../types';
@@ -388,7 +389,13 @@ export function applyLineTextEdit(
   for (const s of horizShifts) {
     for (const idx of s.run.sourceInstructionIndices ?? []) shiftedOps.add(idx);
   }
-  const peerShifts = collectPeerShiftsAfter(primaryLine, flow, peerAfterX, peerDx)
+  // Table cells are fixed columns: growth in one cell must not push its
+  // neighbours (they would drift out of the grid). Title | tags | date style
+  // rows are not tables and keep the push behaviour.
+  const inTable = flow
+    ? findCellForLine(detectTablesOnPage(flow.lines), primaryLine.id) !== null
+    : false;
+  const peerShifts = (inTable ? [] : collectPeerShiftsAfter(primaryLine, flow, peerAfterX, peerDx))
     .filter(s => !(s.run.sourceInstructionIndices ?? []).some(idx => shiftedOps.has(idx)));
   if (peerShifts.length > 0) {
     horizShifts = [...horizShifts, ...peerShifts];
