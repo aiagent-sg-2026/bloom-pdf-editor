@@ -162,7 +162,7 @@ describe('position-preserving line edit', () => {
       page,
       objects,
       title!,
-      'Assignme Title EXTRA WORDS HERE',
+      'Assignme Title EXTRA WORDS HERE PLUS MORE',
       flow,
     );
     const after = interpretPage(result.newContentBytes, page, objects);
