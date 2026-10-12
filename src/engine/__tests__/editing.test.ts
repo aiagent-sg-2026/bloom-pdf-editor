@@ -516,6 +516,26 @@ describe('object-editor: resize image', () => {
     expect(text.text).toContain('Keep me');
   });
 
+  it('moves an image when a scale cm is left open at the end of the stream', async () => {
+    // Unbalanced q: the live CTM at the end of the stream is the 2x scale, so
+    // the appended placement must be divided by it.
+    const { doc, page } = buildTestDoc(
+      'q\n2 0 0 2 0 0 cm\nq\n25 0 0 25 50 100 cm\n/Im1 Do\nQ\n',
+    );
+    const before = interpretDoc(doc, page);
+    const imgBefore = before.find((d): d is ImageItem => d.type === 'image')!;
+    const imageObj = buildSceneGraph(before).find((o) => o.kind === 'image')!;
+
+    const moved = transformObject(imageObj, { dx: 40, dy: 10 });
+    await applyObjectTransform(doc, 0, imageObj, moved.ctm);
+
+    const img = interpretDoc(doc, page).find((d): d is ImageItem => d.type === 'image')!;
+    expect(img.x).toBeCloseTo(imgBefore.x + 40, 1);
+    expect(img.y).toBeCloseTo(imgBefore.y + 10, 1);
+    expect(img.width).toBeCloseTo(imgBefore.width, 1);
+    expect(img.height).toBeCloseTo(imgBefore.height, 1);
+  });
+
   it('does not disturb text when moving an image inside a shared clip', async () => {
     const { doc, page } = buildTestDoc(
       'q\n50 50 400 700 re\nW\nn\n' +
