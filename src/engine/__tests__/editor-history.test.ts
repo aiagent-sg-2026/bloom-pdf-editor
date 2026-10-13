@@ -58,7 +58,7 @@ function documentWithPages(...contents: string[]): PDFDocumentData {
     pages: built.map(item => item.page),
     info: {},
     rawBytes: new Uint8Array(),
-  };
+  } as unknown as PDFDocumentData;
 }
 
 const emptyOverlays = { drawnPaths: [], floatingTexts: [], floatingImages: [], signatures: [] };
@@ -85,9 +85,10 @@ describe('editor history', () => {
       'text-edit',
     );
 
-    expect(snapshot.pages?.map(p => Array.from(p.contentBytes))).toEqual([
-      Array.from(new TextEncoder().encode('page zero')),
-      Array.from(new TextEncoder().encode('edited page one')),
+    // getPageContentBytes may append a stream separator, so compare decoded text.
+    expect(snapshot.pages?.map(p => new TextDecoder().decode(p.contentBytes).trim())).toEqual([
+      'page zero',
+      'edited page one',
     ]);
     expect(snapshot.pageIndex).toBe(1);
   });
