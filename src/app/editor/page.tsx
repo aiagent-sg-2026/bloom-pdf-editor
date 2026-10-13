@@ -870,7 +870,11 @@ export default function EditorPage() {
       setSignatures(overlays.signatures);
       signaturesRef.current = overlays.signatures;
       const page = parsed.pages[pageIndex];
-      const initialBytes = engine.getPageContentBytes(page, parsed.objects);
+      const rawInitialBytes = engine.getPageContentBytes(page, parsed.objects);
+      const initialBytes = engine.explodeTJGaps(rawInitialBytes, page, parsed.objects);
+      if (initialBytes !== rawInitialBytes) {
+        await engine.updatePageContent(page.contentRefs, initialBytes, parsed.objects);
+      }
       historyRef.current.seed(captureHistoryEntry(
         parsed,
         pageIndex,
@@ -967,7 +971,11 @@ export default function EditorPage() {
       setTotalPages(opened.doc.pages.length);
       setCurrentPage(0);
       const page0 = opened.doc.pages[0];
-      const initialBytes = engine.getPageContentBytes(page0, opened.doc.objects);
+      const rawInitialBytes = engine.getPageContentBytes(page0, opened.doc.objects);
+      const initialBytes = engine.explodeTJGaps(rawInitialBytes, page0, opened.doc.objects);
+      if (initialBytes !== rawInitialBytes) {
+        await engine.updatePageContent(page0.contentRefs, initialBytes, opened.doc.objects);
+      }
       historyRef.current.seed(captureHistoryEntry(
         opened.doc,
         0,
@@ -1054,6 +1062,12 @@ export default function EditorPage() {
       setIsRendering(true);
       try {
         const engine = engineRef.current!;
+        const editablePage = doc!.pages[currentPage];
+        const rawBytes = engine.getPageContentBytes(editablePage, doc!.objects);
+        const normalizedBytes = engine.explodeTJGaps(rawBytes, editablePage, doc!.objects);
+        if (normalizedBytes !== rawBytes) {
+          await engine.updatePageContent(editablePage.contentRefs, normalizedBytes, doc!.objects);
+        }
         const result = await engine.renderPage(doc!, currentPage, { scale });
         if (cancelled) return;
         setRenderResult(result);

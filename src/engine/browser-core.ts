@@ -12,6 +12,7 @@ export type { PDFObject, PDFDocumentData } from './types';
 export { parsePDF } from './worker/client';
 export { getPageContentBytes } from './parser/parser';
 export { interpretPage } from './content/interpreter';
+export { explodeTJGaps } from './content/tj-normalizer';
 export type { TextRun, PathItem, ImageItem, DisplayItem } from './content/interpreter';
 
 export { loadPageFonts } from './fonts/font-parser';

@@ -39,6 +39,7 @@ export { applyFilters, flateEncode } from './parser/filters';
 export { parseContentStream } from './content/operator-lexer';
 export type { CSInstruction } from './content/operator-lexer';
 export { interpretPage } from './content/interpreter';
+export { explodeTJGaps, COLUMN_GUTTER_FACTOR } from './content/tj-normalizer';
 export type {
   TextRun,
   GlyphPosition,
