@@ -16,6 +16,7 @@ import { applyFilters } from '../../parser/filters';
 import type { EncryptionContext } from '../types';
 import {
   algorithmForEncrypt,
+  algorithmForFilter,
   computeObjectKey,
   decryptBytes,
   shouldEncryptStream,
@@ -71,14 +72,18 @@ async function decryptStream(
   const type = stream.dict.getName('Type');
   const subtype = stream.dict.getName('Subtype');
 
+  if (type === 'XRef') return;
+
   if (!shouldEncryptStream(ctx.encrypt, { type, subtype })) {
     // Still apply filters
     await decodeFilters(stream);
     return;
   }
 
-  const key = computeObjectKey(ctx.fileKey!, objNum, genNum, ctx.algorithm);
-  const plain = await decryptBytes(stream.rawBytes, key, ctx.algorithm);
+  const algorithm = algorithmForFilter(ctx.encrypt, ctx.encrypt.stmF);
+  if (!algorithm) return;
+  const key = computeObjectKey(ctx.fileKey!, objNum, genNum, algorithm);
+  const plain = await decryptBytes(stream.rawBytes, key, algorithm);
   stream.rawBytes = plain;
   stream.dict.set('Length', new PDFNumber(plain.length));
   await decodeFilters(stream);
@@ -115,8 +120,10 @@ async function decryptObjectValue(
   seen.add(obj);
 
   if (obj instanceof PDFString || obj instanceof PDFHexString) {
-    const key = computeObjectKey(ctx.fileKey!, objNum, genNum, ctx.algorithm);
-    const plain = await decryptBytes(obj.toBytes(), key, ctx.algorithm);
+    const algorithm = algorithmForFilter(ctx.encrypt, ctx.encrypt.strF);
+    if (!algorithm) return obj;
+    const key = computeObjectKey(ctx.fileKey!, objNum, genNum, algorithm);
+    const plain = await decryptBytes(obj.toBytes(), key, algorithm);
     return new PDFString(pdfBytesToString(plain));
   }
 

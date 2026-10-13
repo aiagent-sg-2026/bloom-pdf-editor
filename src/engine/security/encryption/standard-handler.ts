@@ -234,7 +234,7 @@ export async function hashRevision6(
 ): Promise<Uint8Array> {
   let k = await sha256(concatBytes(password, salt, userKey ?? new Uint8Array(0)));
   let round = 0;
-  let lastE = new Uint8Array(0);
+  let lastE = new Uint8Array(new ArrayBuffer(0));
 
   // Algorithm 2.B numbers the AES/hash rounds from 1.  There are always at
   // least 64 rounds; after that, continue only while the last byte of E is
@@ -249,7 +249,8 @@ export async function hashRevision6(
     const aesKey = k.subarray(0, 16);
     const iv = k.subarray(16, 32);
     const e = await aesEncryptRaw(aesKey, iv, k1, false);
-    lastE = e;
+    lastE = new Uint8Array(new ArrayBuffer(e.byteLength));
+    lastE.set(e);
 
     // Choose next hash based on first 16 bytes of E as big-endian mod 3.
     // The termination test below is also defined in terms of E, not K.
