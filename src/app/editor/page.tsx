@@ -5557,8 +5557,9 @@ export default function EditorPage() {
                         <X size={12} />
                       </button>
                       <button
-                        className="absolute -bottom-3 -right-3 bg-[#E8607A] text-white rounded-full p-1 shadow hover:bg-[#D94D6A] transition-colors z-30"
+                        className="absolute -top-3 right-8 bg-[#E8607A] text-white rounded-full p-1 shadow hover:bg-[#D94D6A] transition-colors z-30"
                         title="Replace Image"
+                        data-control="replace-image"
                         onClick={(e) => {
                           e.stopPropagation();
                           replacingImageIdRef.current = fi.id;
