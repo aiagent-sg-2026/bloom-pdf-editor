@@ -63,7 +63,13 @@ export async function parsePDF(
   const version = readHeader(data);
 
   // 2. Build cross-reference table
-  const xref = await buildFullXref(data);
+  let xref: XRefTable;
+  try {
+    xref = await buildFullXref(data);
+  } catch (error) {
+    const detail = error instanceof Error ? error.message : String(error);
+    throw new Error(`Failed to parse PDF: ${detail}`);
+  }
 
   const encrypted = xref.trailerDict.has('Encrypt');
   const deferFilters = options.deferEncryptedFilters !== false && encrypted;
