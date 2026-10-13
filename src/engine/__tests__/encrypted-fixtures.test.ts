@@ -46,7 +46,10 @@ describe('qpdf encrypted fixtures', () => {
       const outputPath = join(tmpdir(), `bloom-resaved-${name}`);
       writeFileSync(outputPath, saved);
       try {
-        const qpdfResult = spawnSync('qpdf', ['--check', outputPath], {
+        const qpdfArgs = password === ''
+          ? ['--check', outputPath]
+          : [`--password=${password}`, '--check', outputPath];
+        const qpdfResult = spawnSync('qpdf', qpdfArgs, {
           encoding: 'utf8',
         });
         if ((qpdfResult.error as NodeJS.ErrnoException | undefined)?.code === 'ENOENT') {
