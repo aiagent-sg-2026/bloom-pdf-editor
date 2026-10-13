@@ -108,7 +108,8 @@ describe('page deletion privacy', () => {
       ref = item.get('Next');
     }
     expect(titles).toEqual(['Section-2', 'Section-3']);
-    expect((reparsed.objects.get('31_0') as PDFDict).get('Dest')).toBeUndefined();
+    expect((reparsed.objects.get('30_0') as PDFDict | undefined)?.get('Dest')).toBeUndefined();
+    expect((reparsed.objects.get('31_0') as PDFDict).get('Dest')).toBeInstanceOf(PDFArray);
     expect((doc.pages[0].dict.get('Annots'))).toBeUndefined();
   });
 
@@ -151,7 +152,8 @@ describe('page deletion privacy', () => {
       titles.push(item.getName('Title') ?? item.getString('Title') ?? '');
       ref = item.get('Next');
     }
-    expect(titles).toEqual(['Section-2', 'Surviving child', 'Section-3']);
+    // A dropped outline parent promotes surviving children at its position.
+    expect(titles).toEqual(['Surviving child', 'Section-2', 'Section-3']);
     expect(new TextDecoder().decode(bytes)).not.toContain('ONLY_PAGE_ONE_SECRET');
   });
 

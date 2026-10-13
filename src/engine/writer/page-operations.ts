@@ -182,9 +182,21 @@ function removeDeletedPageDestinations(doc: PDFDocumentData, pageRef: PDFRef): v
       catalog.delete('Outlines');
     }
   }
+
+  // Prune legacy catalog destinations individually so surviving named
+  // destinations remain valid after page deletion.
+  const dests = catalog.get('Dests');
+  const destDict = dests instanceof PDFRef ? doc.objects.get(dests.toKey()) : dests;
+  if (destDict instanceof PDFDict) {
+    for (const [name, destination] of Array.from(destDict.entries())) {
+      if (containsDestinationRef(destination, pageRef, doc.objects)) destDict.delete(name);
+    }
+    if (destDict.size === 0) catalog.delete('Dests');
+  }
+
   // Named destinations can be reached through /Names and are otherwise easy to
   // leave dangling, so drop the names tree if one points to the deleted page.
-  if (containsRef(catalog.get('Names') ?? PDFNull.instance, pageRef, doc.objects)) {
+  if (containsDestinationRef(catalog.get('Names') ?? PDFNull.instance, pageRef, doc.objects)) {
     catalog.delete('Names');
   }
 
