@@ -1351,9 +1351,8 @@ function applyGroupedTextEdit(
  * string/number outside the changed span (common prefix/suffix diff) and only
  * re-encodes the changed middle.
  *
- * Returns null (caller falls back to the normal rebuild) unless the array has a
- * large adjustment, only plain strings, and its characters line up 1:1 with the
- * run text.
+ * Returns null (caller falls back to the normal rebuild) unless the array has
+ * only plain strings whose characters line up 1:1 with the run text.
  */
 export function patchTJPreservingGaps(
   oldArr: PDFArray,
@@ -1363,12 +1362,14 @@ export function patchTJPreservingGaps(
   /** Advance of one character in text-space em (1 = font size); enables gap compensation. */
   emWidth?: (ch: string) => number,
 ): PDFArray | null {
-  const BIG_ADJUST = 400;
-  let hasBig = false;
+  // Firefox/cairo commonly uses about -350 for a 0.35-em word gap, below the
+  // column-gutter threshold. Keep those adjustments eligible for compensation
+  // too, so a width change before the gap cannot erase the visual word space.
+  const GAP_ADJUST = 200;
   let total = 0;
   for (const it of oldArr.items) {
     if (it instanceof PDFNumber) {
-      if (Math.abs(it.value) >= BIG_ADJUST) hasBig = true;
+      continue;
     } else if (it instanceof PDFString) {
       total += it.value.length;
     } else {
@@ -1414,7 +1415,7 @@ export function patchTJPreservingGaps(
       else if (afterEdit) {
         insert();
         const compensate = emWidth ? Math.round((newAdv - oldAdv) * 1000) : 0;
-        if (!compensated && compensate !== 0 && Math.abs(it.value) >= BIG_ADJUST) {
+        if (!compensated && compensate !== 0 && Math.abs(it.value) >= GAP_ADJUST) {
           compensated = true;
           const next = it.value < 0 ? Math.min(-200, it.value + compensate) : Math.max(200, it.value - compensate);
           out.push(new PDFNumber(next));
