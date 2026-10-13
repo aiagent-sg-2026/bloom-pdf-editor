@@ -4,6 +4,7 @@ import { useCallback, useState, useRef } from 'react';
 import { useRouter } from 'next/navigation';
 import Image from 'next/image';
 import { savePdfToStorage } from '@/lib/pdfStorage';
+import { isPdfFile } from '@/app/pdf-file-validation';
 import { FileUp, Loader2, Sparkles } from 'lucide-react';
 
 export default function Home() {
@@ -14,16 +15,14 @@ export default function Home() {
   const router = useRouter();
 
   const handleFile = useCallback(async (file: File) => {
-    if (file.type !== 'application/pdf' && !file.name.endsWith('.pdf')) {
-      setError('Please select a valid PDF document.');
-      return;
-    }
-
-    setIsLoading(true);
-    setError(null);
-
     try {
       const buffer = await file.arrayBuffer();
+      if (!isPdfFile(file.name, file.type, new Uint8Array(buffer))) {
+        setError('Please select a valid PDF document.');
+        return;
+      }
+      setIsLoading(true);
+      setError(null);
       await savePdfToStorage(buffer, file.name);
       router.push('/editor');
     } catch (e) {
