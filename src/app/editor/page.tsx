@@ -1893,7 +1893,11 @@ export default function EditorPage() {
               flow.lines.find((l: TextLine) => normalizeDashes(l.text) === commitNorm) ??
               findMatchingFlowLine(targetLine, flow.lines) ??
               null;
-            if (packLine && packLine.segments.length > 1) {
+            // A cell that grew into its column gutter is re-detected as one line together with
+            // its right neighbour; packing that merged line would drag the neighbour next to it.
+            // Only pack when the matched line is still just the edited text.
+            const mergedWithNeighbour = packLine != null && packLine.text.length > commitText.length;
+            if (packLine && !mergedWithNeighbour && packLine.segments.length > 1) {
               const packed = engine.correctLineResidualGaps(
                 packBytes, page, doc.objects, packLine,
                 { gapSourceLine: targetLine },
