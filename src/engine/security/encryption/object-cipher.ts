@@ -74,11 +74,14 @@ export function algorithmForFilter(
   enc: EncryptDictionary,
   filterName: string,
 ): EncryptionAlgorithm | null {
-  if (filterName === 'Identity') return null;
-  const filter = enc.cryptFilters.get(filterName);
-  if (!filter && enc.version < 4) {
+  // V1 has no crypt filters. The parser represents its implicit default
+  // cipher with Identity for StmF/StrF, but that means the filter dictionary
+  // is absent—not that streams and strings are left unencrypted.
+  if (enc.version < 4) {
     return enc.length <= 40 ? 'RC4-40' : 'RC4-128';
   }
+  if (filterName === 'Identity') return null;
+  const filter = enc.cryptFilters.get(filterName);
   if (!filter || filter.method === 'None' || filter.method === 'Identity') return null;
   if (filter.method === 'AESV2') return 'AES-128';
   if (filter.method === 'AESV3') return 'AES-256';
