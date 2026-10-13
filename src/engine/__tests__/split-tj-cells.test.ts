@@ -59,4 +59,23 @@ describe('explodeTJGaps', () => {
     expect(text).toMatch(/X(\\261|\xb1)Y/);
     expect(Array.from(out)).not.toContain(0xc2);
   });
+  it('keeps narrow-gutter cells (1.4-1.5 em at 10 pt) as separate editable lines', () => {
+    for (const gap of [1400, 1500]) {
+      const f = fixture(`1 0 0 -1 0 792 cm\nBT /F1 10 Tf 1 0 0 1 30 80 Tm\n[(ONLY)-${gap}(12345)-${gap}(67890)] TJ ET\n`);
+      const runs = interpretPage(explodeTJGaps(f.bytes, f.page, f.objects), f.page, f.objects).textRuns;
+      const lines = buildDocumentFlow(runs).lines;
+      expect(lines.map(l => l.text)).toEqual(['ONLY', '12345', '67890']);
+    }
+  });
+  it('keeps the next Td-relative line in place when a Tf sits between the row and the Td', () => {
+    const f = fixture('BT\n/F1 10 Tf\n1 0 0 1 40 700 Tm\n[(A)-3000(B)] TJ /F1 10 Tf\n0 -20 Td\n[(C)-3000(D)] TJ\nET\n');
+    const before = interpretPage(f.bytes, f.page, f.objects).textRuns;
+    const after = interpretPage(explodeTJGaps(f.bytes, f.page, f.objects), f.page, f.objects).textRuns;
+    for (const t of ['A', 'B', 'C', 'D']) {
+      const b = before.flatMap(r => r.glyphs).find(g => g.unicode === t)!;
+      const a = after.flatMap(r => r.glyphs).find(g => g.unicode === t)!;
+      expect(a.tRm.e).toBeCloseTo(b.tRm.e, 2);
+      expect(a.tRm.f).toBeCloseTo(b.tRm.f, 2);
+    }
+  });
 });

@@ -46,10 +46,11 @@ export function detectTabSplitIndex(runs: TextRun[], fontSize: number): number {
 export function detectColumnSplitIndices(runs: TextRun[], fontSize: number): number[] {
   if (runs.length < 2) return [];
 
-  const avgCharW = runs.reduce((s, r) => s + averageCharWidth(r), 0) / Math.max(1, runs.length);
-  // Word spaces are typically < ~2.5× font size; column gutters are larger.
-  // Resume tables often use moderate gutters — keep threshold practical.
-  const columnMin = Math.max(fontSize * COLUMN_GUTTER_FACTOR, avgCharW * 2.8);
+  // Word spaces are well under 1 em; the content normaliser (explodeTJGaps) already
+  // treats any TJ gap >= COLUMN_GUTTER_FACTOR em as a column gutter, so use the very
+  // same threshold here. A wider glyph-width term made narrow-gutter cells (1.35–1.7 em,
+  // typical for digit columns) merge back into one editable line.
+  const columnMin = fontSize * COLUMN_GUTTER_FACTOR;
 
   const splits: number[] = [];
   for (let i = 0; i < runs.length - 1; i++) {

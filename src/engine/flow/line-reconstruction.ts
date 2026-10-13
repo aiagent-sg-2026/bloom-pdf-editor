@@ -100,7 +100,9 @@ function processCluster(runs: TextRun[]): TextLine[] {
   if (runs.length === 0) return [];
   const sorted = [...runs].sort((a, b) => getRunBounds(a).left - getRunBounds(b).left);
 
-  let maxFontSize = 12;
+  // Largest font on the baseline. Do not floor at 12 pt: a 10 pt table row would then
+  // need a 16.2 pt gutter instead of 13.5 pt and narrow-gutter cells would merge.
+  let maxFontSize = 0;
   for (let i = 0; i < sorted.length; i++) {
     maxFontSize = Math.max(maxFontSize, sorted[i].fontSize || sorted[i].glyphs[0]?.fontSize || 12);
   }
