@@ -22,7 +22,7 @@ import {
   hitTestTextLine, findNearestTextLine, caretIndexFromLineX,
   getLineBounds, getOverlayFontFamily, getOverlayFontStyle, getDisplayFontFamily,
 } from './utils';
-import { buildDisplayListIndex, hitTestDisplayList, isSelectableDisplayItem, EditorHistory, captureHistoryEntry, restoreAnnotSnapshot, restoreDocumentStructure, parseOverlaySnapshot, deleteObject, visualFontSize, resolveRunStyleFlags, transformObject, applyObjectTransform, distributeTextChangeToSegments, segmentAtIndex, createVisualSignature, hitTestSignature, moveSignature, resizeSignature, rotateSignature, setSignatureOpacity, setSignatureLocked, deleteSignature, updateSignature, getSignatureLibrary, DEFAULT_SIGNATURE_SIZE, detectSignatureFieldsOnPage, hitTestSignatureField, createSignatureFieldAtPoint, applySignatureFieldAppearanceAsync, getCertificateManager, signDocumentCryptographic, validateDocumentSignatures, enableLongTermValidation, getLtvStatus, listManagedSignatures, buildRevisionViewer, lockSignaturesAfterSigning, pushRecentSignatureId, orderLibraryByRecent, SIGNATURE_SHORTCUTS } from '@/engine/browser-core';
+import { buildDisplayListIndex, hitTestDisplayList, isSelectableDisplayItem, EditorHistory, captureHistoryEntry, restoreAnnotSnapshot, restoreDocumentStructure, parseOverlaySnapshot, deleteObject, visualFontSize, resolveRunStyleFlags, transformObject, applyObjectTransform, distributeTextChangeToSegments, segmentAtIndex, createVisualSignature, hitTestSignature, moveSignature, resizeSignature, rotateSignature, setSignatureOpacity, setSignatureLocked, deleteSignature, updateSignature, visualSignatureToImagePlacement, getSignatureLibrary, DEFAULT_SIGNATURE_SIZE, detectSignatureFieldsOnPage, hitTestSignatureField, createSignatureFieldAtPoint, applySignatureFieldAppearanceAsync, getCertificateManager, signDocumentCryptographic, validateDocumentSignatures, enableLongTermValidation, getLtvStatus, listManagedSignatures, buildRevisionViewer, lockSignaturesAfterSigning, pushRecentSignatureId, orderLibraryByRecent, SIGNATURE_SHORTCUTS } from '@/engine/browser-core';
 import type { QuadTree, SelectableItem, EditableObject } from '@/engine/browser-core';
 import { findMatchingFlowLine } from './flowLineMatch';
 
@@ -2994,7 +2994,11 @@ export default function EditorPage() {
     const paths = pathsToCommit || drawnPaths;
     const fTexts = textsToCommit || floatingTexts;
     const fImages = imagesToCommit || floatingImages;
-    if (!doc || !engineRef.current || (paths.length === 0 && fTexts.length === 0 && fImages.length === 0)) return;
+    const signaturePlacements = signaturesRef.current
+      .filter((signature) => signature.pageIndex === currentPage)
+      .map((signature) => visualSignatureToImagePlacement(signature, getSignatureLibrary().get(signature.appearanceId)))
+      .filter((placement): placement is NonNullable<typeof placement> => placement !== null);
+    if (!doc || !engineRef.current || (paths.length === 0 && fTexts.length === 0 && fImages.length === 0 && signaturePlacements.length === 0)) return;
     const engine = engineRef.current;
     const page = doc.pages[currentPage];
     let currentObjNum = engine.getNextObjNum(doc);
@@ -3096,7 +3100,7 @@ export default function EditorPage() {
       currentObjNum += 2;
     }
 
-    if (fTexts.length > 0 || fImages.length > 0) {
+    if (fTexts.length > 0 || fImages.length > 0 || signaturePlacements.length > 0) {
       let contentBytes = engine.getPageContentBytes(page, doc.objects);
       let newContentBytes: any = new Uint8Array(contentBytes);
 
@@ -3124,6 +3128,21 @@ export default function EditorPage() {
         newContentBytes = b;
       }
 
+      // Visual signatures are overlay state until export. Their model uses a
+      // lower-left PDF bbox, while insertImageRun accepts the top edge as y.
+      for (const signature of signaturePlacements) {
+        const { newContentBytes: b } = await engine.insertImageRun(
+          newContentBytes, page, doc.objects, signature.imageDataUrl,
+          signature.x, signature.y + signature.height, signature.width, signature.height,
+          () => {
+            const num = currentObjNum;
+            currentObjNum++;
+            return num;
+          },
+        );
+        newContentBytes = b;
+      }
+
       // Must finish before the caller saves — otherwise Download exports without the new text/images.
       try {
         await engine.updatePageContent(page.contentRefs, newContentBytes, doc.objects);
@@ -3138,7 +3157,11 @@ export default function EditorPage() {
     setFloatingImages([]);
     setActiveFloatingTextId(null);
     setActiveFloatingImageId(null);
-    pushEditorHistory('commit-drawings', clearedOverlays, undefined, true);
+    const committedSignatureIds = new Set(signaturePlacements.map((signature) => signature.signatureId));
+    const remainingSignatures = signaturesRef.current.filter((signature) => !committedSignatureIds.has(signature.id));
+    setSignatures(remainingSignatures);
+    signaturesRef.current = remainingSignatures;
+    pushEditorHistory('commit-drawings', { ...clearedOverlays, signatures: remainingSignatures }, undefined, true);
     setIsDirty(true);
     setRenderKey(k => k + 1);
   }, [doc, currentPage, drawnPaths, floatingTexts, floatingImages, scale, renderResult, pushEditorHistory]);
