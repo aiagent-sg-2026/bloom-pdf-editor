@@ -19,6 +19,7 @@ import {
   type PDFDocumentData,
   type PDFObject,
 } from '../types';
+import { getPageContentBytes } from '../parser/parser';
 
 export interface OverlaySnapshot {
   drawnPathsJson: string;
@@ -34,6 +35,12 @@ export interface PageAnnotSnapshot {
   objects: Map<string, PDFObject>;
 }
 
+export interface PageHistorySnapshot {
+  pageIndex: number;
+  contentBytes: Uint8Array;
+  annotSnapshot: PageAnnotSnapshot;
+}
+
 export interface EditorHistoryEntry {
   label: string;
   timestamp: number;
@@ -41,6 +48,8 @@ export interface EditorHistoryEntry {
   contentBytes: Uint8Array;
   annotSnapshot: PageAnnotSnapshot;
   overlays: OverlaySnapshot;
+  /** Complete document state; the legacy fields above describe pageIndex. */
+  pages?: PageHistorySnapshot[];
 }
 
 /** Deep-clone a PDF object graph (dicts/arrays/streams). Refs are copied by value. */
@@ -267,6 +276,13 @@ export class EditorHistory {
     this.undoStack = [];
     this.redoStack = [];
   }
+
+  /** Replace the current state when an overlay is baked into the PDF. */
+  replace(entry: EditorHistoryEntry): void {
+    if (this.undoStack.length === 0) this.undoStack.push(entry);
+    else this.undoStack[this.undoStack.length - 1] = entry;
+    this.redoStack = [];
+  }
 }
 
 /** Capture a full page history entry from the live document. */
@@ -283,6 +299,11 @@ export function captureHistoryEntry(
   label: string,
 ): EditorHistoryEntry {
   const page = doc.pages[pageIndex];
+  const pages = doc.pages.map((p, index) => ({
+    pageIndex: index,
+    contentBytes: new Uint8Array(index === pageIndex ? contentBytes : getPageBytes(p, doc.objects)),
+    annotSnapshot: captureAnnotSnapshot(p.dict, doc.objects),
+  }));
   return {
     label,
     timestamp: Date.now(),
@@ -290,5 +311,10 @@ export function captureHistoryEntry(
     contentBytes: new Uint8Array(contentBytes),
     annotSnapshot: captureAnnotSnapshot(page.dict, doc.objects),
     overlays: makeOverlaySnapshot(overlays),
+    pages,
   };
+}
+
+function getPageBytes(page: PDFDocumentData['pages'][number], objects: Map<string, PDFObject>): Uint8Array {
+  return getPageContentBytes(page, objects);
 }

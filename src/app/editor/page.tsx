@@ -549,6 +549,7 @@ export default function EditorPage() {
       signatures?: VisualSignature[];
     },
     pageIndexOverride?: number,
+    replaceCurrent = false,
   ) => {
     if (!doc || !engineRef.current) return;
     const pageIndex = pageIndexOverride ?? currentPage;
@@ -567,7 +568,8 @@ export default function EditorPage() {
       },
       label,
     );
-    historyRef.current.push(entry);
+    if (replaceCurrent) historyRef.current.replace(entry);
+    else historyRef.current.push(entry);
     syncTxState();
   }, [doc, currentPage, syncTxState]);
 
@@ -578,13 +580,16 @@ export default function EditorPage() {
     setIsDirty(true);
   }, [pushEditorHistory]);
 
-  const applyHistoryEntry = useCallback(async (entry: import('@/engine/browser-core').EditorHistoryEntry) => {
+  const applyHistoryEntry = useCallback(async (entry: import('@/engine/browser-core').EditorHistoryEntry, displayPageIndex?: number) => {
     if (!doc || !engineRef.current) return;
     const engine = engineRef.current;
-    const page = doc.pages[entry.pageIndex];
-    if (!page) return;
-    await engine.updatePageContent(page.contentRefs, entry.contentBytes, doc.objects);
-    restoreAnnotSnapshot(page.dict, doc.objects, entry.annotSnapshot);
+    const pages = entry.pages ?? [{ pageIndex: entry.pageIndex, contentBytes: entry.contentBytes, annotSnapshot: entry.annotSnapshot }];
+    for (const pageState of pages) {
+      const page = doc.pages[pageState.pageIndex];
+      if (!page) continue;
+      await engine.updatePageContent(page.contentRefs, pageState.contentBytes, doc.objects);
+      restoreAnnotSnapshot(page.dict, doc.objects, pageState.annotSnapshot);
+    }
     setDrawnPaths(parseOverlaySnapshot<DrawnPath[]>(entry.overlays.drawnPathsJson));
     setFloatingTexts(parseOverlaySnapshot<FloatingText[]>(entry.overlays.floatingTextsJson));
     setFloatingImages(parseOverlaySnapshot<FloatingImage[]>(entry.overlays.floatingImagesJson));
@@ -592,7 +597,8 @@ export default function EditorPage() {
     setSignatures(sigs);
     signaturesRef.current = sigs;
     setSelectedSignatureId(null);
-    if (entry.pageIndex !== currentPage) setCurrentPage(entry.pageIndex);
+    const nextPage = displayPageIndex ?? entry.pageIndex;
+    if (nextPage !== currentPage) setCurrentPage(nextPage);
     syncTxState();
     setRenderKey((k) => k + 1);
   }, [doc, currentPage, syncTxState]);
@@ -1938,7 +1944,7 @@ export default function EditorPage() {
     const entry = historyRef.current.undo();
     if (!entry) return;
     try {
-      await applyHistoryEntry(entry);
+      await applyHistoryEntry(entry, currentPage);
     } catch (e) {
       console.error('[Editor] Undo failed:', e);
     }
@@ -2667,7 +2673,10 @@ export default function EditorPage() {
         color: textColor,
       };
 
-      setFloatingTexts(prev => [...prev, newBox]);
+      const nextTexts = [...floatingTextsRef.current, newBox];
+      setFloatingTexts(nextTexts);
+      floatingTextsRef.current = nextTexts;
+      pushEditorHistory('add-text-box', { floatingTexts: nextTexts });
       setActiveFloatingTextId(newBox.id);
       setActiveTool('text');
 
@@ -3078,7 +3087,7 @@ export default function EditorPage() {
     setFloatingImages([]);
     setActiveFloatingTextId(null);
     setActiveFloatingImageId(null);
-    pushEditorHistory('commit-drawings', clearedOverlays);
+    pushEditorHistory('commit-drawings', clearedOverlays, undefined, true);
     setIsDirty(true);
     setRenderKey(k => k + 1);
   }, [doc, currentPage, drawnPaths, floatingTexts, floatingImages, scale, renderResult, pushEditorHistory]);
@@ -3602,7 +3611,10 @@ export default function EditorPage() {
           pdfHeight,
           dataUrl: jpegDataUrl,
         };
-        setFloatingImages(prev => [...prev, newImg]);
+        const nextImages = [...floatingImagesRef.current, newImg];
+        setFloatingImages(nextImages);
+        floatingImagesRef.current = nextImages;
+        pushEditorHistory('add-image', { floatingImages: nextImages });
         setActiveFloatingImageId(newImg.id);
       };
       img.src = dataUrl;
@@ -5376,7 +5388,10 @@ export default function EditorPage() {
                       className="absolute -top-3 -right-3 bg-red-500 text-white rounded-full p-1 shadow hover:bg-red-600 transition-colors z-30"
                       onClick={(e) => {
                         e.stopPropagation();
-                        setFloatingTexts(prev => prev.filter(p => p.id !== ft.id));
+                        const nextTexts = floatingTextsRef.current.filter(p => p.id !== ft.id);
+                        setFloatingTexts(nextTexts);
+                        floatingTextsRef.current = nextTexts;
+                        pushEditorHistory('delete-text-box', { floatingTexts: nextTexts });
                         if (activeFloatingTextId === ft.id) setActiveFloatingTextId(null);
                       }}
                     >
@@ -5452,7 +5467,10 @@ export default function EditorPage() {
                         title="Delete Image"
                         onClick={(e) => {
                           e.stopPropagation();
-                          setFloatingImages(prev => prev.filter(p => p.id !== fi.id));
+                          const nextImages = floatingImagesRef.current.filter(p => p.id !== fi.id);
+                          setFloatingImages(nextImages);
+                          floatingImagesRef.current = nextImages;
+                          pushEditorHistory('delete-image', { floatingImages: nextImages });
                           if (activeFloatingImageId === fi.id) setActiveFloatingImageId(null);
                         }}
                       >
