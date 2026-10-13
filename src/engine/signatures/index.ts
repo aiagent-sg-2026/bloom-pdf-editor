@@ -79,6 +79,8 @@ export {
   signatureToBBox,
 } from './visual/signature-model';
 export type { CreateSignatureOpts } from './visual/signature-model';
+export { visualSignatureToImagePlacement } from './visual/signature-export';
+export type { VisualSignatureImagePlacement } from './visual/signature-export';
 
 export { SignatureHistory } from './visual/visual-history';
 export type { SignatureSnapshot } from './visual/visual-history';

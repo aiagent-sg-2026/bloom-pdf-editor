@@ -448,6 +448,7 @@ export {
   deleteSignature,
   updateSignature,
   signatureToBBox,
+  visualSignatureToImagePlacement,
   nextSignatureId,
   resetSignatureIdCounter,
   SignatureHistory,

@@ -120,6 +120,7 @@ export {
   setSignatureLocked,
   deleteSignature,
   updateSignature,
+  visualSignatureToImagePlacement,
   getSignatureLibrary,
   DEFAULT_SIGNATURE_SIZE,
   detectSignatureFieldsOnPage,
