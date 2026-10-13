@@ -781,9 +781,13 @@ export default function EditorPage() {
     });
   }, [queueOrApplyStyle]);
   const handleTextColor = useCallback((v: string) => {
+    if (!/^#(?:[0-9a-f]{3}|[0-9a-f]{6})$/i.test(v.trim())) return;
     setTextColor(v);
+    if (activeFloatingTextId) {
+      setFloatingTexts(prev => prev.map(p => p.id === activeFloatingTextId ? { ...p, color: v } : p));
+    }
     queueOrApplyStyle({ color: v });
-  }, [queueOrApplyStyle]);
+  }, [activeFloatingTextId, queueOrApplyStyle]);
   const handleTextAlign = useCallback((v: 'left' | 'center' | 'right') => {
     setTextAlign(v);
     queueOrApplyStyle({ align: v });
@@ -3573,7 +3577,7 @@ export default function EditorPage() {
       const dataUrl = event.target?.result as string;
       const img = new window.Image();
       img.onload = async () => {
-        // Always convert to JPEG — engine image XObjects use DCTDecode
+        // Preserve PNG pixels so transparent images can use an indirect /SMask.
         const canvas = document.createElement('canvas');
         canvas.width = img.naturalWidth;
         canvas.height = img.naturalHeight;
@@ -3583,13 +3587,14 @@ export default function EditorPage() {
         ctx.fillRect(0, 0, canvas.width, canvas.height);
         ctx.drawImage(img, 0, 0);
         const jpegDataUrl = canvas.toDataURL('image/jpeg', 0.92);
+        const imageDataUrlForPdf = file.type === 'image/png' ? dataUrl : jpegDataUrl;
 
         // Replace embedded PDF image in-place (same cm / bbox)
         if (replacingEmbeddedImageRef.current && doc && engineRef.current) {
           const target = replacingEmbeddedImageRef.current;
           replacingEmbeddedImageRef.current = null;
           try {
-            await engineRef.current.replaceImageXObject(doc, currentPage, target, jpegDataUrl);
+            await engineRef.current.replaceImageXObject(doc, currentPage, target, imageDataUrlForPdf, () => engineRef.current!.getNextObjNum(doc));
             pushEditorHistory('replace-image');
             setIsDirty(true);
             setSelectedDisplayItem(null);
@@ -3602,7 +3607,7 @@ export default function EditorPage() {
         }
 
         if (replacingImageIdRef.current) {
-          setFloatingImages(prev => prev.map(p => p.id === replacingImageIdRef.current ? { ...p, dataUrl: jpegDataUrl } : p));
+          setFloatingImages(prev => prev.map(p => p.id === replacingImageIdRef.current ? { ...p, dataUrl: imageDataUrlForPdf } : p));
           replacingImageIdRef.current = null;
           return;
         }
@@ -3629,7 +3634,7 @@ export default function EditorPage() {
           pdfY,
           pdfWidth,
           pdfHeight,
-          dataUrl: jpegDataUrl,
+          dataUrl: imageDataUrlForPdf,
         };
         const nextImages = [...floatingImagesRef.current, newImg];
         setFloatingImages(nextImages);
@@ -4607,6 +4612,17 @@ export default function EditorPage() {
       } else if ((e.key === 'Delete' || e.key === 'Backspace') && selectedSignatureId) {
         e.preventDefault();
         handleSignatureDelete(selectedSignatureId);
+      } else if ((e.key === 'Delete' || e.key === 'Backspace') && activeFloatingTextId) {
+        e.preventDefault();
+        const nextTexts = floatingTextsRef.current.filter(p => p.id !== activeFloatingTextId);
+        setFloatingTexts(nextTexts);
+        floatingTextsRef.current = nextTexts;
+        pushEditorHistory('delete-text-box', { floatingTexts: nextTexts });
+        setActiveFloatingTextId(null);
+      } else if (e.key === 'Escape' && activeFloatingTextId) {
+        e.preventDefault();
+        setActiveFloatingTextId(null);
+        setActiveTool('select');
       } else if (e.key === 'w' || e.key === 'W') {
         if (!e.metaKey && !e.ctrlKey) setActiveTool('watermark');
       } else if (e.key === 'x' || e.key === 'X') {
@@ -4621,7 +4637,7 @@ export default function EditorPage() {
     }
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
-  }, [goToPrev, goToNext, zoomIn, zoomOut, editingLine, selectedSignatureId, handleSignatureDelete, activeTool, handleValidateSignatures]);
+  }, [goToPrev, goToNext, zoomIn, zoomOut, editingLine, selectedSignatureId, handleSignatureDelete, activeTool, handleValidateSignatures, activeFloatingTextId, pushEditorHistory]);
 
   // Clean, Minimalist 3D Tilted Pink Square Rubber Block Eraser Cursor
   const eraser3dSvg = `<svg xmlns="http://www.w3.org/2000/svg" width="32" height="32" viewBox="0 0 32 32"><defs><filter id="er-pinksq-shadow" x="-30%" y="-30%" width="160%" height="160%"><feDropShadow dx="1" dy="1.4" stdDeviation="1.2" flood-color="#000000" flood-opacity="0.45"/></filter><linearGradient id="er-pink-top" x1="0" y1="0" x2="1" y2="1"><stop offset="0%" stop-color="#FFA8E0"/><stop offset="60%" stop-color="#FF65C8"/><stop offset="100%" stop-color="#E840A8"/></linearGradient><linearGradient id="er-pink-left" x1="0" y1="0" x2="1" y2="1"><stop offset="0%" stop-color="#FF52B7"/><stop offset="100%" stop-color="#D6208A"/></linearGradient><linearGradient id="er-pink-right" x1="0" y1="0" x2="1" y2="1"><stop offset="0%" stop-color="#BF157A"/><stop offset="100%" stop-color="#80094F"/></linearGradient></defs><g filter="url(#er-pinksq-shadow)"><path d="M 4 16 L 16 4 L 28 16 L 28 19 L 16 31 L 4 19 Z" fill="none" stroke="#FFFFFF" stroke-width="2.4" stroke-linejoin="round" stroke-linecap="round"/><path d="M 4 16 L 16 4 L 28 16 L 16 28 Z" fill="url(#er-pink-top)" stroke="#80094F" stroke-width="0.6"/><path d="M 4 16 L 16 28 L 16 31 L 4 19 Z" fill="url(#er-pink-left)" stroke="#80094F" stroke-width="0.6"/><path d="M 16 28 L 28 16 L 28 19 L 16 31 Z" fill="url(#er-pink-right)" stroke="#80094F" stroke-width="0.6"/><path d="M 4 16 L 16 4 L 22 10 L 10 22 Z" fill="#FFFFFF" fill-opacity="0.45"/><circle cx="4" cy="28" r="0.8" fill="#FFFFFF" stroke="#80094F" stroke-width="0.4"/></g></svg>`;
