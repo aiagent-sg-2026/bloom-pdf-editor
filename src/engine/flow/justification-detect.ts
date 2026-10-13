@@ -10,6 +10,7 @@
 import type { TextRun } from '../content/interpreter';
 import type { TextLine } from './types';
 import { averageCharWidth, gapBetweenRuns, getRunBounds } from './metrics';
+import { COLUMN_GUTTER_FACTOR } from '../content/tj-normalizer';
 
 const BULLET_CHARS = /^[\u2022\u2023\u25E6\u2043\u2219\u00B7\u25CF\u25CB•∙]$/;
 
@@ -48,7 +49,7 @@ export function detectColumnSplitIndices(runs: TextRun[], fontSize: number): num
   const avgCharW = runs.reduce((s, r) => s + averageCharWidth(r), 0) / Math.max(1, runs.length);
   // Word spaces are typically < ~2.5× font size; column gutters are larger.
   // Resume tables often use moderate gutters — keep threshold practical.
-  const columnMin = Math.max(fontSize * 1.35, avgCharW * 2.8);
+  const columnMin = Math.max(fontSize * COLUMN_GUTTER_FACTOR, avgCharW * 2.8);
 
   const splits: number[] = [];
   for (let i = 0; i < runs.length - 1; i++) {
