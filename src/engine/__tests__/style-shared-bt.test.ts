@@ -71,6 +71,16 @@ describe('style on one line of a shared BT', () => {
     expect(fonts('BBBB')).not.toBe('F1');
     expect(text).toMatch(/Bold/);
   });
+
+  it('colour only affects that line', () => {
+    const { bytes, page, objects, line } = setup();
+    const res = applyStyleToSelection(bytes, page, objects, line, 0, 4, { color: [1, 0, 0] });
+    const runs = interpretPage(res.newContentBytes, page, objects).textRuns;
+    const colorOf = (t: string) => runs.find((r) => r.text === t)!.fillColor ?? [0, 0, 0];
+    expect(colorOf('AAAA')).toEqual([0, 0, 0]);
+    expect(colorOf('CCCC')).toEqual([0, 0, 0]);
+    expect(colorOf('BBBB')).toEqual([1, 0, 0]);
+  });
 });
 
 describe('underline on a flipped-CTM page', () => {

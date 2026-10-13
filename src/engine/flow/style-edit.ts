@@ -1048,21 +1048,13 @@ function patchRunStyle(
   const clampEnd = Math.max(clampStart, Math.min(localEnd, run.text.length));
   const isPartial = clampStart > 0 || clampEnd < run.text.length;
 
-  // Color: patch or insert rg just after BT (whole-run; partial color uses split path)
+  // Color (whole-run; partial color uses the split path) is applied last, scoped to
+  // this run's show ops. Cairo/Firefox put many lines in ONE BT, so an `rg` at the BT
+  // start would recolor every later line. Anchors survive the splices made below.
+  const colorAnchors: CSInstruction[] = [];
   if (style.color && !isPartial) {
-    const [r, g, b] = style.color;
-    let found = false;
-    for (let i = range.bt + 1; i < textIndex; i++) {
-      if (instructions[i].operator === 'rg' || instructions[i].operator === 'RG') {
-        instructions[i].operands = [new PDFNumber(r), new PDFNumber(g), new PDFNumber(b)];
-        found = true;
-        break;
-      }
-    }
-    if (!found) {
-      instructions.splice(range.bt + 1, 0, op('rg', [
-        new PDFNumber(r), new PDFNumber(g), new PDFNumber(b),
-      ]));
+    for (const k of indices) {
+      if (k >= range.bt && k <= range.et && instructions[k]) colorAnchors.push(instructions[k]);
     }
   }
 
@@ -1158,7 +1150,30 @@ function patchRunStyle(
     removedUnderline = removeUnderlineNearRun(instructions, run) || removedUnderline;
   }
 
+  if (style.color && !isPartial && colorAnchors.length > 0) {
+    applyScopedFillColor(instructions, colorAnchors, style.color, run.fillColor ?? [0, 0, 0]);
+  }
+
   return { bytes: compileInstructions(instructions), addedUnderline, removedUnderline };
+}
+
+/**
+ * Set the fill colour for one run only: `rg new` right before its first show op and
+ * `rg original` right after its last, so later runs sharing the BT keep their colour.
+ */
+function applyScopedFillColor(
+  instructions: CSInstruction[],
+  anchors: CSInstruction[],
+  color: [number, number, number],
+  original: [number, number, number],
+): void {
+  const idx = anchors.map(a => instructions.indexOf(a)).filter(i => i >= 0).sort((a, b) => a - b);
+  if (idx.length === 0) return;
+  const first = idx[0];
+  const last = idx[idx.length - 1];
+  const rg = (c: [number, number, number]) => op('rg', [new PDFNumber(c[0]), new PDFNumber(c[1]), new PDFNumber(c[2])]);
+  instructions.splice(last + 1, 0, rg(original));
+  instructions.splice(first, 0, rg(color));
 }
 
 function applyWholeRunFontPatch(
