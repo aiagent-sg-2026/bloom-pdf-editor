@@ -2,9 +2,11 @@
  * Phases 10–14 — validation, timestamp, multi-sig, LTV, UX helpers.
  */
 
-import { describe, it, expect, beforeEach } from 'vitest';
-import { readFileSync } from 'fs';
+import { describe, it, expect, beforeEach, beforeAll } from 'vitest';
+import { readFileSync, mkdtempSync } from 'fs';
+import { execFileSync } from 'child_process';
 import { join } from 'path';
+import { tmpdir } from 'os';
 import {
   PDFArray,
   PDFDict,
@@ -14,6 +16,7 @@ import {
   PDFRef,
 } from '../../types';
 import { serializeDocument } from '../../writer/serializer';
+import { saveQuick, saveOptimized } from '../../writer/save-pipeline';
 import {
   createSignatureField,
   signDocumentCryptographic,
@@ -40,7 +43,16 @@ import {
   SIGNATURE_SHORTCUTS,
 } from '../../signatures';
 
-const fixtures = join(__dirname, 'fixtures');
+const generatedFixtures = mkdtempSync(join(tmpdir(), 'bloom-signature-'));
+const signerPem = join(generatedFixtures, 'signer.pem');
+
+beforeAll(() => {
+  execFileSync('openssl', [
+    'req', '-x509', '-newkey', 'rsa:2048', '-nodes',
+    '-keyout', signerPem, '-out', signerPem,
+    '-days', '1', '-subj', '/CN=Bloom Test Signer',
+  ], { stdio: 'ignore' });
+});
 
 function makeBasePdf(): PDFDocumentData {
   const objects = new Map<string, import('../../types').PDFObject>();
@@ -99,7 +111,7 @@ function makeBasePdf(): PDFDocumentData {
 }
 
 async function signFixtureField(doc: PDFDocumentData, name: string) {
-  const pem = readFileSync(join(fixtures, 'signer.pem'), 'utf8');
+  const pem = readFileSync(signerPem, 'utf8');
   const bundle = await importFromPem(pem, 'fixture');
   doc.rawBytes = await serializeDocument(doc);
   const fieldRef = createSignatureField(doc, 0, {
@@ -137,6 +149,14 @@ describe('Phase 10 — validation engine', () => {
     expect(['Valid', 'Unknown']).toContain(signed!.status);
     expect(validationStatusBadge('Valid').tone).toBe('ok');
     expect(validationStatusBadge('Modified').tone).toBe('bad');
+  }, 30000);
+
+  it('exports the exact finalized bytes in both save modes', async () => {
+    const doc = makeBasePdf();
+    const { result } = await signFixtureField(doc, 'SigSave');
+    const signed = new Uint8Array(result.bytes);
+    expect(await saveQuick(doc)).toEqual(signed);
+    expect(await saveOptimized(doc)).toEqual(signed);
   }, 30000);
 
   it('detects Modified when PDF bytes after Contents are altered', async () => {
