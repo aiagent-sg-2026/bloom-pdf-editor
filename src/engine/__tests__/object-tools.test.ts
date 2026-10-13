@@ -5,8 +5,15 @@ import { PDFDict, PDFName, PDFNumber, PDFRef, PDFStream, type PDFObject, type PD
 
 function page(): { page: PDFPageInfo; objects: Map<string, PDFObject> } {
   const dict = new PDFDict();
-  dict.set('Resources', new PDFDict());
-  return { page: { index: 0, dict, mediaBox: { x: 0, y: 0, width: 612, height: 792 }, cropBox: { x: 0, y: 0, width: 612, height: 792 } }, objects: new Map() };
+  const resources = new PDFDict();
+  dict.set('Resources', resources);
+  return {
+    page: {
+      index: 0, dict, resources, ref: new PDFRef(1, 0), contentRefs: [], rotate: 0,
+      mediaBox: { x: 0, y: 0, width: 612, height: 792 }, cropBox: { x: 0, y: 0, width: 612, height: 792 },
+    },
+    objects: new Map(),
+  };
 }
 
 describe('object insertion exports', () => {
@@ -20,6 +27,8 @@ describe('object insertion exports', () => {
     expect(source).toContain('caf');
     expect(source).toContain('1 0 0 1 10 85.6 Tm');
     expect(source).not.toContain('NaN');
+    expect(source).not.toMatch(/\d m S/);
+    expect(source).toMatch(/ET\n[\d.]+ w\n[\d.-]+ [\d.-]+ m [\d.-]+ [\d.-]+ l S/);
     const fonts = (p.page.dict.get('Resources') as PDFDict).get('Font') as PDFDict;
     expect((fonts.get('TimesBoldItalic') as PDFDict).getName('Encoding')).toBe('WinAnsiEncoding');
     expect(((p.page.dict.get('Resources') as PDFDict).get('ExtGState') as PDFDict).has('TxGS')).toBe(true);

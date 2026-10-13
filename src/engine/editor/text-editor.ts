@@ -35,6 +35,7 @@ import { resolveRef } from '../parser/parser';
 import { loadFont, type FontData, charCodeToUnicode } from '../fonts/font-parser';
 import { ensureFallbackFont } from '../fonts/font-augmentation';
 import { ensureBuiltInFallbackFont, getBuiltInFallbackGlyph } from '../fonts/symbol-fallback';
+import { getStandardFontCharWidth } from '../fonts/standard14';
 import { resolveRunStyleFlags } from '../flow/metrics';
 import { serializeToString } from './stream-compiler';
 import { isolateBaseCtm } from './content-append';
@@ -643,7 +644,7 @@ export function insertTextRun(
     : baseFamily === 'Courier'
       ? (options.bold && options.italic ? 'Courier-BoldOblique' : options.bold ? 'Courier-Bold' : options.italic ? 'Courier-Oblique' : 'Courier')
       : (options.bold && options.italic ? 'Helvetica-BoldOblique' : options.bold ? 'Helvetica-Bold' : options.italic ? 'Helvetica-Oblique' : 'Helvetica');
-  const resourceName = fontName === 'Helvetica' ? 'Helv' : fontName.replace(/[^A-Za-z]/g, '').slice(0, 8);
+  const resourceName = fontName === 'Helvetica' ? 'Helv' : fontName.replace(/[^A-Za-z]/g, '');
   if (!fontDict.has(resourceName)) {
     const helvetica = new PDFDict();
     helvetica.set('Type', new PDFName('Font'));
@@ -661,7 +662,13 @@ export function insertTextRun(
   const [r, g, b] = safeColor;
   const lines = text.split(/\r?\n/);
   const leading = Math.max(0.1, fontSize * 1.2);
-  const commands: string[] = [`\nq`, `${r} ${g} ${b} rg`];
+  const commands: string[] = [`\nq`, `${r} ${g} ${b} rg`, `${r} ${g} ${b} RG`];
+  const underlineSegments: string[] = [];
+  const measure = (t: string): number => {
+    let w = 0;
+    for (const ch of t) { const cp = ch.codePointAt(0) ?? 0; w += cp < 256 ? getStandardFontCharWidth(fontName, cp) : 600; }
+    return (w / 1000) * fontSize;
+  };
   const opacity = options.opacity == null ? 1 : Math.max(0, Math.min(1, options.opacity));
   if (opacity < 1) {
     const gs = new PDFDict();
@@ -679,9 +686,8 @@ export function insertTextRun(
   lines.forEach((line, lineIndex) => {
     const chunks: string[] = [];
     let current = '';
-    const approxCharWidth = Math.max(1, fontSize * 0.5);
     for (const word of line.split(/(\s+)/)) {
-      if (current && (current.length + word.length) * approxCharWidth > widthLimit) {
+      if (current && measure(current + word) > widthLimit) {
         chunks.push(current); current = '';
       }
       current += word;
@@ -701,10 +707,15 @@ export function insertTextRun(
         } else run += ch;
       }
       flush();
-      if (options.underline && chunk.length) commands.push(`0 -${fontSize * 0.12} ${Math.max(1, chunk.length * fontSize * 0.5)} -${fontSize * 0.12} m S`);
+      if (options.underline && chunk.trim().length) {
+        const uy = Math.round((y - dy - fontSize * 0.12) * 100) / 100;
+        underlineSegments.push(`${x} ${uy} m ${Math.round((x + measure(chunk.replace(/\s+$/, ''))) * 100) / 100} ${uy} l S`);
+      }
     });
   });
-  commands.push('ET', 'Q', '');
+  commands.push('ET');
+  if (underlineSegments.length) commands.push(`${Math.max(0.3, Math.round(fontSize * 0.06 * 100) / 100)} w`, ...underlineSegments);
+  commands.push('Q', '');
   const injection = `\n${commands.join('\n')}`;
   const enc = new TextEncoder();
   const injectionBytes = enc.encode(injection);

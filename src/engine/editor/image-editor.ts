@@ -201,7 +201,7 @@ export async function replaceImageXObject(
     const ctx = canvas.getContext('2d'); if (!ctx) throw new Error('Canvas 2D context unavailable');
     ctx.drawImage(img, 0, 0);
     const built = await createRGBAImageObjects(new Uint8Array(ctx.getImageData(0, 0, trueWidth, trueHeight).data), trueWidth, trueHeight, getNextObjNum);
-    objects.set(built.smaskRef.toKey(), built.smask);
+    doc.objects.set(built.smaskRef.toKey(), built.smask);
     xobj.rawBytes = built.image.rawBytes;
     xobj.decodedBytes = null;
     for (const [key, value] of built.image.dict.entries()) xobj.dict.set(key, value);
