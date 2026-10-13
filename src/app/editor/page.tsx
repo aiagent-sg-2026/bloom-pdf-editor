@@ -487,6 +487,22 @@ export default function EditorPage() {
   const [textOpacity, setTextOpacity] = useState(100);
   const [saveMode, setSaveMode] = useState<'quick' | 'optimized'>('optimized');
   const [isDirty, setIsDirty] = useState(false);
+
+  // Keep an existing Add Text Box synchronized with the active formatting
+  // controls, so later colour/font/style changes are exported too.
+  useEffect(() => {
+    if (!activeFloatingTextId) return;
+    setFloatingTexts(prev => prev.map(p => p.id === activeFloatingTextId ? {
+      ...p,
+      fontFamily: textFontFamily,
+      fontSize: textFontSize,
+      color: /^#(?:[0-9a-f]{3}|[0-9a-f]{6})$/i.test(textColor) ? textColor : p.color,
+      bold: textBold,
+      italic: textItalic,
+      underline: textUnderline,
+      opacity: textOpacity / 100,
+    } : p));
+  }, [activeFloatingTextId, textFontFamily, textFontSize, textColor, textBold, textItalic, textUnderline, textOpacity]);
   const [isSearchOpen, setIsSearchOpen] = useState(false);
   const [findText, setFindText] = useState('');
   const [replaceText, setReplaceText] = useState('');
