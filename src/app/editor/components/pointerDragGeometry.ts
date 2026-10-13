@@ -9,7 +9,7 @@ export function isPointNearRectEdge(
   x: number,
   y: number,
   rect: PointerRect,
-  inset = 10,
+  inset = 14,
 ): boolean {
   return x >= rect.left - inset
     && x <= rect.right + inset

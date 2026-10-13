@@ -533,6 +533,7 @@ export function EditableLineBox(props: EditableLineBoxProps) {
           while (b < text.length && /\S/.test(text[b]!)) b++;
           applyCaret(a, b);
         }}
+        style={{ touchAction: 'none' }}
       />
 
       {/* Hidden textarea: keyboard + IME only (no mouse hit-testing) */}
@@ -559,8 +560,14 @@ export function EditableLineBox(props: EditableLineBoxProps) {
           caretColor: 'transparent',
           color: 'transparent',
           pointerEvents: 'none',
+          // Chromium may still use this textarea as the touch-action target
+          // for a gesture that starts on the box edge. Keep its effective
+          // touch-action aligned with the hit layer so pointer capture wins
+          // before the browser claims the gesture for scrolling.
+          touchAction: 'none',
           zIndex: 0,
         }}
+        onPointerDown={onHitPointerDown}
         onFocus={focusInput}
       />
 
