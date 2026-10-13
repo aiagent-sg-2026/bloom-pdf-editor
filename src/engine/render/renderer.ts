@@ -41,6 +41,7 @@ import {
   type PDFDocumentData,
   type PDFPageInfo,
 } from '../types';
+import { intersectPageBox } from '../editing/coordinates';
 
 // ─── Render options ─────────────────────────────────────────────────────────
 
@@ -114,9 +115,10 @@ export async function renderPageToCanvas(
 
   // Compute page dimensions (accounting for rotation)
   const { mediaBox, rotate } = page;
+  const viewportBox = intersectPageBox(mediaBox, page.cropBox);
   const isRotated = rotate === 90 || rotate === 270;
-  const pageWidth = isRotated ? mediaBox.height : mediaBox.width;
-  const pageHeight = isRotated ? mediaBox.width : mediaBox.height;
+  const pageWidth = isRotated ? viewportBox.height : viewportBox.width;
+  const pageHeight = isRotated ? viewportBox.width : viewportBox.height;
 
   // Create canvas
   const canvas = document.createElement('canvas');
@@ -144,10 +146,10 @@ export async function renderPageToCanvas(
   ctx.scale(scale * dpr, scale * dpr);
 
   // Apply page rotation
-  applyPageRotation(ctx, rotate, mediaBox.width, mediaBox.height);
+  applyPageRotation(ctx, rotate, viewportBox.width, viewportBox.height);
 
   // Flip Y axis: PDF bottom-left → canvas top-left
-  ctx.transform(1, 0, 0, -1, -mediaBox.x, mediaBox.y + mediaBox.height);
+  ctx.transform(1, 0, 0, -1, -viewportBox.x, viewportBox.y + viewportBox.height);
 
   // Get content stream bytes
   const contentBytes = getPageContentBytes(page, objects);

@@ -135,11 +135,19 @@ export function canvasToPdf(
   pageHeight: number,
   mediaBoxX: number,
   mediaBoxY: number,
+  rotation = 0,
+  cropBoxX = mediaBoxX,
+  cropBoxY = mediaBoxY,
 ): { pdfX: number; pdfY: number } {
-  return {
-    pdfX: cssX / scale + mediaBoxX,
-    pdfY: (mediaBoxY + pageHeight) - cssY / scale,
-  };
+  const r = ((rotation % 360) + 360) % 360;
+  const cropWidth = r === 90 || r === 270 ? pageHeight : pageWidth;
+  const cropHeight = r === 90 || r === 270 ? pageWidth : pageHeight;
+  const x = cssX / scale;
+  const y = cssY / scale;
+  if (r === 90) return { pdfX: cropBoxX + y, pdfY: cropBoxY + x };
+  if (r === 180) return { pdfX: cropBoxX + cropWidth - x, pdfY: cropBoxY + y };
+  if (r === 270) return { pdfX: cropBoxX + cropWidth - y, pdfY: cropBoxY + cropHeight - x };
+  return { pdfX: cropBoxX + x, pdfY: cropBoxY + cropHeight - y };
 }
 
 /** Convert PDF user‐space coordinates to canvas CSS pixels. */
@@ -150,11 +158,19 @@ export function pdfToCanvas(
   pageHeight: number,
   mediaBoxX: number,
   mediaBoxY: number,
+  rotation = 0,
+  cropBoxX = mediaBoxX,
+  cropBoxY = mediaBoxY,
 ): { cssX: number; cssY: number } {
-  return {
-    cssX: (pdfX - mediaBoxX) * scale,
-    cssY: ((mediaBoxY + pageHeight) - pdfY) * scale,
-  };
+  const r = ((rotation % 360) + 360) % 360;
+  const cropWidth = r === 90 || r === 270 ? pageHeight : pageWidth;
+  const cropHeight = r === 90 || r === 270 ? pageWidth : pageHeight;
+  const x = pdfX - cropBoxX;
+  const y = pdfY - cropBoxY;
+  if (r === 90) return { cssX: y * scale, cssY: x * scale };
+  if (r === 180) return { cssX: (cropWidth - x) * scale, cssY: y * scale };
+  if (r === 270) return { cssX: (cropHeight - y) * scale, cssY: (cropWidth - x) * scale };
+  return { cssX: x * scale, cssY: (cropHeight - y) * scale };
 }
 
 /** Hit-test: find the TextRun under a given PDF coordinate. */

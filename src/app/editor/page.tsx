@@ -2565,7 +2565,7 @@ export default function EditorPage() {
     const { pdfX, pdfY } = canvasToPdf(
       cssX, cssY, scale,
       renderResult.pageWidth, renderResult.pageHeight,
-      mediaBox.x, mediaBox.y,
+      mediaBox.x, mediaBox.y, page.rotate, page.cropBox.x, page.cropBox.y,
     );
 
     if (activeTool === 'text' || activeTool === 'select') {
@@ -2797,7 +2797,7 @@ export default function EditorPage() {
     const { pdfX, pdfY } = canvasToPdf(
       cssX, cssY, scale,
       renderResult.pageWidth, renderResult.pageHeight,
-      mediaBox.x, mediaBox.y,
+      mediaBox.x, mediaBox.y, page.rotate, page.cropBox.x, page.cropBox.y,
     );
     const hit =
       hitTestTextLine(pdfX, pdfY, renderResult.textLines) ??
@@ -2846,7 +2846,7 @@ export default function EditorPage() {
     const { pdfX, pdfY } = canvasToPdf(
       cssX, cssY, scale,
       renderResult.pageWidth, renderResult.pageHeight,
-      mediaBox.x, mediaBox.y,
+      mediaBox.x, mediaBox.y, page.rotate, page.cropBox.x, page.cropBox.y,
     );
 
     const maxW = DEFAULT_SIGNATURE_SIZE.width;

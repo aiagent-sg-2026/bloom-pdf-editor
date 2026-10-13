@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { deletePage } from '../writer/page-operations';
 import { serializeDocument } from '../writer/serializer';
 import { PDFArray, PDFDict, PDFName, PDFNumber, PDFRef, PDFStream, type PDFDocumentData } from '../types';
+import { canvasToPdf, pdfToCanvas } from '../editing/coordinates';
 
 function syntheticDocument(): PDFDocumentData {
   const objects = new Map<string, import('../types').PDFObject>();
@@ -67,5 +68,14 @@ describe('page deletion privacy', () => {
     expect(text).not.toContain('ONLY_PAGE_ONE_SECRET');
     expect(doc.catalog.get('Outlines')).toBeUndefined();
     expect((doc.pages[0].dict.get('Annots'))).toBeUndefined();
+  });
+});
+
+describe('rotated/cropped viewport coordinates', () => {
+  it.each([0, 90, 180, 270])('round-trips rotation %i with a CropBox offset', (rotation) => {
+    const transform = { scale: 2, rotation, pageWidth: 540, pageHeight: 720, pageX: 36, pageY: 36 };
+    const source = { x: 120, y: 240 };
+    const canvas = pdfToCanvas(source.x, source.y, transform);
+    expect(canvasToPdf(canvas.x, canvas.y, transform)).toEqual(source);
   });
 });
