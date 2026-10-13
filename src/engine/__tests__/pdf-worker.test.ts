@@ -154,7 +154,7 @@ describe('PDF worker codec', () => {
         writeFileSync(outputPath, response.bytes);
         try {
           const qpdf = spawnSync('qpdf', [`--password=${password}`, '--check', outputPath], { encoding: 'utf8' });
-          if (qpdf.error?.code === 'ENOENT') return;
+          if ((qpdf.error as NodeJS.ErrnoException | undefined)?.code === 'ENOENT') return;
           expect(qpdf.status).toBe(0);
           expect(`${qpdf.stdout}${qpdf.stderr}`).not.toMatch(/WARNING|ERROR/);
         } finally {

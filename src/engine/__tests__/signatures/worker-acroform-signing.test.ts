@@ -98,12 +98,12 @@ describe('worker-safe cryptographic signing', () => {
     writeFileSync(outputPath, result.bytes);
     try {
       const qpdf = spawnSync('qpdf', ['--check', outputPath], { encoding: 'utf8' });
-      if (qpdf.error?.code !== 'ENOENT') {
+      if ((qpdf.error as NodeJS.ErrnoException | undefined)?.code !== 'ENOENT') {
         expect(qpdf.status).toBe(0);
         expect(`${qpdf.stdout}${qpdf.stderr}`).not.toMatch(/WARNING|ERROR/);
       }
       const pdfsig = spawnSync('pdfsig', [outputPath], { encoding: 'utf8' });
-      if (pdfsig.error?.code !== 'ENOENT') expect(`${pdfsig.stdout}${pdfsig.stderr}`).toMatch(/Signature|signature/);
+      if ((pdfsig.error as NodeJS.ErrnoException | undefined)?.code !== 'ENOENT') expect(`${pdfsig.stdout}${pdfsig.stderr}`).toMatch(/Signature|signature/);
     } finally {
       unlinkSync(outputPath);
     }
