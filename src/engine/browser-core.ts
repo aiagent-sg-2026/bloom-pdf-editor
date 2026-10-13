@@ -89,6 +89,7 @@ export {
   EditorHistory,
   captureHistoryEntry,
   restoreAnnotSnapshot,
+  restoreDocumentStructure,
   parseOverlaySnapshot,
   buildDisplayListIndex,
   hitTestDisplayList,

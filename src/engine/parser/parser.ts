@@ -786,9 +786,10 @@ export function getPageContentBytes(
     const obj = objects.get(ref.toKey());
     if (obj instanceof PDFStream) {
       const bytes = obj.getBytes();
+      // Add a separator only between streams. A trailing separator would
+      // mutate a single stream's bytes when a history snapshot is captured.
+      if (chunks.length > 0) chunks.push(new Uint8Array([0x20]));
       chunks.push(bytes);
-      // Add a space between concatenated streams to prevent operator merging
-      chunks.push(new Uint8Array([0x20])); // ' '
     }
   }
 

@@ -5,6 +5,7 @@ export {
   captureHistoryEntry,
   captureAnnotSnapshot,
   restoreAnnotSnapshot,
+  restoreDocumentStructure,
   clonePDFObject,
   makeOverlaySnapshot,
   parseOverlaySnapshot,

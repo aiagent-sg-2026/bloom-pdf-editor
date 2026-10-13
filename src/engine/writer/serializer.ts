@@ -31,6 +31,7 @@ import {
 import { serializeIndirectObject } from '../editor/stream-compiler';
 import { concatBytes } from '../editor/stream-compiler';
 import { packIntoObjectStreams, buildXRefStream } from '../optimize/object-streams';
+import { garbageCollect, rootsFromTrailer } from '../optimize/garbage-collect';
 
 // ─── Full document serialization ────────────────────────────────────────────
 
@@ -48,7 +49,14 @@ export async function serializeDocument(doc: PDFDocumentData): Promise<Uint8Arra
   let currentOffset = header.length;
 
   // 2. Collect all objects to write
-  const objectEntries = Array.from(doc.objects.entries());
+  // Full serialization is also the privacy boundary: never emit detached
+  // page objects or their streams. Incremental saves intentionally preserve
+  // old revisions, but a complete export writes only trailer-reachable data.
+  const roots = rootsFromTrailer(doc.xref.trailerDict);
+  const reachable = roots.length > 0
+    ? garbageCollect(doc.objects, roots).objects
+    : doc.objects;
+  const objectEntries = Array.from(reachable.entries());
 
   // Assign sequential object numbers
   const objNumMap = new Map<string, { objNum: number; genNum: number }>();

@@ -36,7 +36,14 @@ export interface PageAnnotSnapshot {
 }
 
 export interface PageHistorySnapshot {
+  /** Stable identity of the page object; unlike an array index this survives reorder. */
+  pageKey: string;
   pageIndex: number;
+  pageDict: PDFDict;
+  mediaBox: { x: number; y: number; width: number; height: number };
+  cropBox: { x: number; y: number; width: number; height: number };
+  rotate: number;
+  contentRefs: string[];
   contentBytes: Uint8Array;
   annotSnapshot: PageAnnotSnapshot;
 }
@@ -45,11 +52,15 @@ export interface EditorHistoryEntry {
   label: string;
   timestamp: number;
   pageIndex: number;
+  pageKey?: string;
   contentBytes: Uint8Array;
   annotSnapshot: PageAnnotSnapshot;
   overlays: OverlaySnapshot;
   /** Complete document state; the legacy fields above describe pageIndex. */
   pages?: PageHistorySnapshot[];
+  /** Structural roots are included so page-tree changes are undoable. */
+  pagesRoot?: PDFDict;
+  catalog?: PDFDict;
 }
 
 /** Deep-clone a PDF object graph (dicts/arrays/streams). Refs are copied by value. */
@@ -300,19 +311,80 @@ export function captureHistoryEntry(
 ): EditorHistoryEntry {
   const page = doc.pages[pageIndex];
   const pages = doc.pages.map((p, index) => ({
+    pageKey: p.ref.toKey(),
     pageIndex: index,
+    pageDict: clonePDFObject(p.dict) as PDFDict,
+    mediaBox: { ...p.mediaBox },
+    cropBox: { ...p.cropBox },
+    rotate: p.rotate,
+    contentRefs: p.contentRefs.map((ref) => ref.toKey()),
     contentBytes: new Uint8Array(index === pageIndex ? contentBytes : getPageBytes(p, doc.objects)),
     annotSnapshot: captureAnnotSnapshot(p.dict, doc.objects),
   }));
+  const pagesRef = doc.catalog.getRef('Pages');
+  const pagesRoot = pagesRef ? doc.objects.get(pagesRef.toKey()) : undefined;
   return {
     label,
     timestamp: Date.now(),
     pageIndex,
+    pageKey: page.ref.toKey(),
     contentBytes: new Uint8Array(contentBytes),
     annotSnapshot: captureAnnotSnapshot(page.dict, doc.objects),
     overlays: makeOverlaySnapshot(overlays),
     pages,
+    pagesRoot: pagesRoot instanceof PDFDict ? clonePDFObject(pagesRoot) as PDFDict : undefined,
+    catalog: clonePDFObject(doc.catalog) as PDFDict,
   };
+}
+
+function replaceDictContents(target: PDFDict, source: PDFDict): void {
+  for (const key of Array.from(target.keys())) target.delete(key);
+  for (const [key, value] of source.entries()) target.set(key, clonePDFObject(value));
+}
+
+/** Restore page order and page-tree dictionaries from a snapshot. */
+export async function restoreDocumentStructure(
+  doc: PDFDocumentData,
+  snapshot: EditorHistoryEntry,
+  updatePageContent: (refs: PDFRef[], bytes: Uint8Array, objects: Map<string, PDFObject>) => Promise<void>,
+): Promise<void> {
+  if (!snapshot.pages) return;
+  if (snapshot.catalog) replaceDictContents(doc.catalog, snapshot.catalog);
+  const pagesRef = doc.catalog.getRef('Pages');
+  if (pagesRef && snapshot.pagesRoot) {
+    const root = doc.objects.get(pagesRef.toKey());
+    if (root instanceof PDFDict) replaceDictContents(root, snapshot.pagesRoot);
+    else doc.objects.set(pagesRef.toKey(), clonePDFObject(snapshot.pagesRoot));
+  }
+
+  doc.pages = snapshot.pages.map((state) => {
+    const ref = parseRefKey(state.pageKey);
+    const dict = clonePDFObject(state.pageDict) as PDFDict;
+    doc.objects.set(state.pageKey, dict);
+    const refs = state.contentRefs.map(parseRefKey);
+    return {
+      index: state.pageIndex,
+      dict,
+      mediaBox: { ...state.mediaBox },
+      cropBox: { ...state.cropBox },
+      rotate: state.rotate,
+      ref,
+      resources: dict.get('Resources') instanceof PDFDict ? dict.get('Resources') as PDFDict : new PDFDict(),
+      contentRefs: refs,
+    };
+  });
+  for (const state of snapshot.pages) {
+    const page = doc.pages[state.pageIndex];
+    if (page) {
+      await updatePageContent(page.contentRefs, state.contentBytes, doc.objects);
+      restoreAnnotSnapshot(page.dict, doc.objects, state.annotSnapshot);
+    }
+  }
+}
+
+function parseRefKey(key: string): PDFRef {
+  const [objNum, genNum] = key.split('_').map(Number);
+  return new PDFRef(objNum, genNum);
 }
 
 function getPageBytes(page: PDFDocumentData['pages'][number], objects: Map<string, PDFObject>): Uint8Array {
