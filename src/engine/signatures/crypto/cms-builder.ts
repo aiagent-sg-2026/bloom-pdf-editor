@@ -7,6 +7,7 @@ import {
   hashAlgorithmOID,
   type HashAlgorithm,
 } from './hash-engine';
+import { parseDERNode } from './signature-verify';
 
 export type SignatureAlgorithmKind = 'RSA' | 'ECDSA';
 
@@ -100,6 +101,40 @@ function attribute(oid: number[], value: number[]): number[] {
   return derSequence([...derObjectIdentifier(oid), ...derSet(value)]);
 }
 
+function compareDerBytes(a: number[], b: number[]): number {
+  const length = Math.min(a.length, b.length);
+  for (let i = 0; i < length; i++) {
+    if (a[i] !== b[i]) return a[i]! - b[i]!;
+  }
+  return a.length - b.length;
+}
+
+/**
+ * Extract the exact issuer Name and serial INTEGER encodings from the leaf
+ * certificate. CMS matches a certificate using these encoded values, so the
+ * issuer must not be reconstructed from display-name fields.
+ */
+function signerIdentifierFromCertificate(
+  certificateDer: Uint8Array,
+): number[] | null {
+  try {
+    const certificate = parseDERNode(certificateDer, 0);
+    const tbs = certificate.children?.[0];
+    if (!tbs?.children) return null;
+    let index = tbs.children[0]?.class === 'context' ? 1 : 0;
+    const serial = tbs.children[index++];
+    index++; // signature algorithm
+    const issuer = tbs.children[index++];
+    if (!serial || !issuer) return null;
+    return [
+      ...certificateDer.slice(issuer.offset, issuer.offset + issuer.length),
+      ...certificateDer.slice(serial.offset, serial.offset + serial.length),
+    ];
+  } catch {
+    return null;
+  }
+}
+
 /**
  * Build signedAttrs SET content (without outer tag) then wrap as SET (0x31)
  * for signing, and as context-specific [0] IMPLICIT for embedding in SignerInfo.
@@ -114,17 +149,18 @@ function buildSignedAttributes(
   const signingTimeOid = [1, 2, 840, 113549, 1, 9, 5];
   const dataOid = [1, 2, 840, 113549, 1, 7, 1];
 
-  const attrs: number[] = [];
+  const attrs: number[][] = [];
   // contentType = id-data
-  attrs.push(...attribute(contentTypeOid, derObjectIdentifier(dataOid)));
+  attrs.push(attribute(contentTypeOid, derObjectIdentifier(dataOid)));
   // messageDigest
-  attrs.push(...attribute(messageDigestOid, derOctetString(messageDigest)));
+  attrs.push(attribute(messageDigestOid, derOctetString(messageDigest)));
   if (includeSigningTime) {
-    attrs.push(...attribute(signingTimeOid, derUtcTime(signingTime)));
+    attrs.push(attribute(signingTimeOid, derUtcTime(signingTime)));
   }
 
-  // Concatenate attributes then wrap as SET for signing (DER SET of attributes)
-  const setBytes = derSet(attrs);
+  // DER requires SET OF members to be sorted by their complete encodings.
+  attrs.sort(compareDerBytes);
+  const setBytes = derSet(attrs.flat());
   // For embedding in SignerInfo: [0] IMPLICIT — replace SET tag 0x31 with 0xA0
   const forEmbedding = [...setBytes];
   forEmbedding[0] = 0xa0;
@@ -168,9 +204,14 @@ export function buildDetachedCMSAdvanced(options: BuildCMSOptions): Uint8Array {
     options.signingTime ?? new Date(),
   );
 
-  // issuerAndSerialNumber placeholder (empty serial) — sufficient for structure
-  const sid = derSequence([
-    ...derSequence([]), // Name empty
+  // If the certificate is unavailable or malformed, retain the legacy
+  // certificate-less behavior. Such CMS cannot be matched to a signer by
+  // independent validators because there is no certificate to identify.
+  const signerIdentifier = options.certificateDer && options.certificateDer.length > 0
+    ? signerIdentifierFromCertificate(options.certificateDer)
+    : null;
+  const sid = derSequence(signerIdentifier ?? [
+    ...derSequence([]),
     ...derInteger(1),
   ]);
 

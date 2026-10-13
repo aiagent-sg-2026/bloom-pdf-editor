@@ -175,7 +175,10 @@ export function parseCMSSignedData(data: Uint8Array): CMSSignedData {
 
   const digestAlgorithms = (ch[1]?.children ?? []).map(parseAlgorithmId);
   const encapContentInfo = parseContentInfo(ch[2]!);
-  const certSet = ch[3]?.class === 'context' ? ch[4] : ch[3];
+  // Certificates are carried in an optional IMPLICIT [0] container. The
+  // container itself owns the certificate children; its following sibling is
+  // the mandatory signerInfos SET, not the certificate set.
+  const certSet = ch.find((node) => node.class === 'context' && node.tag === 0);
   const signerSet = ch[ch.length - 1];
 
   const certificates = certSet?.children ?? [];

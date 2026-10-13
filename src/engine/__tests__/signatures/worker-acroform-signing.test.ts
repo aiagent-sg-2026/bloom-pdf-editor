@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { spawnSync } from 'child_process';
-import { unlinkSync, writeFileSync } from 'fs';
+import { mkdtempSync, unlinkSync, writeFileSync } from 'fs';
 import { join } from 'path';
 import { tmpdir } from 'os';
 import {
@@ -16,7 +16,9 @@ import {
   importFromPem,
   signDocumentCryptographic,
   validateDocumentSignatures,
+  parseCMSSignedData,
 } from '../../signatures';
+import { parseDERNode } from '../../signatures/crypto/signature-verify';
 import { getTestCredentials } from './test-credentials';
 
 function makeDocument(): PDFDocumentData {
@@ -106,6 +108,68 @@ describe('worker-safe cryptographic signing', () => {
       if ((pdfsig.error as NodeJS.ErrnoException | undefined)?.code !== 'ENOENT') expect(`${pdfsig.stdout}${pdfsig.stderr}`).toMatch(/Signature|signature/);
     } finally {
       unlinkSync(outputPath);
+    }
+  }, 30000);
+
+  it('matches CMS SignerInfo to the embedded certificate and verifies externally', async () => {
+    const doc = makeDocument();
+    doc.rawBytes = await serializeDocument(doc);
+    const field = createSignatureFieldAtPoint(doc, 0, 180, 680, {
+      fieldName: 'CmsSignerIdentifier',
+      withPlaceholderAppearance: true,
+    });
+    const credentials = getTestCredentials();
+    const imported = await importFromPem(credentials.pem, 'test');
+    const result = await signDocumentCryptographic(doc, field.ref, imported.key!.privateKey, {
+      certificateDer: credentials.certificateDer,
+    });
+
+    const cms = parseCMSSignedData(result.cms);
+    const signer = cms.signerInfos[0]!;
+    const certificate = parseDERNode(credentials.certificateDer);
+    const tbs = certificate.children![0]!;
+    let index = tbs.children![0]?.class === 'context' ? 1 : 0;
+    const serial = tbs.children![index++];
+    index++;
+    const issuer = tbs.children![index];
+    const sid = signer.sid.children!;
+    expect(Array.from(sid[0]!.content)).toEqual(Array.from(issuer!.content));
+    expect(Array.from(sid[1]!.content)).toEqual(Array.from(serial!.content));
+
+    const reparsed = await parsePDF(result.bytes);
+    const report = await validateDocumentSignatures(reparsed, { allowSelfSigned: true });
+    expect(report.signatures[0]?.byteRangeOk).toBe(true);
+    expect(report.signatures[0]?.digestMatch).toBe(true);
+    expect(report.signatures[0]?.cmsSignatureOk).toBe(true);
+
+    const directory = mkdtempSync(join(tmpdir(), 'bloom-cms-verify-'));
+    const signaturePath = join(directory, 'signature.der');
+    const contentPath = join(directory, 'signed.bin');
+    const pdfPath = join(directory, 'signed.pdf');
+    writeFileSync(signaturePath, result.cms);
+    writeFileSync(contentPath, Buffer.concat([
+      Buffer.from(result.bytes.slice(result.byteRange[0], result.byteRange[0] + result.byteRange[1])),
+      Buffer.from(result.bytes.slice(result.byteRange[2], result.byteRange[2] + result.byteRange[3])),
+    ]));
+    writeFileSync(pdfPath, result.bytes);
+    try {
+      const openssl = spawnSync('openssl', [
+        'cms', '-verify', '-inform', 'DER', '-in', signaturePath,
+        '-content', contentPath, '-binary', '-noverify',
+      ], { encoding: 'utf8' });
+      if ((openssl.error as NodeJS.ErrnoException | undefined)?.code !== 'ENOENT') {
+        expect(openssl.status).toBe(0);
+        expect(`${openssl.stdout}${openssl.stderr}`).toMatch(/Verification successful/);
+      }
+
+      const pdfsig = spawnSync('pdfsig', [pdfPath], { encoding: 'utf8' });
+      if ((pdfsig.error as NodeJS.ErrnoException | undefined)?.code !== 'ENOENT') {
+        expect(`${pdfsig.stdout}${pdfsig.stderr}`).not.toContain('Unknown Validation Failure');
+      }
+    } finally {
+      unlinkSync(signaturePath);
+      unlinkSync(contentPath);
+      unlinkSync(pdfPath);
     }
   }, 30000);
 
