@@ -102,9 +102,12 @@ describe('rotated/cropped viewport coordinates', () => {
 });
 
 describe('editor rotated-page coordinate transforms', () => {
-  it.each([90, 180, 270])('round-trips rotation %i with explicit page width', (rotation) => {
+  it.each([0, 90, 180, 270])('round-trips rotation %i with explicit page width and CropBox offset', (rotation) => {
     const source = { x: 120, y: 240 };
-    const canvas = appPdfToCanvas(source.x, source.y, 2, 720, 0, 0, rotation, 0, 0, 540);
-    expect(appCanvasToPdf(canvas.cssX, canvas.cssY, 2, 540, 720, 0, 0, rotation, 0, 0)).toEqual(source);
+    const canvas = appPdfToCanvas(source.x, source.y, 2, 720, 18, 27, rotation, 36, 45, 540);
+    expect(appCanvasToPdf(canvas.cssX, canvas.cssY, 2, 540, 720, 18, 27, rotation, 36, 45)).toEqual({
+      pdfX: source.x,
+      pdfY: source.y,
+    });
   });
 });
