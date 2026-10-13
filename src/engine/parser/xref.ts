@@ -75,7 +75,7 @@ export function findStartXref(data: Uint8Array): number {
  *   trailer
  *   << /Size 6 /Root 1 0 R >>
  */
-export function parseXrefTable(data: Uint8Array, offset: number): XRefTable {
+export function parseXrefTable(data: Uint8Array, offset: number, baseOffset = 0): XRefTable {
   const lexer = new PDFLexer(data, offset);
 
   // Read "xref" keyword
@@ -129,7 +129,7 @@ export function parseXrefTable(data: Uint8Array, offset: number): XRefTable {
       }
 
       const objNum = startObjNum + i;
-      const byteOffset = offsetTok.value as number;
+      const byteOffset = (offsetTok.value as number) + baseOffset;
       const genNum = genTok.value as number;
       const type = (typeTok.value as string) === 'n' ? 'n' as const : 'f' as const;
 
@@ -163,6 +163,7 @@ export function parseXrefTable(data: Uint8Array, offset: number): XRefTable {
 export async function parseXrefStream(
   data: Uint8Array,
   offset: number,
+  baseOffset = 0,
 ): Promise<XRefTable> {
   const lexer = new PDFLexer(data, offset);
 
@@ -232,7 +233,7 @@ export async function parseXrefStream(
           entries.set(key, {
             objNum,
             genNum: field3,
-            offset: field2, // next free object number
+            offset: field2 + baseOffset, // next free object number
             type: 'f',
           });
         }
@@ -243,7 +244,7 @@ export async function parseXrefStream(
           entries.set(key, {
             objNum,
             genNum: field3,
-            offset: field2, // byte offset
+            offset: field2 + baseOffset, // byte offset
             type: 'n',
           });
         }
@@ -289,10 +290,31 @@ function readIntFromBytes(data: Uint8Array, offset: number, width: number): numb
  */
 export async function buildFullXref(data: Uint8Array): Promise<XRefTable> {
   const startxref = findStartXref(data);
+  const headerOffset = findPdfHeaderOffset(data);
+  try {
+    return await buildStrictXref(data, startxref, headerOffset);
+  } catch (strictError) {
+    try {
+      return await rebuildXrefByScanning(data, headerOffset);
+    } catch (recoveryError) {
+      const detail = recoveryError instanceof Error ? recoveryError.message : String(strictError);
+      throw new Error(`PDF cross-reference recovery failed: ${detail}`);
+    }
+  }
+}
+
+function findPdfHeaderOffset(data: Uint8Array): number {
+  const limit = Math.min(data.length, 1024);
+  const marker = new TextDecoder('latin1').decode(data.slice(0, limit)).indexOf('%PDF-');
+  if (marker < 0) throw new Error('PDF header not found');
+  return marker;
+}
+
+async function buildStrictXref(data: Uint8Array, startxref: number, baseOffset: number): Promise<XRefTable> {
   const mergedEntries = new Map<string, XRefEntry>();
   let mainTrailer: PDFDict | null = null;
 
-  let currentOffset: number | null = startxref;
+  let currentOffset: number | null = startxref + baseOffset;
   const visited = new Set<number>(); // Prevent infinite loops
 
   while (currentOffset !== null && !visited.has(currentOffset)) {
@@ -304,9 +326,9 @@ export async function buildFullXref(data: Uint8Array): Promise<XRefTable> {
     const isTable = isTraditionalXref(data, currentOffset);
 
     if (isTable) {
-      xrefSection = parseXrefTable(data, currentOffset);
+      xrefSection = parseXrefTable(data, currentOffset, baseOffset);
     } else {
-      xrefSection = await parseXrefStream(data, currentOffset);
+      xrefSection = await parseXrefStream(data, currentOffset, baseOffset);
     }
 
     // Merge entries (entries from later updates take precedence — 
@@ -324,14 +346,66 @@ export async function buildFullXref(data: Uint8Array): Promise<XRefTable> {
 
     // Follow /Prev pointer to previous xref section
     const prev = xrefSection.trailerDict.getNumber('Prev');
-    currentOffset = prev ?? null;
+    currentOffset = prev == null ? null : prev + baseOffset;
   }
 
   if (!mainTrailer) {
     throw new Error('No trailer dictionary found');
   }
 
+  validateXrefOffsets(data, mergedEntries);
   return { entries: mergedEntries, trailerDict: mainTrailer };
+}
+
+function validateXrefOffsets(data: Uint8Array, entries: Map<string, XRefEntry>): void {
+  for (const entry of entries.values()) {
+    if (entry.type !== 'n' || entry.compressedObjNum !== undefined) continue;
+    const match = new TextDecoder('latin1').decode(data.slice(entry.offset, Math.min(data.length, entry.offset + 40)))
+      .match(/^\s*(\d+)\s+(\d+)\s+obj\b/);
+    if (!match || Number(match[1]) !== entry.objNum || Number(match[2]) !== entry.genNum) {
+      throw new Error(`object ${entry.objNum} points at an invalid offset`);
+    }
+  }
+}
+
+/** Recover offsets and trailer metadata when startxref/xref entries are damaged. */
+async function rebuildXrefByScanning(data: Uint8Array, baseOffset: number): Promise<XRefTable> {
+  const text = new TextDecoder('latin1').decode(data);
+  const entries = new Map<string, XRefEntry>();
+  const objectPattern = /(?:^|[\r\n\x00\x20])([0-9]+)\s+([0-9]+)\s+obj\b/g;
+  let match: RegExpExecArray | null;
+  while ((match = objectPattern.exec(text))) {
+    const objNum = Number(match[1]);
+    const genNum = Number(match[2]);
+    const offset = match.index + (match[0].length - match[0].trimStart().length);
+    entries.set(`${objNum}_${genNum}`, { objNum, genNum, offset, type: 'n' });
+  }
+  if (!entries.size) throw new Error('no indirect objects found');
+
+  let trailerDict: PDFDict | null = null;
+  const trailerPos = text.lastIndexOf('trailer');
+  if (trailerPos >= 0) {
+    const lexer = new PDFLexer(data, trailerPos + 'trailer'.length);
+    const parsed = parseObject(lexer);
+    if (parsed instanceof PDFDict) trailerDict = parsed;
+  }
+
+  // A damaged xref-stream startxref still leaves its object discoverable by scan.
+  if (!trailerDict) {
+    for (const entry of entries.values()) {
+      try {
+        const candidate = await parseXrefStream(data, entry.offset, baseOffset);
+        if (candidate.trailerDict.getName('Type') === 'XRef') {
+          trailerDict = candidate.trailerDict;
+          for (const [key, xrefEntry] of candidate.entries) entries.set(key, xrefEntry);
+          break;
+        }
+      } catch { /* ordinary indirect object */ }
+    }
+  }
+  if (!trailerDict) throw new Error('no trailer dictionary found');
+  if (!trailerDict.has('Size')) trailerDict.set('Size', new PDFNumber(Math.max(...Array.from(entries.values()).map((e) => e.objNum)) + 1));
+  return { entries, trailerDict };
 }
 
 /**

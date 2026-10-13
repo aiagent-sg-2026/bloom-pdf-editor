@@ -4,12 +4,22 @@ import { writeFileSync } from 'node:fs';
 import { mkdtempSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { deletePage } from '../writer/page-operations';
+import { deletePage, insertPagesFromDocument } from '../writer/page-operations';
+import { parsePDF } from '../parser/parser';
 import { serializeDocument } from '../writer/serializer';
-import { PDFArray, PDFDict, PDFName, PDFNumber, PDFRef, PDFStream, type PDFDocumentData } from '../types';
+import { PDFArray, PDFBoolean, PDFDict, PDFName, PDFNumber, PDFRef, PDFStream, PDFString, type PDFDocumentData } from '../types';
 import { canvasToPdf, pdfToCanvas } from '../editing/coordinates';
 import { EditorHistory, captureHistoryEntry, restoreDocumentStructure } from '../editing/editor-history';
 import { canvasToPdf as appCanvasToPdf, pdfToCanvas as appPdfToCanvas } from '../../app/editor/utils';
+
+const qpdfAvailable = (() => {
+  try {
+    execFileSync('qpdf', ['--version'], { stdio: 'ignore' });
+    return true;
+  } catch {
+    return false;
+  }
+})();
 
 function syntheticDocument(pageCount = 3): PDFDocumentData {
   const objects = new Map<string, import('../types').PDFObject>();
@@ -51,7 +61,8 @@ function syntheticDocument(pageCount = 3): PDFDocumentData {
   link.set('Subtype', new PDFName('Link'));
   link.set('Dest', new PDFArray([pageRefs[0], new PDFName('Fit')]));
   objects.set('40_0', link);
-  (objects.get('3_0') as PDFDict).set('Annots', new PDFArray([new PDFRef(40, 0)]));
+  const linkedPage = pageRefs[1] ? objects.get(pageRefs[1].toKey()) : undefined;
+  if (linkedPage instanceof PDFDict) linkedPage.set('Annots', new PDFArray([new PDFRef(40, 0)]));
 
   return {
     version: '1.7', objects, catalog,
@@ -153,15 +164,6 @@ describe('page deletion privacy', () => {
     expect(new Set(doc.pages.map((page) => page.ref.toKey())).size).toBe(5);
   });
 
-  const qpdfAvailable = (() => {
-    try {
-      execFileSync('qpdf', ['--version'], { stdio: 'ignore' });
-      return true;
-    } catch {
-      return false;
-    }
-  })();
-
   it.skipIf(!qpdfAvailable)('writes qpdf-clean output without the deleted page marker', async () => {
     const doc = syntheticDocument(6);
     deletePage(doc, 0);
@@ -175,6 +177,85 @@ describe('page deletion privacy', () => {
     expect(diagnostics).not.toMatch(/WARNING|ERROR/);
   });
 
+});
+
+describe('page insertion forms', () => {
+  it('keeps widgets fillable by merging only fields on inserted pages', async () => {
+    const target = syntheticDocument(1);
+    const source = syntheticDocument(2);
+    const insertedPage = source.pages[0];
+    const notInsertedPage = source.pages[1];
+    const insertedFieldRef = new PDFRef(100, 0);
+    const insertedWidgetRefs = [101, 102, 103].map((n) => new PDFRef(n, 0));
+    const excludedFieldRef = new PDFRef(110, 0);
+    const excludedWidgetRef = new PDFRef(111, 0);
+    const insertedField = new PDFDict([
+      ['FT', new PDFName('Tx')], ['T', new PDFString('InsertedField')],
+      ['Kids', new PDFArray(insertedWidgetRefs)],
+    ]);
+    const excludedField = new PDFDict([
+      ['FT', new PDFName('Tx')], ['T', new PDFString('ExcludedField')],
+      ['Kids', new PDFArray([excludedWidgetRef])],
+    ]);
+    source.objects.set(insertedFieldRef.toKey(), insertedField);
+    source.objects.set(excludedFieldRef.toKey(), excludedField);
+    for (const [index, ref] of insertedWidgetRefs.entries()) {
+      source.objects.set(ref.toKey(), new PDFDict([
+        ['Type', new PDFName('Annot')], ['Subtype', new PDFName('Widget')],
+        ['Parent', insertedFieldRef], ['Rect', new PDFArray([new PDFNumber(10), new PDFNumber(index * 20), new PDFNumber(100), new PDFNumber(index * 20 + 15)])],
+      ]));
+    }
+    source.objects.set(excludedWidgetRef.toKey(), new PDFDict([
+      ['Type', new PDFName('Annot')], ['Subtype', new PDFName('Widget')],
+      ['Parent', excludedFieldRef], ['Rect', new PDFArray([new PDFNumber(10), new PDFNumber(0), new PDFNumber(100), new PDFNumber(15)])],
+    ]));
+    insertedPage.dict.set('Annots', new PDFArray(insertedWidgetRefs));
+    notInsertedPage.dict.set('Annots', new PDFArray([excludedWidgetRef]));
+    // Only the first page is supplied to the insertion operation; the second page
+    // and its field remain source-only objects and must not enter the target.
+    source.pages.splice(1, 1);
+    source.catalog.set('AcroForm', new PDFDict([
+      ['Fields', new PDFArray([insertedFieldRef, excludedFieldRef])],
+      ['DR', new PDFDict()],
+      ['DA', new PDFString('/Helv 10 Tf 0 g')],
+      ['NeedAppearances', new PDFBoolean(true)],
+    ]));
+
+    insertPagesFromDocument(target, source, 1);
+    const bytes = await serializeDocument(target);
+    const reparsed = await parsePDF(bytes);
+    const acro = reparsed.catalog.get('AcroForm');
+    expect(acro).toBeInstanceOf(PDFDict);
+    const fields = (acro as PDFDict).get('Fields');
+    expect(fields).toBeInstanceOf(PDFArray);
+    expect((fields as PDFArray).items).toHaveLength(1);
+    const copiedField = reparsed.objects.get(((fields as PDFArray).items[0] as PDFRef).toKey());
+    expect(copiedField).toBeInstanceOf(PDFDict);
+    expect((copiedField as PDFDict).getString('T')).toBe('InsertedField');
+    const kids = (copiedField as PDFDict).get('Kids');
+    expect(kids).toBeInstanceOf(PDFArray);
+    // All three widgets belong to the retained first source page, so all three
+    // must remain reachable even though the second page and its field are excluded.
+    expect((kids as PDFArray).items).toHaveLength(3);
+    expect((kids as PDFArray).items.every((item) => item instanceof PDFRef)).toBe(true);
+    expect((kids as PDFArray).items.map((item) =>
+      reparsed.objects.get((item as PDFRef).toKey()) instanceof PDFDict
+        ? (reparsed.objects.get((item as PDFRef).toKey()) as PDFDict).get('Parent')
+        : undefined,
+    ).every((parent) => parent instanceof PDFRef && parent.toKey() === ((fields as PDFArray).items[0] as PDFRef).toKey())).toBe(true);
+    expect((acro as PDFDict).get('DR')).toBeInstanceOf(PDFDict);
+    expect((acro as PDFDict).getString('DA')).toBe('/Helv 10 Tf 0 g');
+    expect((acro as PDFDict).getBool('NeedAppearances')).toBe(true);
+
+    if (qpdfAvailable) {
+      const path = join(mkdtempSync(join(tmpdir(), 'bloom-page-insert-form-')), 'inserted-form.pdf');
+      writeFileSync(path, bytes);
+      const result = spawnSync('qpdf', ['--check', path], { encoding: 'utf8' });
+      const diagnostics = `${result.stdout ?? ''}\n${result.stderr ?? ''}`;
+      expect(result.status).toBe(0);
+      expect(diagnostics).not.toMatch(/WARNING|ERROR/);
+    }
+  });
 });
 
 describe('rotated/cropped viewport coordinates', () => {
