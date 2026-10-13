@@ -1,8 +1,21 @@
 import { afterEach, describe, expect, it } from 'vitest';
+import { spawnSync } from 'child_process';
+import { readFileSync, unlinkSync, writeFileSync } from 'fs';
+import { join } from 'path';
+import { tmpdir } from 'os';
 import { collectTransferBuffers, dehydrateDocument, extractNewObjects, hydrateDocument } from '../worker/codec';
 import { PDFArray, PDFBoolean, PDFDict, PDFHexString, PDFName, PDFNull, PDFNumber, PDFRef, PDFStream, PDFString, type PDFDocumentData, type PDFObject } from '../types';
 import { parsePDF, saveOptimized, saveQuick, resetPDFWorkerForTests } from '../worker/client';
 import { handleWorkerCommand } from '../worker/handler';
+import { parsePDF as parseDirect } from '../parser/parser';
+import { securityEngine } from '../security';
+
+const encryptedFixtures = [
+  ['aes-256-r6.pdf', 'userpass'],
+  ['aes-128-r4.pdf', 'userpass'],
+  ['rc4-128-r4.pdf', 'userpass'],
+  ['rc4-40-empty-user-r2.pdf', ''],
+] as const;
 
 function fixture(): PDFDocumentData {
   const shared = new PDFDict();
@@ -40,6 +53,12 @@ describe('PDF worker codec', () => {
     const result = hydrated.objects.get('2_0') as PDFStream;
     expect(Array.from(result.rawBytes)).toEqual([1, 2, 3]);
     expect(Array.from(result.decodedBytes ?? [])).toEqual([4, 5]);
+  });
+
+  it('round-trips the encrypted-document save flag', () => {
+    const doc = fixture();
+    doc.decryptedFromEncrypted = true;
+    expect(hydrateDocument(dehydrateDocument(doc)).decryptedFromEncrypted).toBe(true);
   });
 
   it('copies snapshot bytes before transfer and preserves explicit rawBytes identity', () => {
@@ -113,4 +132,35 @@ describe('PDF worker codec', () => {
     expect(doc.rawBytes).toBe(second);
     expect(second.length).toBeGreaterThan(firstLength);
   });
+
+  for (const [fixtureName, password] of encryptedFixtures) {
+    for (const commandType of ['SAVE_PDF', 'OPTIMIZE_PDF'] as const) {
+      it(`${commandType} exports decrypted ${fixtureName} through the worker`, async () => {
+        const source = new Uint8Array(readFileSync(join(__dirname, 'fixtures', 'encrypted', fixtureName)));
+        const opened = await securityEngine.open(await parseDirect(source), password);
+        const wire = dehydrateDocument(opened.doc);
+        const response = await handleWorkerCommand(commandType === 'SAVE_PDF'
+          ? { type: commandType, requestId: `${fixtureName}-${commandType}`, document: wire }
+          : { type: commandType, requestId: `${fixtureName}-${commandType}`, document: wire });
+        if (response.type !== 'RESULT' || !response.bytes) throw new Error('worker save failed');
+        const reparsed = await parseDirect(response.bytes);
+        let text = '';
+        for (const object of reparsed.objects.values()) {
+          if (object instanceof PDFStream) text += new TextDecoder().decode(object.getBytes());
+        }
+        expect(text).toContain('Hello encrypted');
+
+        const outputPath = join(tmpdir(), `bloom-worker-${fixtureName}-${commandType}.pdf`);
+        writeFileSync(outputPath, response.bytes);
+        try {
+          const qpdf = spawnSync('qpdf', [`--password=${password}`, '--check', outputPath], { encoding: 'utf8' });
+          if (qpdf.error?.code === 'ENOENT') return;
+          expect(qpdf.status).toBe(0);
+          expect(`${qpdf.stdout}${qpdf.stderr}`).not.toMatch(/WARNING|ERROR/);
+        } finally {
+          unlinkSync(outputPath);
+        }
+      }, 30000);
+    }
+  }
 });

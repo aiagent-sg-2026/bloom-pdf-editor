@@ -27,6 +27,7 @@ export interface WireDocument {
   pages: Array<{ index: number; dict: number; mediaBox: PDFRectangle; cropBox: PDFRectangle; rotate: number; ref: number; resources: number; contentRefs: number[] }>;
   info: PDFDocumentData['info'];
   rawBytes: WireBytes | null;
+  decryptedFromEncrypted?: PDFDocumentData['decryptedFromEncrypted'];
 }
 
 export interface DehydrateOptions { includeRawBytes?: boolean }
@@ -66,6 +67,7 @@ export function dehydrateDocument(doc: PDFDocumentData, options: DehydrateOption
     pages: doc.pages.map((page) => ({ index: page.index, dict: visit(page.dict), mediaBox: { ...page.mediaBox }, cropBox: { ...page.cropBox }, rotate: page.rotate, ref: visit(page.ref), resources: visit(page.resources), contentRefs: page.contentRefs.map(visit) })),
     info: { ...doc.info },
     rawBytes,
+    decryptedFromEncrypted: doc.decryptedFromEncrypted,
   };
 }
 
@@ -108,6 +110,7 @@ export function hydrateDocument(wire: WireDocument, rawBytes?: Uint8Array): PDFD
     pages: wire.pages.map((page): PDFPageInfo => ({ ...page, dict: get(page.dict) as PDFDict, ref: get(page.ref) as PDFRef, resources: get(page.resources) as PDFDict, contentRefs: page.contentRefs.map((id) => get(id) as PDFRef) })),
     info: { ...wire.info },
     rawBytes: rawBytes !== undefined ? rawBytes : wire.rawBytes?.slice() ?? new Uint8Array(),
+    decryptedFromEncrypted: wire.decryptedFromEncrypted,
   };
   return doc;
 }
