@@ -6,6 +6,7 @@ import type { PDFDocumentData, PDFObject } from '../types';
 import { serializeDocument } from './serializer';
 import { saveIncremental } from './incremental-writer';
 import { garbageCollect, rootsFromTrailer, deduplicateStreams, applyRefMap } from '../optimize';
+import { getReencryptSaveContext } from '../security/encryption/encrypt-objects';
 
 /** A signed PDF must be exported byte-for-byte from the finalized buffer. */
 function hasFinalizedSignature(bytes: Uint8Array): boolean {
@@ -31,6 +32,12 @@ export async function saveQuick(
     return new Uint8Array(doc.rawBytes);
   }
   if (doc.rawBytes.length === 0) {
+    return serializeDocument(doc);
+  }
+
+  // The original encrypted prefix cannot be combined with plaintext editor
+  // objects. Rebuild a complete encrypted revision instead.
+  if (getReencryptSaveContext(doc)) {
     return serializeDocument(doc);
   }
 

@@ -141,8 +141,11 @@ export class SecurityEngine implements ISecurityEngine {
     };
 
     await decryptDocumentObjects(doc, ctx);
-    // Saving decrypted objects must produce an unencrypted PDF, not retain stale /Encrypt metadata.
+    // Keep the authenticated material with the in-memory document so saves can
+    // restore the original security handler without asking for the password again.
     doc.decryptedFromEncrypted = true;
+    doc.encryptionFileKey = auth.fileKey.slice();
+    doc.encryptionAlgorithm = ctx.algorithm;
     this.contexts.set(doc, ctx);
 
     const rawPerms = this.permissions.fromEncryptDict(enc);
@@ -169,6 +172,8 @@ export class SecurityEngine implements ISecurityEngine {
     }
     this.contexts.delete(result.doc);
     delete result.doc.decryptedFromEncrypted;
+    delete result.doc.encryptionFileKey;
+    delete result.doc.encryptionAlgorithm;
     return result.doc;
   }
 

@@ -4,7 +4,7 @@ import { readFileSync, unlinkSync, writeFileSync } from 'fs';
 import { join } from 'path';
 import { tmpdir } from 'os';
 import { parsePDF } from '../parser/parser';
-import { saveDocument } from '../writer/save-pipeline';
+import { saveDocument, saveQuick } from '../writer/save-pipeline';
 import { securityEngine } from '../security';
 import { PDFStream } from '../types';
 
@@ -36,9 +36,12 @@ describe('qpdf encrypted fixtures', () => {
       const saved = await saveDocument(opened.doc);
       expect(saved.length).toBeGreaterThan(0);
 
+      expect(new TextDecoder().decode(saved)).toContain('/Encrypt');
       const reparsed = await parsePDF(saved);
-      expect(reparsed.xref.trailerDict.has('Encrypt')).toBe(false);
-      expect(streamText(reparsed)).toContain('Hello encrypted');
+      expect(reparsed.xref.trailerDict.has('Encrypt')).toBe(true);
+      const reopened = await securityEngine.open(reparsed, password);
+      expect(streamText(reopened.doc)).toContain('Hello encrypted');
+      expect(new TextDecoder().decode(saved)).not.toContain('Hello encrypted');
 
       const outputPath = join(tmpdir(), `bloom-resaved-${name}`);
       writeFileSync(outputPath, saved);
@@ -46,11 +49,26 @@ describe('qpdf encrypted fixtures', () => {
         const qpdfResult = spawnSync('qpdf', ['--check', outputPath], {
           encoding: 'utf8',
         });
-        expect(qpdfResult.status).toBe(0);
-        expect(`${qpdfResult.stdout}${qpdfResult.stderr}`).not.toMatch(/WARNING|ERROR/);
+        if ((qpdfResult.error as NodeJS.ErrnoException | undefined)?.code === 'ENOENT') {
+          console.info('SKIP qpdf assertion: qpdf is not installed');
+        } else {
+          expect(qpdfResult.status).toBe(0);
+          expect(`${qpdfResult.stdout}${qpdfResult.stderr}`).not.toMatch(/WARNING|ERROR/);
+        }
       } finally {
         unlinkSync(outputPath);
       }
     }, 30000);
   }
+
+  it('re-encrypts direct quick saves for every fixture cipher', async () => {
+    for (const [name, password] of fixtures) {
+      const source = new Uint8Array(readFileSync(join(fixtureDir, name)));
+      const opened = await securityEngine.open(await parsePDF(source), password);
+      const saved = await saveQuick(opened.doc, new Set(['3_0']));
+      const reopened = await securityEngine.open(await parsePDF(saved), password);
+      expect(reopened.doc.pages.length).toBe(opened.doc.pages.length);
+      expect(new TextDecoder().decode(saved)).not.toContain('Hello encrypted');
+    }
+  }, 30000);
 });
