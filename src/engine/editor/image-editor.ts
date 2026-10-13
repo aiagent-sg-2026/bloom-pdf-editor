@@ -11,7 +11,7 @@ export async function createRGBAImageObjects(
   width: number,
   height: number,
   getNextObjNum: () => number,
-): Promise<{ imageRef: PDFRef; image: PDFStream; smaskRef: PDFRef; smask: PDFStream }> {
+): Promise<{ imageRef: PDFRef; image: PDFStream; smaskRef: PDFRef | null; smask: PDFStream | null }> {
   if (rgba.length !== width * height * 4) throw new Error('RGBA buffer size does not match image dimensions');
   const rgb = new Uint8Array(width * height * 3);
   const alpha = new Uint8Array(width * height);
@@ -20,20 +20,23 @@ export async function createRGBAImageObjects(
     rgb[p * 3] = rgba[i]; rgb[p * 3 + 1] = rgba[i + 1]; rgb[p * 3 + 2] = rgba[i + 2];
     alpha[p] = rgba[i + 3]; if (alpha[p] !== 255) hasAlpha = true;
   }
-  if (!hasAlpha) throw new Error('RGBA image has no transparency');
   const imageDict = new PDFDict();
   imageDict.set('Type', new PDFName('XObject')); imageDict.set('Subtype', new PDFName('Image'));
   imageDict.set('Width', new PDFNumber(width)); imageDict.set('Height', new PDFNumber(height));
   imageDict.set('ColorSpace', new PDFName('DeviceRGB')); imageDict.set('BitsPerComponent', new PDFNumber(8));
   imageDict.set('Filter', new PDFName('FlateDecode'));
-  const smaskDict = new PDFDict();
-  smaskDict.set('Type', new PDFName('XObject')); smaskDict.set('Subtype', new PDFName('Image'));
-  smaskDict.set('Width', new PDFNumber(width)); smaskDict.set('Height', new PDFNumber(height));
-  smaskDict.set('ColorSpace', new PDFName('DeviceGray')); smaskDict.set('BitsPerComponent', new PDFNumber(8));
-  smaskDict.set('Filter', new PDFName('FlateDecode'));
-  const smask = new PDFStream(smaskDict, await flateEncode(alpha));
-  const smaskRef = new PDFRef(getNextObjNum(), 0);
-  imageDict.set('SMask', smaskRef);
+  let smask: PDFStream | null = null;
+  let smaskRef: PDFRef | null = null;
+  if (hasAlpha) {
+    const smaskDict = new PDFDict();
+    smaskDict.set('Type', new PDFName('XObject')); smaskDict.set('Subtype', new PDFName('Image'));
+    smaskDict.set('Width', new PDFNumber(width)); smaskDict.set('Height', new PDFNumber(height));
+    smaskDict.set('ColorSpace', new PDFName('DeviceGray')); smaskDict.set('BitsPerComponent', new PDFNumber(8));
+    smaskDict.set('Filter', new PDFName('FlateDecode'));
+    smask = new PDFStream(smaskDict, await flateEncode(alpha));
+    smaskRef = new PDFRef(getNextObjNum(), 0);
+    imageDict.set('SMask', smaskRef);
+  }
   const image = new PDFStream(imageDict, await flateEncode(rgb));
   const imageRef = new PDFRef(getNextObjNum(), 0);
   return { imageRef, image, smaskRef, smask };
@@ -80,7 +83,8 @@ export async function insertImageRun(
     ctx.drawImage(img, 0, 0);
     const rgba = ctx.getImageData(0, 0, trueWidth, trueHeight).data;
     const built = await createRGBAImageObjects(new Uint8Array(rgba), trueWidth, trueHeight, getNextObjNum);
-    objects.set(built.smaskRef.toKey(), built.smask); objects.set(built.imageRef.toKey(), built.image);
+    if (built.smaskRef && built.smask) objects.set(built.smaskRef.toKey(), built.smask);
+    objects.set(built.imageRef.toKey(), built.image);
     return registerImageRun(page, objects, built.imageRef, x, y, width, height, contentBytes);
   }
 
@@ -201,7 +205,7 @@ export async function replaceImageXObject(
     const ctx = canvas.getContext('2d'); if (!ctx) throw new Error('Canvas 2D context unavailable');
     ctx.drawImage(img, 0, 0);
     const built = await createRGBAImageObjects(new Uint8Array(ctx.getImageData(0, 0, trueWidth, trueHeight).data), trueWidth, trueHeight, getNextObjNum);
-    doc.objects.set(built.smaskRef.toKey(), built.smask);
+    if (built.smaskRef && built.smask) doc.objects.set(built.smaskRef.toKey(), built.smask);
     xobj.rawBytes = built.image.rawBytes;
     xobj.decodedBytes = null;
     for (const [key, value] of built.image.dict.entries()) xobj.dict.set(key, value);

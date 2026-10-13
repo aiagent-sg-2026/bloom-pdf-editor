@@ -42,6 +42,15 @@ describe('object insertion exports', () => {
     expect(result.imageRef).toBeInstanceOf(PDFRef);
     expect(result.smaskRef).toBeInstanceOf(PDFRef);
     expect(result.image.rawBytes.length).toBeGreaterThan(0);
-    expect(result.smask.rawBytes.length).toBeGreaterThan(0);
+    expect(result.smask!.rawBytes.length).toBeGreaterThan(0);
+  });
+
+  it('keeps opaque PNGs as plain Flate RGB without a soft mask', async () => {
+    let n = 10;
+    const result = await createRGBAImageObjects(new Uint8Array([255, 0, 0, 255, 0, 0, 255, 255]), 2, 1, () => ++n);
+    expect(result.smaskRef).toBeNull();
+    expect(result.smask).toBeNull();
+    expect(result.image.dict.has('SMask')).toBe(false);
+    expect(result.image.dict.getName('Filter')).toBe('FlateDecode');
   });
 });
