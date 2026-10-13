@@ -45,9 +45,8 @@ export function deletePage(doc: PDFDocumentData, pageIndex: number): void {
 
   const page = doc.pages[pageIndex];
 
-  // Remove destinations before detaching the page. We deliberately remove the
-  // whole outline tree when it contains a deleted-page destination: retaining
-  // a bookmark with a null target is worse than dropping the affected outline.
+  // Remove only destinations that point at the deleted page. The rest of the
+  // outline tree remains valid and must survive page operations.
   removeDeletedPageDestinations(doc, page.ref);
 
   // Remove from parent's Kids array
@@ -80,10 +79,80 @@ function containsRef(obj: PDFObject, target: PDFRef, objects: Map<string, PDFObj
   return false;
 }
 
+function outlineList(doc: PDFDocumentData, first: PDFObject | undefined): PDFRef[] {
+  const refs: PDFRef[] = [];
+  const seen = new Set<string>();
+  let current = first;
+  while (current instanceof PDFRef && !seen.has(current.toKey())) {
+    seen.add(current.toKey());
+    refs.push(current);
+    const item = doc.objects.get(current.toKey());
+    current = item instanceof PDFDict ? item.get('Next') : undefined;
+  }
+  return refs;
+}
+
+function rewriteOutlineList(
+  doc: PDFDocumentData,
+  refs: PDFRef[],
+  parent: PDFRef,
+  pageRef: PDFRef,
+): PDFRef[] {
+  const kept: PDFRef[] = [];
+  for (const ref of refs) {
+    const item = doc.objects.get(ref.toKey());
+    if (!(item instanceof PDFDict)) continue;
+
+    const children = rewriteOutlineList(doc, outlineList(doc, item.get('First')), ref, pageRef);
+    const drops = containsRef(item.get('Dest') ?? PDFNull.instance, pageRef, doc.objects) ||
+      containsRef(item.get('A') ?? PDFNull.instance, pageRef, doc.objects);
+
+    if (drops) {
+      // Promote children of a deleted parent so a surviving subtree is not
+      // lost merely because its heading pointed at the removed page.
+      for (const childRef of children) {
+        const child = doc.objects.get(childRef.toKey());
+        if (child instanceof PDFDict) child.set('Parent', parent);
+      }
+      kept.push(...children);
+      continue;
+    }
+
+    item.set('Parent', parent);
+    if (children.length > 0) {
+      item.set('First', children[0]);
+      item.set('Last', children[children.length - 1]);
+      item.set('Count', new PDFNumber(children.length));
+    } else {
+      item.delete('First');
+      item.delete('Last');
+      item.delete('Count');
+    }
+    kept.push(ref);
+  }
+
+  for (let i = 0; i < kept.length; i++) {
+    const item = doc.objects.get(kept[i].toKey());
+    if (!(item instanceof PDFDict)) continue;
+    if (i > 0) item.set('Prev', kept[i - 1]); else item.delete('Prev');
+    if (i + 1 < kept.length) item.set('Next', kept[i + 1]); else item.delete('Next');
+  }
+  return kept;
+}
+
 function removeDeletedPageDestinations(doc: PDFDocumentData, pageRef: PDFRef): void {
   const catalog = doc.catalog;
-  if (containsRef(catalog.get('Outlines') ?? PDFNull.instance, pageRef, doc.objects)) {
-    catalog.delete('Outlines');
+  const outlines = catalog.get('Outlines');
+  const outlineRoot = outlines instanceof PDFRef ? doc.objects.get(outlines.toKey()) : outlines;
+  if (outlineRoot instanceof PDFDict) {
+    const kept = rewriteOutlineList(doc, outlineList(doc, outlineRoot.get('First')), outlines as PDFRef, pageRef);
+    if (kept.length > 0) {
+      outlineRoot.set('First', kept[0]);
+      outlineRoot.set('Last', kept[kept.length - 1]);
+      outlineRoot.set('Count', new PDFNumber(kept.length));
+    } else {
+      catalog.delete('Outlines');
+    }
   }
   // Named destinations can be reached through /Names and are otherwise easy to
   // leave dangling, so drop the names tree if one points to the deleted page.

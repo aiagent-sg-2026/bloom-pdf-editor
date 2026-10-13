@@ -4,7 +4,7 @@ import { writeFileSync } from 'node:fs';
 import { mkdtempSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { deletePage, insertPagesFromDocument } from '../writer/page-operations';
+import { deletePage, insertPagesFromDocument, reorderPages } from '../writer/page-operations';
 import { parsePDF } from '../parser/parser';
 import { serializeDocument } from '../writer/serializer';
 import { PDFArray, PDFBoolean, PDFDict, PDFName, PDFNumber, PDFRef, PDFStream, PDFString, type PDFDocumentData } from '../types';
@@ -35,11 +35,22 @@ function syntheticDocument(pageCount = 3): PDFDocumentData {
   const catalog = new PDFDict();
   catalog.set('Type', new PDFName('Catalog'));
   catalog.set('Pages', pagesRef);
-  const outline = new PDFDict();
-  outline.set('Title', new PDFName('Section-1'));
-  outline.set('Dest', new PDFArray([pageRefs[0], new PDFName('Fit')]));
-  objects.set('30_0', outline);
-  catalog.set('Outlines', new PDFRef(30, 0));
+  const outlineRoot = new PDFDict();
+  const outlineRefs = [30, 31, 32].map((n) => new PDFRef(n, 0));
+  outlineRoot.set('First', outlineRefs[0]);
+  outlineRoot.set('Last', outlineRefs[2]);
+  outlineRoot.set('Count', new PDFNumber(3));
+  objects.set('29_0', outlineRoot);
+  outlineRefs.forEach((ref, index) => {
+    const outline = new PDFDict();
+    outline.set('Title', new PDFName(`Section-${index + 1}`));
+    outline.set('Parent', new PDFRef(29, 0));
+    outline.set('Dest', new PDFArray([pageRefs[index], new PDFName('Fit')]));
+    if (index > 0) outline.set('Prev', outlineRefs[index - 1]);
+    if (index < outlineRefs.length - 1) outline.set('Next', outlineRefs[index + 1]);
+    objects.set(ref.toKey(), outline);
+  });
+  catalog.set('Outlines', new PDFRef(29, 0));
   objects.set(catalogRef.toKey(), catalog);
 
   pageRefs.forEach((ref, index) => {
@@ -85,8 +96,63 @@ describe('page deletion privacy', () => {
     writeFileSync('/tmp/bloom-page-delete-serialization-test.pdf', bytes);
     const text = new TextDecoder().decode(bytes);
     expect(text).not.toContain('ONLY_PAGE_ONE_SECRET');
-    expect(doc.catalog.get('Outlines')).toBeUndefined();
+    const reparsed = await parsePDF(bytes);
+    const rootRef = reparsed.catalog.get('Outlines');
+    expect(rootRef).toBeInstanceOf(PDFRef);
+    const root = reparsed.objects.get((rootRef as PDFRef).toKey()) as PDFDict;
+    const titles: string[] = [];
+    let ref = root.get('First');
+    while (ref instanceof PDFRef) {
+      const item = reparsed.objects.get(ref.toKey()) as PDFDict;
+      titles.push(item.getName('Title') ?? '');
+      ref = item.get('Next');
+    }
+    expect(titles).toEqual(['Section-2', 'Section-3']);
+    expect((reparsed.objects.get('31_0') as PDFDict).get('Dest')).toBeUndefined();
     expect((doc.pages[0].dict.get('Annots'))).toBeUndefined();
+  });
+
+  it('keeps surviving outlines after reorder and delete, including children of a dropped parent', async () => {
+    const doc = syntheticDocument();
+    const pageRefs = doc.pages.map((page) => page.ref);
+    const childRef = new PDFRef(33, 0);
+    const child = new PDFDict([
+      ['Title', new PDFName('Surviving child')],
+      ['Parent', new PDFRef(30, 0)],
+      ['Dest', new PDFArray([pageRefs[1], new PDFName('Fit')])],
+    ]);
+    child.set('Prev', new PDFRef(30, 0));
+    child.set('Next', new PDFRef(31, 0));
+    doc.objects.set(childRef.toKey(), child);
+    const root = doc.objects.get('29_0') as PDFDict;
+    // Add a surviving child under Section 1; deleting Section 1 must promote it.
+    const firstItemRef = root.get('First');
+    if (firstItemRef instanceof PDFRef) {
+      const firstItem = doc.objects.get(firstItemRef.toKey());
+      if (firstItem instanceof PDFDict) {
+        firstItem.set('First', childRef);
+        firstItem.set('Last', childRef);
+        firstItem.set('Count', new PDFNumber(1));
+        child.set('Parent', firstItemRef);
+      }
+    }
+
+    reorderPages(doc, [2, 1, 0]);
+    deletePage(doc, 2);
+    const bytes = await serializeDocument(doc);
+    const reparsed = await parsePDF(bytes);
+    const outlinesRef = reparsed.catalog.get('Outlines');
+    expect(outlinesRef).toBeInstanceOf(PDFRef);
+    const outlineRoot = reparsed.objects.get((outlinesRef as PDFRef).toKey()) as PDFDict;
+    const titles: string[] = [];
+    let ref = outlineRoot.get('First');
+    while (ref instanceof PDFRef) {
+      const item = reparsed.objects.get(ref.toKey()) as PDFDict;
+      titles.push(item.getName('Title') ?? item.getString('Title') ?? '');
+      ref = item.get('Next');
+    }
+    expect(titles).toEqual(['Section-2', 'Surviving child', 'Section-3']);
+    expect(new TextDecoder().decode(bytes)).not.toContain('ONLY_PAGE_ONE_SECRET');
   });
 
   it('restores a deleted page from the full structural history snapshot', async () => {
