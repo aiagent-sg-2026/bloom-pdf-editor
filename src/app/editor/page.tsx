@@ -45,6 +45,7 @@ import { SecurityPanel } from './components/SecurityPanel';
 import { useTextStyleActions, type TextStyleUI } from './hooks/useTextStyleActions';
 import { useIsMobile } from './hooks/useIsMobile';
 import { editorKeyboardAction } from './keyboard-actions';
+import { floatingTextPdfDelta, shouldStartFloatingTextDrag } from './components/pointerDragGeometry';
 
 export interface SearchMatch {
   id: string;
@@ -3515,26 +3516,55 @@ export default function EditorPage() {
 
   const handleFloatingTextPointerDown = useCallback((e: React.PointerEvent, id: string) => {
     e.stopPropagation();
+    const target = e.target as Element;
+    const targetIsTextArea = target.closest('textarea') != null;
+    const targetIsDragHandle = target.closest('[data-floating-text-drag-handle]') != null;
+    const targetIsInteractiveControl = target.closest('button, a, input, select, option, [role="button"], [contenteditable="true"]') != null;
+    const wrapper = e.currentTarget as HTMLElement;
+    const wrapperRect = wrapper.getBoundingClientRect();
+    if (!shouldStartFloatingTextDrag(
+      e.pointerType,
+      targetIsTextArea,
+      targetIsDragHandle,
+      targetIsInteractiveControl,
+      { x: e.clientX, y: e.clientY },
+      wrapperRect,
+    )) return;
     setActiveFloatingTextId(id);
     setActiveFloatingImageId(null);
     const box = floatingTexts.find(b => b.id === id);
     if (!box) return;
     let didMove = false;
+    let hasPointerCapture = false;
+    const startX = e.clientX;
+    const startY = e.clientY;
     dragInfo.current = {
       id,
       type: 'text',
-      startX: e.clientX,
-      startY: e.clientY,
+      startX,
+      startY,
       startPdfX: box.pdfX,
       startPdfY: box.pdfY
     };
 
     const handleMove = (me: PointerEvent) => {
-      if (!dragInfo.current || !doc || !renderResult) return;
-      const dx = me.clientX - dragInfo.current.startX;
-      const dy = me.clientY - dragInfo.current.startY;
-      const pdfDx = dx / scale;
-      const pdfDy = -dy / scale;
+      if (!dragInfo.current) return;
+      const screenDx = me.clientX - startX;
+      const screenDy = me.clientY - startY;
+      if (!hasPointerCapture && Math.hypot(screenDx, screenDy) >= 4) {
+        try {
+          wrapper.setPointerCapture(e.pointerId);
+          hasPointerCapture = true;
+        } catch {
+          // Pointer capture is unavailable in a few test DOM implementations.
+        }
+      }
+      if (!doc || !renderResult) return;
+      const { x: pdfDx, y: pdfDy } = floatingTextPdfDelta(
+        { x: startX, y: startY },
+        { x: me.clientX, y: me.clientY },
+        scale,
+      );
 
       const { startPdfX, startPdfY } = dragInfo.current;
 
@@ -3551,10 +3581,19 @@ export default function EditorPage() {
       dragInfo.current = null;
       window.removeEventListener('pointermove', handleMove);
       window.removeEventListener('pointerup', handleUp);
+      window.removeEventListener('pointercancel', handleUp);
+      if (hasPointerCapture) {
+        try {
+          wrapper.releasePointerCapture(e.pointerId);
+        } catch {
+          // ignore
+        }
+      }
     };
 
     window.addEventListener('pointermove', handleMove);
     window.addEventListener('pointerup', handleUp);
+    window.addEventListener('pointercancel', handleUp);
   }, [floatingTexts, scale, doc, renderResult, pushEditorHistory]);
 
   const handleFloatingImagePointerDown = useCallback((e: React.PointerEvent, id: string) => {
@@ -5433,7 +5472,7 @@ export default function EditorPage() {
               return (
                 <div
                   key={ft.id}
-                  className={`absolute z-20 cursor-move border-2 ${isActive ? 'border-[#E8607A] border-dashed' : 'border-transparent hover:border-zinc-500 hover:border-dashed'} p-1 -m-1`}
+                  className={`absolute z-20 cursor-move touch-none border-2 ${isActive ? 'border-[#E8607A] border-dashed' : 'border-transparent hover:border-zinc-500 hover:border-dashed'} p-1 -m-1`}
                   style={{
                     left: cssX,
                     top: cssY - (ft.fontSize * scale),
@@ -5441,6 +5480,16 @@ export default function EditorPage() {
                   onPointerDown={(e) => handleFloatingTextPointerDown(e, ft.id)}
                   onClick={(e) => e.stopPropagation()}
                 >
+                  <div
+                    aria-hidden="true"
+                    data-floating-text-drag-handle
+                    className="absolute inset-x-0 top-0 h-[14px] cursor-move touch-none z-10"
+                    onPointerDown={(e) => {
+                      if (e.pointerType !== 'mouse') {
+                        handleFloatingTextPointerDown(e, ft.id);
+                      }
+                    }}
+                  />
                   {isActive && (
                     <button
                       className="absolute -top-3 -right-3 bg-red-500 text-white rounded-full p-1 shadow hover:bg-red-600 transition-colors z-30"
@@ -5495,7 +5544,7 @@ export default function EditorPage() {
                       height: ft.pdfHeight ? `${ft.pdfHeight * scale}px` : undefined,
                     }}
                     onPointerDown={e => {
-                      if (isActive) e.stopPropagation();
+                      if (e.pointerType === 'touch' || isActive) e.stopPropagation();
                     }}
                     onMouseUp={e => {
                       // Capture size after resize handle is released
@@ -5524,7 +5573,7 @@ export default function EditorPage() {
               return (
                 <div
                   key={fi.id}
-                  className={`absolute z-20 cursor-move border-2 ${isActive ? 'border-[#E8607A] border-dashed' : 'border-transparent hover:border-zinc-500 hover:border-dashed'} p-1 -m-1`}
+                  className={`absolute z-20 cursor-move touch-none border-2 ${isActive ? 'border-[#E8607A] border-dashed' : 'border-transparent hover:border-zinc-500 hover:border-dashed'} p-1 -m-1`}
                   style={{
                     left: cssX,
                     top: cssY,
