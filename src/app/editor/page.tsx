@@ -471,6 +471,7 @@ export default function EditorPage() {
   floatingTextsRef.current = floatingTexts;
   const floatingImagesRef = useRef<FloatingImage[]>([]);
   floatingImagesRef.current = floatingImages;
+  const floatingTextEditStartRef = useRef<FloatingText[] | null>(null);
   const signaturesRef = useRef<VisualSignature[]>([]);
 
   const syncTxState = useCallback(() => {
@@ -585,7 +586,7 @@ export default function EditorPage() {
       },
       label,
     );
-    if (replaceCurrent) historyRef.current.replace(entry);
+    if (replaceCurrent) historyRef.current.replace(entry, true);
     else historyRef.current.push(entry);
     syncTxState();
   }, [doc, currentPage, syncTxState]);
@@ -3518,6 +3519,7 @@ export default function EditorPage() {
     setActiveFloatingImageId(null);
     const box = floatingTexts.find(b => b.id === id);
     if (!box) return;
+    let didMove = false;
     dragInfo.current = {
       id,
       type: 'text',
@@ -3536,6 +3538,7 @@ export default function EditorPage() {
 
       const { startPdfX, startPdfY } = dragInfo.current;
 
+      didMove = Math.abs(pdfDx) > 0.25 || Math.abs(pdfDy) > 0.25;
       setFloatingTexts(prev => prev.map(p => p.id === id ? {
         ...p,
         pdfX: startPdfX + pdfDx,
@@ -3544,6 +3547,7 @@ export default function EditorPage() {
     };
 
     const handleUp = () => {
+      if (didMove) pushEditorHistory('move-text-box', { floatingTexts: floatingTextsRef.current });
       dragInfo.current = null;
       window.removeEventListener('pointermove', handleMove);
       window.removeEventListener('pointerup', handleUp);
@@ -3551,7 +3555,7 @@ export default function EditorPage() {
 
     window.addEventListener('pointermove', handleMove);
     window.addEventListener('pointerup', handleUp);
-  }, [floatingTexts, scale, doc, renderResult]);
+  }, [floatingTexts, scale, doc, renderResult, pushEditorHistory]);
 
   const handleFloatingImagePointerDown = useCallback((e: React.PointerEvent, id: string) => {
     e.stopPropagation();
@@ -3559,6 +3563,7 @@ export default function EditorPage() {
     setActiveFloatingTextId(null);
     const box = floatingImages.find(b => b.id === id);
     if (!box) return;
+    let didMove = false;
     dragInfo.current = {
       id,
       type: 'image',
@@ -3577,6 +3582,7 @@ export default function EditorPage() {
 
       const { startPdfX, startPdfY } = dragInfo.current;
 
+      didMove = Math.abs(pdfDx) > 0.25 || Math.abs(pdfDy) > 0.25;
       setFloatingImages(prev => prev.map(p => p.id === id ? {
         ...p,
         pdfX: startPdfX + pdfDx,
@@ -3585,6 +3591,7 @@ export default function EditorPage() {
     };
 
     const handleUp = () => {
+      if (didMove) pushEditorHistory('move-floating-image', { floatingImages: floatingImagesRef.current });
       dragInfo.current = null;
       window.removeEventListener('pointermove', handleMove);
       window.removeEventListener('pointerup', handleUp);
@@ -3592,7 +3599,7 @@ export default function EditorPage() {
 
     window.addEventListener('pointermove', handleMove);
     window.addEventListener('pointerup', handleUp);
-  }, [floatingImages, scale, doc, renderResult]);
+  }, [floatingImages, scale, doc, renderResult, pushEditorHistory]);
 
   const handleImageUpload = useCallback((e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
@@ -5453,9 +5460,26 @@ export default function EditorPage() {
                     value={ft.text}
                     autoFocus={isActive && activeFloatingTextId === ft.id}
                     onChange={(e) => {
-                      setFloatingTexts(prev => prev.map(p => p.id === ft.id ? { ...p, text: e.target.value } : p));
+                      setFloatingTexts(prev => {
+                        const next = prev.map(p => p.id === ft.id ? { ...p, text: e.target.value } : p);
+                        floatingTextsRef.current = next;
+                        return next;
+                      });
                     }}
-                    onFocus={() => setActiveFloatingTextId(ft.id)}
+                    onFocus={() => {
+                      setActiveFloatingTextId(ft.id);
+                      if (!floatingTextEditStartRef.current) {
+                        floatingTextEditStartRef.current = floatingTextsRef.current.map(text => ({ ...text }));
+                      }
+                    }}
+                    onBlur={() => {
+                      const before = floatingTextEditStartRef.current;
+                      const after = floatingTextsRef.current;
+                      floatingTextEditStartRef.current = null;
+                      if (before && JSON.stringify(before) !== JSON.stringify(after)) {
+                        pushEditorHistory('edit-text-box', { floatingTexts: after });
+                      }
+                    }}
                     className="bg-transparent outline-none overflow-hidden block resize"
                     style={{
                       fontFamily: ft.fontFamily,

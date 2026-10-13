@@ -289,10 +289,10 @@ export class EditorHistory {
   }
 
   /** Replace the current state when an overlay is baked into the PDF. */
-  replace(entry: EditorHistoryEntry): void {
+  replace(entry: EditorHistoryEntry, preserveRedo = false): void {
     if (this.undoStack.length === 0) this.undoStack.push(entry);
     else this.undoStack[this.undoStack.length - 1] = entry;
-    this.redoStack = [];
+    if (!preserveRedo) this.redoStack = [];
   }
 }
 
