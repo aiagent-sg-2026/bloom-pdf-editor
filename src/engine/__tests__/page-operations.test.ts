@@ -4,9 +4,10 @@ import { writeFileSync } from 'node:fs';
 import { mkdtempSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { deletePage } from '../writer/page-operations';
+import { deletePage, insertPagesFromDocument } from '../writer/page-operations';
+import { parsePDF } from '../parser/parser';
 import { serializeDocument } from '../writer/serializer';
-import { PDFArray, PDFDict, PDFName, PDFNumber, PDFRef, PDFStream, type PDFDocumentData } from '../types';
+import { PDFArray, PDFBoolean, PDFDict, PDFName, PDFNumber, PDFRef, PDFStream, PDFString, type PDFDocumentData } from '../types';
 import { canvasToPdf, pdfToCanvas } from '../editing/coordinates';
 import { EditorHistory, captureHistoryEntry, restoreDocumentStructure } from '../editing/editor-history';
 import { canvasToPdf as appCanvasToPdf, pdfToCanvas as appPdfToCanvas } from '../../app/editor/utils';
@@ -175,6 +176,49 @@ describe('page deletion privacy', () => {
     expect(diagnostics).not.toMatch(/WARNING|ERROR/);
   });
 
+});
+
+describe('page insertion forms', () => {
+  it('keeps widgets fillable by merging only fields on inserted pages', async () => {
+    const target = syntheticDocument(1);
+    const source = syntheticDocument(1);
+    const page = source.pages[0];
+    const fieldRef = new PDFRef(100, 0);
+    const widgetRefs = [101, 102, 103].map((n) => new PDFRef(n, 0));
+    const field = new PDFDict([
+      ['FT', new PDFName('Tx')],
+      ['T', new PDFString('InsertedField')],
+      ['Kids', new PDFArray(widgetRefs)],
+    ]);
+    source.objects.set(fieldRef.toKey(), field);
+    for (const [index, ref] of widgetRefs.entries()) {
+      source.objects.set(ref.toKey(), new PDFDict([
+        ['Type', new PDFName('Annot')], ['Subtype', new PDFName('Widget')],
+        ['Parent', fieldRef], ['Rect', new PDFArray([new PDFNumber(10), new PDFNumber(index * 20), new PDFNumber(100), new PDFNumber(index * 20 + 15)])],
+      ]));
+    }
+    page.dict.set('Annots', new PDFArray(widgetRefs));
+    source.catalog.set('AcroForm', new PDFDict([
+      ['Fields', new PDFArray([fieldRef])],
+      ['DA', new PDFString('/Helv 10 Tf 0 g')],
+      ['NeedAppearances', new PDFBoolean(true)],
+    ]));
+
+    insertPagesFromDocument(target, source, 1);
+    const bytes = await serializeDocument(target);
+    const reparsed = await parsePDF(bytes);
+    const acro = reparsed.catalog.get('AcroForm');
+    expect(acro).toBeInstanceOf(PDFDict);
+    const fields = (acro as PDFDict).get('Fields');
+    expect(fields).toBeInstanceOf(PDFArray);
+    expect((fields as PDFArray).items).toHaveLength(1);
+    const copiedField = reparsed.objects.get(((fields as PDFArray).items[0] as PDFRef).toKey());
+    expect(copiedField).toBeInstanceOf(PDFDict);
+    const kids = (copiedField as PDFDict).get('Kids');
+    expect(kids).toBeInstanceOf(PDFArray);
+    expect((kids as PDFArray).items).toHaveLength(3);
+    expect((acro as PDFDict).getBool('NeedAppearances')).toBe(true);
+  });
 });
 
 describe('rotated/cropped viewport coordinates', () => {

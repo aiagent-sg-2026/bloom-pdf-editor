@@ -390,6 +390,120 @@ export function insertPagesFromDocument(
 
   // Rebuild page tree
   rebuildKidsArray(target);
+
+  mergeInsertedAcroForm(target, source, refMap, pagesToInsert.map((page) => page.ref));
+}
+
+/** Copy only AcroForm fields that have widgets on the pages being inserted. */
+function mergeInsertedAcroForm(
+  target: PDFDocumentData,
+  source: PDFDocumentData,
+  refMap: Map<string, PDFRef>,
+  insertedPageRefs: PDFRef[],
+): void {
+  const sourceAcroValue = source.catalog.get('AcroForm');
+  const sourceAcro = sourceAcroValue instanceof PDFRef
+    ? source.objects.get(sourceAcroValue.toKey())
+    : sourceAcroValue;
+  if (!(sourceAcro instanceof PDFDict)) return;
+
+  const insertedPages = new Set(insertedPageRefs.map((ref) => ref.toKey()));
+  const insertedWidgets = new Set<string>();
+  for (const page of source.pages) {
+    const annots = page.dict.get('Annots');
+    const annotItems = annots instanceof PDFArray
+      ? annots.items
+      : annots instanceof PDFRef && source.objects.get(annots.toKey()) instanceof PDFArray
+        ? (source.objects.get(annots.toKey()) as PDFArray).items
+        : [];
+    // The caller inserts every source page, so every source page is relevant.
+    if (!insertedPages.size) continue;
+    for (const annot of annotItems) {
+      const ref = annot instanceof PDFRef ? annot : undefined;
+      const value = ref ? source.objects.get(ref.toKey()) : annot;
+      if (value instanceof PDFDict && value.getName('Subtype') === 'Widget' && ref) {
+        insertedWidgets.add(ref.toKey());
+      }
+    }
+  }
+  if (!insertedWidgets.size) return;
+
+  const relevantFields = new Set<string>();
+  const fieldRoots = sourceAcro.get('Fields');
+  const markField = (value: PDFObject): boolean => {
+    const ref = value instanceof PDFRef ? value : undefined;
+    const field = ref ? source.objects.get(ref.toKey()) : value;
+    if (!(field instanceof PDFDict)) return false;
+    const widget = ref && insertedWidgets.has(ref.toKey());
+    const kids = field.get('Kids');
+    let hasRelevantChild = false;
+    if (kids instanceof PDFArray) {
+      hasRelevantChild = kids.items.some(markField);
+    }
+    if (ref && (widget || hasRelevantChild)) relevantFields.add(ref.toKey());
+    return widget || hasRelevantChild;
+  };
+  if (!(fieldRoots instanceof PDFArray)) return;
+  fieldRoots.items.forEach(markField);
+
+  const cloneField = (sourceRef: PDFRef): PDFRef => {
+    const existing = refMap.get(sourceRef.toKey());
+    if (existing) return existing;
+    const newRef = new PDFRef(getNextObjNum(target), 0);
+    refMap.set(sourceRef.toKey(), newRef);
+    const sourceField = source.objects.get(sourceRef.toKey());
+    if (!(sourceField instanceof PDFDict)) return newRef;
+    const cloned = new PDFDict();
+    target.objects.set(newRef.toKey(), cloned);
+    for (const [key, value] of sourceField.entries()) {
+      if (key === 'Parent') continue;
+      if (key === 'Kids' && value instanceof PDFArray) {
+        cloned.set('Kids', new PDFArray(value.items
+          .filter((kid) => kid instanceof PDFRef && relevantFields.has(kid.toKey()))
+          .map((kid) => cloneField(kid as PDFRef))));
+      } else {
+        cloned.set(key, copyAcroValue(value));
+      }
+    }
+    const kids = cloned.get('Kids');
+    if (kids instanceof PDFArray) {
+      for (const kid of kids.items) {
+        const child = kid instanceof PDFRef ? target.objects.get(kid.toKey()) : undefined;
+        if (child instanceof PDFDict) child.set('Parent', newRef);
+      }
+    }
+    return newRef;
+  };
+
+  const copyAcroValue = (value: PDFObject): PDFObject => {
+    if (value instanceof PDFRef) {
+      const mapped = refMap.get(value.toKey());
+      return mapped ?? value;
+    }
+    if (value instanceof PDFArray) return new PDFArray(value.items.map(copyAcroValue));
+    if (value instanceof PDFDict) {
+      const dict = new PDFDict();
+      for (const [key, item] of value.entries()) dict.set(key, copyAcroValue(item));
+      return dict;
+    }
+    if (value instanceof PDFStream) return new PDFStream(copyAcroValue(value.dict) as PDFDict, new Uint8Array(value.rawBytes), value.decodedBytes ? new Uint8Array(value.decodedBytes) : null);
+    return value;
+  };
+
+  const acroValue = target.catalog.get('AcroForm');
+  const targetAcro = acroValue instanceof PDFRef
+    ? target.objects.get(acroValue.toKey())
+    : acroValue;
+  const acro = targetAcro instanceof PDFDict ? targetAcro : new PDFDict();
+  if (!(targetAcro instanceof PDFDict)) target.catalog.set('AcroForm', acro);
+  const targetFields = acro.get('Fields') instanceof PDFArray ? acro.get('Fields') as PDFArray : new PDFArray();
+  if (!acro.has('Fields')) acro.set('Fields', targetFields);
+  for (const root of fieldRoots.items) {
+    if (root instanceof PDFRef && relevantFields.has(root.toKey())) targetFields.push(cloneField(root));
+  }
+  for (const key of ['DR', 'DA', 'NeedAppearances']) {
+    if (!acro.has(key) && sourceAcro.has(key)) acro.set(key, copyAcroValue(sourceAcro.get(key)!));
+  }
 }
 
 
