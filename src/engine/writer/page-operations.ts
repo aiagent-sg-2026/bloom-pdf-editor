@@ -459,7 +459,11 @@ function mergeInsertedAcroForm(
       if (key === 'Parent') continue;
       if (key === 'Kids' && value instanceof PDFArray) {
         cloned.set('Kids', new PDFArray(value.items
-          .filter((kid) => kid instanceof PDFRef && relevantFields.has(kid.toKey()))
+          // Keep direct widgets as well as nested fields marked by the walk
+          // above. Direct widgets are the common AcroForm shape and must stay
+          // reachable even when their parent field is cloned after page copy.
+          .filter((kid) => kid instanceof PDFRef &&
+            (insertedWidgets.has(kid.toKey()) || relevantFields.has(kid.toKey())))
           .map((kid) => cloneField(kid as PDFRef))));
       } else {
         cloned.set(key, copyAcroValue(value));

@@ -12,6 +12,15 @@ import { canvasToPdf, pdfToCanvas } from '../editing/coordinates';
 import { EditorHistory, captureHistoryEntry, restoreDocumentStructure } from '../editing/editor-history';
 import { canvasToPdf as appCanvasToPdf, pdfToCanvas as appPdfToCanvas } from '../../app/editor/utils';
 
+const qpdfAvailable = (() => {
+  try {
+    execFileSync('qpdf', ['--version'], { stdio: 'ignore' });
+    return true;
+  } catch {
+    return false;
+  }
+})();
+
 function syntheticDocument(pageCount = 3): PDFDocumentData {
   const objects = new Map<string, import('../types').PDFObject>();
   const pagesRef = new PDFRef(1, 0);
@@ -155,15 +164,6 @@ describe('page deletion privacy', () => {
     expect(new Set(doc.pages.map((page) => page.ref.toKey())).size).toBe(5);
   });
 
-  const qpdfAvailable = (() => {
-    try {
-      execFileSync('qpdf', ['--version'], { stdio: 'ignore' });
-      return true;
-    } catch {
-      return false;
-    }
-  })();
-
   it.skipIf(!qpdfAvailable)('writes qpdf-clean output without the deleted page marker', async () => {
     const doc = syntheticDocument(6);
     deletePage(doc, 0);
@@ -234,13 +234,15 @@ describe('page insertion forms', () => {
     expect((copiedField as PDFDict).getString('T')).toBe('InsertedField');
     const kids = (copiedField as PDFDict).get('Kids');
     expect(kids).toBeInstanceOf(PDFArray);
+    // All three widgets belong to the retained first source page, so all three
+    // must remain reachable even though the second page and its field are excluded.
     expect((kids as PDFArray).items).toHaveLength(3);
     expect((kids as PDFArray).items.every((item) => item instanceof PDFRef)).toBe(true);
     expect((kids as PDFArray).items.map((item) =>
       reparsed.objects.get((item as PDFRef).toKey()) instanceof PDFDict
         ? (reparsed.objects.get((item as PDFRef).toKey()) as PDFDict).get('Parent')
         : undefined,
-    ).every((parent) => parent instanceof PDFRef && parent.toKey() === (fields as PDFArray).items[0].toKey())).toBe(true);
+    ).every((parent) => parent instanceof PDFRef && parent.toKey() === ((fields as PDFArray).items[0] as PDFRef).toKey())).toBe(true);
     expect((acro as PDFDict).get('DR')).toBeInstanceOf(PDFDict);
     expect((acro as PDFDict).getString('DA')).toBe('/Helv 10 Tf 0 g');
     expect((acro as PDFDict).getBool('NeedAppearances')).toBe(true);
