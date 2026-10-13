@@ -3519,30 +3519,49 @@ export default function EditorPage() {
     const target = e.target as Element;
     const targetIsTextArea = target.closest('textarea') != null;
     const targetIsDragHandle = target.closest('[data-floating-text-drag-handle]') != null;
-    if (!shouldStartFloatingTextDrag(e.pointerType, targetIsTextArea, targetIsDragHandle)) return;
+    const targetIsInteractiveControl = target.closest('button, a, input, select, option, [role="button"], [contenteditable="true"]') != null;
+    const wrapper = e.currentTarget as HTMLElement;
+    const wrapperRect = wrapper.getBoundingClientRect();
+    if (!shouldStartFloatingTextDrag(
+      e.pointerType,
+      targetIsTextArea,
+      targetIsDragHandle,
+      targetIsInteractiveControl,
+      { x: e.clientX, y: e.clientY },
+      wrapperRect,
+    )) return;
     setActiveFloatingTextId(id);
     setActiveFloatingImageId(null);
     const box = floatingTexts.find(b => b.id === id);
     if (!box) return;
     let didMove = false;
+    let hasPointerCapture = false;
+    const startX = e.clientX;
+    const startY = e.clientY;
     dragInfo.current = {
       id,
       type: 'text',
-      startX: e.clientX,
-      startY: e.clientY,
+      startX,
+      startY,
       startPdfX: box.pdfX,
       startPdfY: box.pdfY
     };
-    try {
-      (e.currentTarget as HTMLElement).setPointerCapture(e.pointerId);
-    } catch {
-      // Pointer capture is unavailable in a few test DOM implementations.
-    }
 
     const handleMove = (me: PointerEvent) => {
-      if (!dragInfo.current || !doc || !renderResult) return;
+      if (!dragInfo.current) return;
+      const screenDx = me.clientX - startX;
+      const screenDy = me.clientY - startY;
+      if (!hasPointerCapture && Math.hypot(screenDx, screenDy) >= 4) {
+        try {
+          wrapper.setPointerCapture(e.pointerId);
+          hasPointerCapture = true;
+        } catch {
+          // Pointer capture is unavailable in a few test DOM implementations.
+        }
+      }
+      if (!doc || !renderResult) return;
       const { x: pdfDx, y: pdfDy } = floatingTextPdfDelta(
-        { x: dragInfo.current.startX, y: dragInfo.current.startY },
+        { x: startX, y: startY },
         { x: me.clientX, y: me.clientY },
         scale,
       );
@@ -3563,10 +3582,12 @@ export default function EditorPage() {
       window.removeEventListener('pointermove', handleMove);
       window.removeEventListener('pointerup', handleUp);
       window.removeEventListener('pointercancel', handleUp);
-      try {
-        (e.currentTarget as HTMLElement).releasePointerCapture(e.pointerId);
-      } catch {
-        // ignore
+      if (hasPointerCapture) {
+        try {
+          wrapper.releasePointerCapture(e.pointerId);
+        } catch {
+          // ignore
+        }
       }
     };
 
@@ -5462,7 +5483,7 @@ export default function EditorPage() {
                   <div
                     aria-hidden="true"
                     data-floating-text-drag-handle
-                    className="absolute inset-x-0 top-0 h-[6px] cursor-move touch-none z-10"
+                    className="absolute inset-x-0 top-0 h-[14px] cursor-move touch-none z-10"
                     onPointerDown={(e) => {
                       if (e.pointerType !== 'mouse') {
                         handleFloatingTextPointerDown(e, ft.id);

@@ -45,7 +45,13 @@ export function shouldStartFloatingTextDrag(
   pointerType: string,
   targetIsTextArea: boolean,
   targetIsDragHandle: boolean,
+  targetIsInteractiveControl = false,
+  point?: { x: number; y: number },
+  wrapperRect?: PointerRect,
 ) {
+  if (targetIsInteractiveControl) return false;
   if (pointerType === 'mouse') return !targetIsTextArea;
-  return !targetIsTextArea || targetIsDragHandle;
+  return !targetIsTextArea
+    || targetIsDragHandle
+    || (point != null && wrapperRect != null && isPointNearRectEdge(point.x, point.y, wrapperRect));
 }

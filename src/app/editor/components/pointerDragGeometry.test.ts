@@ -35,4 +35,19 @@ describe('touch dragging geometry', () => {
     expect(shouldStartFloatingTextDrag('touch', false, true)).toBe(true);
     expect(shouldStartFloatingTextDrag('mouse', true, false)).toBe(false);
   });
+
+  it('uses the touch point when the browser reports the textarea as the target', () => {
+    const rect = { left: 146, top: 384, right: 292, bottom: 432 };
+    expect(shouldStartFloatingTextDrag('touch', true, false, false, { x: 219, y: 385 }, rect)).toBe(true);
+    expect(shouldStartFloatingTextDrag('touch', true, false, false, { x: 219, y: 408 }, rect)).toBe(false);
+  });
+
+  it('does not begin a drag from an interactive control', () => {
+    expect(shouldStartFloatingTextDrag('mouse', false, false, true)).toBe(false);
+    expect(shouldStartFloatingTextDrag('touch', false, false, true)).toBe(false);
+  });
+
+  it('starts a touch drag from the handle', () => {
+    expect(shouldStartFloatingTextDrag('touch', true, true)).toBe(true);
+  });
 });
