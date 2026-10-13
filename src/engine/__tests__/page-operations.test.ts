@@ -52,7 +52,8 @@ function syntheticDocument(pageCount = 3): PDFDocumentData {
   link.set('Subtype', new PDFName('Link'));
   link.set('Dest', new PDFArray([pageRefs[0], new PDFName('Fit')]));
   objects.set('40_0', link);
-  (objects.get('3_0') as PDFDict).set('Annots', new PDFArray([new PDFRef(40, 0)]));
+  const linkedPage = pageRefs[1] ? objects.get(pageRefs[1].toKey()) : undefined;
+  if (linkedPage instanceof PDFDict) linkedPage.set('Annots', new PDFArray([new PDFRef(40, 0)]));
 
   return {
     version: '1.7', objects, catalog,
@@ -181,25 +182,41 @@ describe('page deletion privacy', () => {
 describe('page insertion forms', () => {
   it('keeps widgets fillable by merging only fields on inserted pages', async () => {
     const target = syntheticDocument(1);
-    const source = syntheticDocument(1);
-    const page = source.pages[0];
-    const fieldRef = new PDFRef(100, 0);
-    const widgetRefs = [101, 102, 103].map((n) => new PDFRef(n, 0));
-    const field = new PDFDict([
-      ['FT', new PDFName('Tx')],
-      ['T', new PDFString('InsertedField')],
-      ['Kids', new PDFArray(widgetRefs)],
+    const source = syntheticDocument(2);
+    const insertedPage = source.pages[0];
+    const notInsertedPage = source.pages[1];
+    const insertedFieldRef = new PDFRef(100, 0);
+    const insertedWidgetRefs = [101, 102, 103].map((n) => new PDFRef(n, 0));
+    const excludedFieldRef = new PDFRef(110, 0);
+    const excludedWidgetRef = new PDFRef(111, 0);
+    const insertedField = new PDFDict([
+      ['FT', new PDFName('Tx')], ['T', new PDFString('InsertedField')],
+      ['Kids', new PDFArray(insertedWidgetRefs)],
     ]);
-    source.objects.set(fieldRef.toKey(), field);
-    for (const [index, ref] of widgetRefs.entries()) {
+    const excludedField = new PDFDict([
+      ['FT', new PDFName('Tx')], ['T', new PDFString('ExcludedField')],
+      ['Kids', new PDFArray([excludedWidgetRef])],
+    ]);
+    source.objects.set(insertedFieldRef.toKey(), insertedField);
+    source.objects.set(excludedFieldRef.toKey(), excludedField);
+    for (const [index, ref] of insertedWidgetRefs.entries()) {
       source.objects.set(ref.toKey(), new PDFDict([
         ['Type', new PDFName('Annot')], ['Subtype', new PDFName('Widget')],
-        ['Parent', fieldRef], ['Rect', new PDFArray([new PDFNumber(10), new PDFNumber(index * 20), new PDFNumber(100), new PDFNumber(index * 20 + 15)])],
+        ['Parent', insertedFieldRef], ['Rect', new PDFArray([new PDFNumber(10), new PDFNumber(index * 20), new PDFNumber(100), new PDFNumber(index * 20 + 15)])],
       ]));
     }
-    page.dict.set('Annots', new PDFArray(widgetRefs));
+    source.objects.set(excludedWidgetRef.toKey(), new PDFDict([
+      ['Type', new PDFName('Annot')], ['Subtype', new PDFName('Widget')],
+      ['Parent', excludedFieldRef], ['Rect', new PDFArray([new PDFNumber(10), new PDFNumber(0), new PDFNumber(100), new PDFNumber(15)])],
+    ]));
+    insertedPage.dict.set('Annots', new PDFArray(insertedWidgetRefs));
+    notInsertedPage.dict.set('Annots', new PDFArray([excludedWidgetRef]));
+    // Only the first page is supplied to the insertion operation; the second page
+    // and its field remain source-only objects and must not enter the target.
+    source.pages.splice(1, 1);
     source.catalog.set('AcroForm', new PDFDict([
-      ['Fields', new PDFArray([fieldRef])],
+      ['Fields', new PDFArray([insertedFieldRef, excludedFieldRef])],
+      ['DR', new PDFDict()],
       ['DA', new PDFString('/Helv 10 Tf 0 g')],
       ['NeedAppearances', new PDFBoolean(true)],
     ]));
@@ -214,10 +231,28 @@ describe('page insertion forms', () => {
     expect((fields as PDFArray).items).toHaveLength(1);
     const copiedField = reparsed.objects.get(((fields as PDFArray).items[0] as PDFRef).toKey());
     expect(copiedField).toBeInstanceOf(PDFDict);
+    expect((copiedField as PDFDict).getString('T')).toBe('InsertedField');
     const kids = (copiedField as PDFDict).get('Kids');
     expect(kids).toBeInstanceOf(PDFArray);
     expect((kids as PDFArray).items).toHaveLength(3);
+    expect((kids as PDFArray).items.every((item) => item instanceof PDFRef)).toBe(true);
+    expect((kids as PDFArray).items.map((item) =>
+      reparsed.objects.get((item as PDFRef).toKey()) instanceof PDFDict
+        ? (reparsed.objects.get((item as PDFRef).toKey()) as PDFDict).get('Parent')
+        : undefined,
+    ).every((parent) => parent instanceof PDFRef && parent.toKey() === (fields as PDFArray).items[0].toKey())).toBe(true);
+    expect((acro as PDFDict).get('DR')).toBeInstanceOf(PDFDict);
+    expect((acro as PDFDict).getString('DA')).toBe('/Helv 10 Tf 0 g');
     expect((acro as PDFDict).getBool('NeedAppearances')).toBe(true);
+
+    if (qpdfAvailable) {
+      const path = join(mkdtempSync(join(tmpdir(), 'bloom-page-insert-form-')), 'inserted-form.pdf');
+      writeFileSync(path, bytes);
+      const result = spawnSync('qpdf', ['--check', path], { encoding: 'utf8' });
+      const diagnostics = `${result.stdout ?? ''}\n${result.stderr ?? ''}`;
+      expect(result.status).toBe(0);
+      expect(diagnostics).not.toMatch(/WARNING|ERROR/);
+    }
   });
 });
 
