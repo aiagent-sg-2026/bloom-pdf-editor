@@ -1985,7 +1985,7 @@ export default function EditorPage() {
     const entry = historyRef.current.undo();
     if (!entry) return;
     try {
-      await applyHistoryEntry(entry, currentPage);
+      await applyHistoryEntry(entry);
     } catch (e) {
       console.error('[Editor] Undo failed:', e);
     }

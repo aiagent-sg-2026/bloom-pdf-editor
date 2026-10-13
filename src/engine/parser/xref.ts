@@ -21,7 +21,6 @@ import {
   PDFBoolean,
   PDFString,
   PDFHexString,
-  PDFNumber,
   PDFNull,
   PDFStream,
   type PDFObject,
