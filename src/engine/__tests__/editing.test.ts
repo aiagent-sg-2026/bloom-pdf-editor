@@ -17,6 +17,7 @@ import {
 import { interpretPage } from '../content/interpreter';
 import type { DisplayItem, TextRun, ImageItem, PathItem } from '../content/interpreter';
 import { getPageContentBytes } from '../parser/parser';
+import { createAnnotationDict, type Annotation } from '../editor/annotation-engine';
 import type { TextLine } from '../flow/types';
 import {
   PDFArray,
@@ -645,5 +646,29 @@ describe('selection-quads: addHighlightFromSelection', () => {
       { lineIndex: 0, charIndex: 2 },
     );
     expect(ref).toBeNull();
+  });
+});
+
+describe('annotation appearances', () => {
+  it('stores shape, ink, and highlight appearances as indirect non-empty streams', () => {
+    const objects = new Map<string, import('../types').PDFObject>();
+    const annotations: Annotation[] = [
+      { type: 'Square', rect: { x: 10, y: 20, width: 40, height: 30 }, color: [1, 0, 0], opacity: 1, lineWidth: 2 },
+      { type: 'Ink', rect: { x: 10, y: 20, width: 40, height: 30 }, color: [0, 0, 1], opacity: 1, lineWidth: 2, inkPaths: [[10, 20, 30, 40]] },
+      { type: 'Highlight', rect: { x: 10, y: 20, width: 40, height: 10 }, color: [1, 1, 0], opacity: 0.4, quadPoints: [10, 30, 50, 30, 50, 20, 10, 20] },
+    ];
+
+    annotations.forEach((annotation, index) => {
+      const objNum = 20 + index * 2;
+      const { dict } = createAnnotationDict(annotation, objNum, objects);
+      const ap = dict.get('AP');
+      expect(ap instanceof PDFDict).toBe(true);
+      const streamRef = (ap as PDFDict).get('N');
+      expect(streamRef instanceof PDFRef).toBe(true);
+      const stream = objects.get((streamRef as PDFRef).toKey());
+      expect(stream instanceof PDFStream).toBe(true);
+      expect((stream as PDFStream).rawBytes.length).toBeGreaterThan(0);
+      expect((stream as PDFStream).dict.get('BBox')).toBeInstanceOf(PDFArray);
+    });
   });
 });

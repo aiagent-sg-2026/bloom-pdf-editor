@@ -145,6 +145,7 @@ export type Annotation =
 export function createAnnotationDict(
   annotation: Annotation,
   nextObjNum: number,
+  objects?: Map<string, PDFObject>,
 ): { dict: PDFDict; appearanceStream: PDFStream | null } {
   const dict = new PDFDict();
 
@@ -295,7 +296,12 @@ export function createAnnotationDict(
   // Set appearance stream
   if (appearanceStream) {
     const apDict = new PDFDict();
-    apDict.set('N', appearanceStream as unknown as PDFObject);
+    // Appearance streams are indirect objects.  Inline streams produce a
+    // malformed /AP dictionary (/Length without stream data) in serialized
+    // PDFs and are rejected by pdfium/poppler.
+    const appearanceRef = new PDFRef(nextObjNum + 1, 0);
+    apDict.set('N', appearanceRef);
+    objects?.set(appearanceRef.toKey(), appearanceStream);
     dict.set('AP', apDict);
   }
 

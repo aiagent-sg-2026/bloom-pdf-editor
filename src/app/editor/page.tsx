@@ -2689,6 +2689,10 @@ export default function EditorPage() {
         fontSize: textFontSize,
         fontFamily: textFontFamily,
         color: textColor,
+        bold: textBold,
+        italic: textItalic,
+        underline: textUnderline,
+        opacity: textOpacity / 100,
       };
 
       const nextTexts = [...floatingTextsRef.current, newBox];
@@ -3053,15 +3057,12 @@ export default function EditorPage() {
 
       if (!annotation) continue;
 
-      const { dict, appearanceStream } = engine.createAnnotationDict(annotation, currentObjNum++);
-      if (appearanceStream) {
-        doc.objects.set(`${currentObjNum}_0`, appearanceStream as import('@/engine/browser-core').PDFObject);
-        currentObjNum++;
-      }
+      const annotationObjNum = currentObjNum;
+      const { dict } = engine.createAnnotationDict(annotation, annotationObjNum, doc.objects);
 
-      const annotRef = new engine.PDFRef(currentObjNum, 0);
+      const annotRef = new engine.PDFRef(annotationObjNum, 0);
       engine.addAnnotationToPage(page.dict, dict, annotRef, doc.objects);
-      currentObjNum++;
+      currentObjNum += 2;
     }
 
     if (fTexts.length > 0 || fImages.length > 0) {
@@ -3075,6 +3076,7 @@ export default function EditorPage() {
         newContentBytes = engine.insertTextRun(
           newContentBytes, page, doc.objects,
           ft.text, ft.pdfX, ft.pdfY, ft.fontSize, rgb
+          , { fontFamily: ft.fontFamily, bold: ft.bold, italic: ft.italic, underline: ft.underline, opacity: ft.opacity, width: ft.pdfWidth }
         );
       }
 
@@ -5418,6 +5420,7 @@ export default function EditorPage() {
                   )}
                   <textarea
                     value={ft.text}
+                    autoFocus={isActive && activeFloatingTextId === ft.id}
                     onChange={(e) => {
                       setFloatingTexts(prev => prev.map(p => p.id === ft.id ? { ...p, text: e.target.value } : p));
                     }}
@@ -5427,6 +5430,10 @@ export default function EditorPage() {
                       fontFamily: ft.fontFamily,
                       fontSize: ft.fontSize * scale,
                       color: ft.color,
+                      fontWeight: ft.bold ? 'bold' : 'normal',
+                      fontStyle: ft.italic ? 'italic' : 'normal',
+                      textDecoration: ft.underline ? 'underline' : 'none',
+                      opacity: ft.opacity ?? 1,
                       minWidth: '100px',
                       minHeight: `${ft.fontSize * scale * 1.5}px`,
                       width: ft.pdfWidth ? `${ft.pdfWidth * scale}px` : undefined,
