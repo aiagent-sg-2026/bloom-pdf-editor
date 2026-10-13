@@ -45,9 +45,8 @@ export function deletePage(doc: PDFDocumentData, pageIndex: number): void {
 
   const page = doc.pages[pageIndex];
 
-  // Remove destinations before detaching the page. We deliberately remove the
-  // whole outline tree when it contains a deleted-page destination: retaining
-  // a bookmark with a null target is worse than dropping the affected outline.
+  // Remove only destinations that point at the deleted page. The rest of the
+  // outline tree remains valid and must survive page operations.
   removeDeletedPageDestinations(doc, page.ref);
 
   // Remove from parent's Kids array
@@ -80,14 +79,124 @@ function containsRef(obj: PDFObject, target: PDFRef, objects: Map<string, PDFObj
   return false;
 }
 
+/**
+ * Check a destination or action for a page reference without walking through
+ * page dictionaries. A page dictionary points back into the shared page tree,
+ * so resolving a destination's surviving page ref with containsRef() can
+ * incorrectly discover the page being deleted through a sibling /Kids entry.
+ */
+function containsDestinationRef(
+  obj: PDFObject,
+  target: PDFRef,
+  objects: Map<string, PDFObject>,
+  seen = new Set<string>(),
+): boolean {
+  if (obj instanceof PDFRef) {
+    if (obj.equals(target)) return true;
+    const key = obj.toKey();
+    if (seen.has(key)) return false;
+    seen.add(key);
+    const resolved = objects.get(key);
+    if (!(resolved instanceof PDFArray || resolved instanceof PDFDict || resolved instanceof PDFStream)) return false;
+    if (resolved instanceof PDFDict && (resolved.getName('Type') === 'Page' || resolved.getName('Type') === 'Pages')) return false;
+    return containsDestinationRef(resolved, target, objects, seen);
+  }
+  if (obj instanceof PDFArray) return obj.items.some((item) => containsDestinationRef(item, target, objects, seen));
+  if (obj instanceof PDFDict) return Array.from(obj.values()).some((value) => containsDestinationRef(value, target, objects, seen));
+  if (obj instanceof PDFStream) return containsDestinationRef(obj.dict, target, objects, seen);
+  return false;
+}
+
+function outlineList(doc: PDFDocumentData, first: PDFObject | undefined): PDFRef[] {
+  const refs: PDFRef[] = [];
+  const seen = new Set<string>();
+  let current = first;
+  while (current instanceof PDFRef && !seen.has(current.toKey())) {
+    seen.add(current.toKey());
+    refs.push(current);
+    const item = doc.objects.get(current.toKey());
+    current = item instanceof PDFDict ? item.get('Next') : undefined;
+  }
+  return refs;
+}
+
+function rewriteOutlineList(
+  doc: PDFDocumentData,
+  refs: PDFRef[],
+  parent: PDFRef,
+  pageRef: PDFRef,
+): PDFRef[] {
+  const kept: PDFRef[] = [];
+  for (const ref of refs) {
+    const item = doc.objects.get(ref.toKey());
+    if (!(item instanceof PDFDict)) continue;
+
+    const children = rewriteOutlineList(doc, outlineList(doc, item.get('First')), ref, pageRef);
+    const drops = containsDestinationRef(item.get('Dest') ?? PDFNull.instance, pageRef, doc.objects) ||
+      containsDestinationRef(item.get('A') ?? PDFNull.instance, pageRef, doc.objects);
+
+    if (drops) {
+      // Promote children of a deleted parent so a surviving subtree is not
+      // lost merely because its heading pointed at the removed page.
+      for (const childRef of children) {
+        const child = doc.objects.get(childRef.toKey());
+        if (child instanceof PDFDict) child.set('Parent', parent);
+      }
+      kept.push(...children);
+      continue;
+    }
+
+    item.set('Parent', parent);
+    if (children.length > 0) {
+      item.set('First', children[0]);
+      item.set('Last', children[children.length - 1]);
+      item.set('Count', new PDFNumber(children.length));
+    } else {
+      item.delete('First');
+      item.delete('Last');
+      item.delete('Count');
+    }
+    kept.push(ref);
+  }
+
+  for (let i = 0; i < kept.length; i++) {
+    const item = doc.objects.get(kept[i].toKey());
+    if (!(item instanceof PDFDict)) continue;
+    if (i > 0) item.set('Prev', kept[i - 1]); else item.delete('Prev');
+    if (i + 1 < kept.length) item.set('Next', kept[i + 1]); else item.delete('Next');
+  }
+  return kept;
+}
+
 function removeDeletedPageDestinations(doc: PDFDocumentData, pageRef: PDFRef): void {
   const catalog = doc.catalog;
-  if (containsRef(catalog.get('Outlines') ?? PDFNull.instance, pageRef, doc.objects)) {
-    catalog.delete('Outlines');
+  const outlines = catalog.get('Outlines');
+  const outlineRoot = outlines instanceof PDFRef ? doc.objects.get(outlines.toKey()) : outlines;
+  if (outlineRoot instanceof PDFDict) {
+    const kept = rewriteOutlineList(doc, outlineList(doc, outlineRoot.get('First')), outlines as PDFRef, pageRef);
+    if (kept.length > 0) {
+      outlineRoot.set('First', kept[0]);
+      outlineRoot.set('Last', kept[kept.length - 1]);
+      outlineRoot.set('Count', new PDFNumber(kept.length));
+    } else {
+      catalog.delete('Outlines');
+    }
   }
+
+  // Prune legacy catalog destinations individually so surviving named
+  // destinations remain valid after page deletion.
+  const dests = catalog.get('Dests');
+  const destDict = dests instanceof PDFRef ? doc.objects.get(dests.toKey()) : dests;
+  if (destDict instanceof PDFDict) {
+    for (const [name, destination] of Array.from(destDict.entries())) {
+      if (containsDestinationRef(destination, pageRef, doc.objects)) destDict.delete(name);
+    }
+    if (destDict.size === 0) catalog.delete('Dests');
+  }
+
   // Named destinations can be reached through /Names and are otherwise easy to
   // leave dangling, so drop the names tree if one points to the deleted page.
-  if (containsRef(catalog.get('Names') ?? PDFNull.instance, pageRef, doc.objects)) {
+  if (containsDestinationRef(catalog.get('Names') ?? PDFNull.instance, pageRef, doc.objects)) {
     catalog.delete('Names');
   }
 
@@ -102,8 +211,8 @@ function removeDeletedPageDestinations(doc: PDFDocumentData, pageRef: PDFRef): v
     const kept = arr.items.filter((item) => {
       const annotation = item instanceof PDFRef ? doc.objects.get(item.toKey()) : item;
       return !(annotation instanceof PDFDict && annotation.getName('Subtype') === 'Link' &&
-        (containsRef(annotation.get('Dest') ?? PDFNull.instance, pageRef, doc.objects) ||
-          containsRef(annotation.get('A') ?? PDFNull.instance, pageRef, doc.objects)));
+        (containsDestinationRef(annotation.get('Dest') ?? PDFNull.instance, pageRef, doc.objects) ||
+          containsDestinationRef(annotation.get('A') ?? PDFNull.instance, pageRef, doc.objects)));
     });
     if (kept.length === 0) {
       page.dict.delete('Annots');

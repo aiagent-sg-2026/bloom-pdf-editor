@@ -110,4 +110,15 @@ describe('editor history', () => {
     history.replace(entry('edit-with-overlay-baked'));
     expect(history.undo()?.label).toBe('initial');
   });
+
+  it('can replace an exported snapshot without clearing redo', () => {
+    const history = new EditorHistory();
+    history.seed(entry('initial'));
+    history.push(entry('draw-rect'));
+    history.push(entry('draw-ellipse'));
+    expect(history.undo()?.label).toBe('draw-rect');
+    history.replace(entry('exported-draw-rect'), true);
+    expect(history.canRedo()).toBe(true);
+    expect(history.redo()?.label).toBe('draw-ellipse');
+  });
 });

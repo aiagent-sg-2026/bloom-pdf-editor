@@ -44,6 +44,7 @@ import { PasswordDialog } from './components/PasswordDialog';
 import { SecurityPanel } from './components/SecurityPanel';
 import { useTextStyleActions, type TextStyleUI } from './hooks/useTextStyleActions';
 import { useIsMobile } from './hooks/useIsMobile';
+import { editorKeyboardAction } from './keyboard-actions';
 
 export interface SearchMatch {
   id: string;
@@ -470,6 +471,7 @@ export default function EditorPage() {
   floatingTextsRef.current = floatingTexts;
   const floatingImagesRef = useRef<FloatingImage[]>([]);
   floatingImagesRef.current = floatingImages;
+  const floatingTextEditStartRef = useRef<FloatingText[] | null>(null);
   const signaturesRef = useRef<VisualSignature[]>([]);
 
   const syncTxState = useCallback(() => {
@@ -584,7 +586,7 @@ export default function EditorPage() {
       },
       label,
     );
-    if (replaceCurrent) historyRef.current.replace(entry);
+    if (replaceCurrent) historyRef.current.replace(entry, true);
     else historyRef.current.push(entry);
     syncTxState();
   }, [doc, currentPage, syncTxState]);
@@ -3517,6 +3519,7 @@ export default function EditorPage() {
     setActiveFloatingImageId(null);
     const box = floatingTexts.find(b => b.id === id);
     if (!box) return;
+    let didMove = false;
     dragInfo.current = {
       id,
       type: 'text',
@@ -3535,6 +3538,7 @@ export default function EditorPage() {
 
       const { startPdfX, startPdfY } = dragInfo.current;
 
+      didMove = Math.abs(pdfDx) > 0.25 || Math.abs(pdfDy) > 0.25;
       setFloatingTexts(prev => prev.map(p => p.id === id ? {
         ...p,
         pdfX: startPdfX + pdfDx,
@@ -3543,6 +3547,7 @@ export default function EditorPage() {
     };
 
     const handleUp = () => {
+      if (didMove) pushEditorHistory('move-text-box', { floatingTexts: floatingTextsRef.current });
       dragInfo.current = null;
       window.removeEventListener('pointermove', handleMove);
       window.removeEventListener('pointerup', handleUp);
@@ -3550,7 +3555,7 @@ export default function EditorPage() {
 
     window.addEventListener('pointermove', handleMove);
     window.addEventListener('pointerup', handleUp);
-  }, [floatingTexts, scale, doc, renderResult]);
+  }, [floatingTexts, scale, doc, renderResult, pushEditorHistory]);
 
   const handleFloatingImagePointerDown = useCallback((e: React.PointerEvent, id: string) => {
     e.stopPropagation();
@@ -3558,6 +3563,7 @@ export default function EditorPage() {
     setActiveFloatingTextId(null);
     const box = floatingImages.find(b => b.id === id);
     if (!box) return;
+    let didMove = false;
     dragInfo.current = {
       id,
       type: 'image',
@@ -3576,6 +3582,7 @@ export default function EditorPage() {
 
       const { startPdfX, startPdfY } = dragInfo.current;
 
+      didMove = Math.abs(pdfDx) > 0.25 || Math.abs(pdfDy) > 0.25;
       setFloatingImages(prev => prev.map(p => p.id === id ? {
         ...p,
         pdfX: startPdfX + pdfDx,
@@ -3584,6 +3591,7 @@ export default function EditorPage() {
     };
 
     const handleUp = () => {
+      if (didMove) pushEditorHistory('move-floating-image', { floatingImages: floatingImagesRef.current });
       dragInfo.current = null;
       window.removeEventListener('pointermove', handleMove);
       window.removeEventListener('pointerup', handleUp);
@@ -3591,7 +3599,7 @@ export default function EditorPage() {
 
     window.addEventListener('pointermove', handleMove);
     window.addEventListener('pointerup', handleUp);
-  }, [floatingImages, scale, doc, renderResult]);
+  }, [floatingImages, scale, doc, renderResult, pushEditorHistory]);
 
   const handleImageUpload = useCallback((e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
@@ -3705,29 +3713,6 @@ export default function EditorPage() {
     setRenderKey(k => k + 1);
   }, [doc, currentPage, selectedDisplayItem, toEditableImage, pushEditorHistory]);
 
-  // Arrow keys nudge the selected embedded image (1pt, Shift = 10pt).
-  useEffect(() => {
-    if (selectedDisplayItem?.type !== 'image') return;
-    let busy = false;
-    function onArrow(e: KeyboardEvent) {
-      const t = e.target as HTMLElement | null;
-      if (t && (t.tagName === 'INPUT' || t.tagName === 'TEXTAREA' || t.isContentEditable)) return;
-      const step = e.shiftKey ? 10 : 1;
-      let dx = 0, dy = 0;
-      if (e.key === 'ArrowLeft') dx = -step;
-      else if (e.key === 'ArrowRight') dx = step;
-      else if (e.key === 'ArrowUp') dy = step;       // PDF y axis points up
-      else if (e.key === 'ArrowDown') dy = -step;
-      else return;
-      e.preventDefault();
-      if (busy) return;
-      busy = true;
-      void handleEmbeddedImageMove(dx, dy, true).finally(() => { busy = false; });
-    }
-    window.addEventListener('keydown', onArrow);
-    return () => window.removeEventListener('keydown', onArrow);
-  }, [selectedDisplayItem, handleEmbeddedImageMove]);
-
   const handleEmbeddedImageResize = useCallback(async (box: { x: number; y: number; width: number; height: number }) => {
     if (!doc || !engineRef.current || selectedDisplayItem?.type !== 'image') return;
     const item = selectedDisplayItem as ImageItem;
@@ -3746,6 +3731,30 @@ export default function EditorPage() {
     replacingImageIdRef.current = null;
     fileInputRef.current?.click();
   }, [selectedDisplayItem]);
+
+  const handleFloatingImageNudge = useCallback((dx: number, dy: number) => {
+    const id = activeFloatingImageId;
+    if (!id) return;
+    const next = floatingImagesRef.current.map(image => image.id === id
+      ? { ...image, pdfX: image.pdfX + dx, pdfY: image.pdfY + dy }
+      : image);
+    setFloatingImages(next);
+    floatingImagesRef.current = next;
+    pushEditorHistory('move-floating-image', { floatingImages: next });
+    setIsDirty(true);
+  }, [activeFloatingImageId, pushEditorHistory]);
+
+  const handleFloatingTextNudge = useCallback((dx: number, dy: number) => {
+    const id = activeFloatingTextId;
+    if (!id) return;
+    const next = floatingTextsRef.current.map(text => text.id === id
+      ? { ...text, pdfX: text.pdfX + dx, pdfY: text.pdfY + dy }
+      : text);
+    setFloatingTexts(next);
+    floatingTextsRef.current = next;
+    pushEditorHistory('move-text-box', { floatingTexts: next });
+    setIsDirty(true);
+  }, [activeFloatingTextId, pushEditorHistory]);
 
   // ── Hidden / line input — preview only; PDF commits on submit ──
   const handleHiddenInput = useCallback((e: React.FormEvent<HTMLTextAreaElement | HTMLInputElement>) => {
@@ -4608,65 +4617,49 @@ export default function EditorPage() {
       // Don't intercept when the user is typing in any text box or input
       if (document.activeElement?.tagName === 'INPUT' || document.activeElement?.tagName === 'TEXTAREA') return;
 
-      if (e.key === 'ArrowLeft' || e.key === 'ArrowUp') {
-        e.preventDefault(); goToPrev();
-      } else if (e.key === 'ArrowRight' || e.key === 'ArrowDown') {
-        e.preventDefault(); goToNext();
-      } else if ((e.key === '+' || e.key === '=') && (e.metaKey || e.ctrlKey)) {
-        e.preventDefault(); zoomIn();
-      } else if (e.key === '-' && (e.metaKey || e.ctrlKey)) {
-        e.preventDefault(); zoomOut();
-      } else if (e.key === 'v' || e.key === 'V') {
-        setActiveTool('select');
-      } else if (e.key === 't' || e.key === 'T') {
-        setActiveTool('text');
-      } else if (e.key === 'a' || e.key === 'A') {
-        setActiveTool('addtext');
-      } else if (e.key === 'h' || e.key === 'H') {
-        if (!e.metaKey && !e.ctrlKey) setActiveTool('highlight');
-      } else if (e.key === 'l' || e.key === 'L') {
-        if (!e.metaKey && !e.ctrlKey) setActiveTool('text');
-      } else if (e.key === 'd') {
-        setActiveTool('draw');
-      } else if (e.key === 'e' || e.key === 'E') {
-        if (!e.metaKey && !e.ctrlKey) setActiveTool('erase');
-      } else if (e.key === 's' || e.key === 'S') {
-        if (!e.metaKey && !e.ctrlKey && !e.shiftKey) setActiveTool('sign');
-      } else if ((e.key === 'v' || e.key === 'V') && e.shiftKey && !e.metaKey && !e.ctrlKey) {
-        // SIGNATURE_SHORTCUTS.validate
-        if (activeTool === 'sign') {
-          e.preventDefault();
-          void handleValidateSignatures();
-        }
-      } else if ((e.key === 'Delete' || e.key === 'Backspace') && selectedSignatureId) {
+      const action = editorKeyboardAction(e, {
+        selectedDisplayItem: selectedDisplayItem?.type === 'image' ? 'image' : selectedDisplayItem ? 'path' : null,
+        activeFloatingImage: !!activeFloatingImageId,
+        activeFloatingText: !!activeFloatingTextId,
+        selectedSignature: !!selectedSignatureId,
+        activeTool,
+      });
+      if (!action) return;
+      if (action.type === 'search') { e.preventDefault(); setIsSearchOpen(v => !v);
+      } else if (action.type === 'navigate-prev') { e.preventDefault(); goToPrev();
+      } else if (action.type === 'navigate-next') { e.preventDefault(); goToNext();
+      } else if (action.type === 'zoom-in') { e.preventDefault(); zoomIn();
+      } else if (action.type === 'zoom-out') { e.preventDefault(); zoomOut();
+      } else if (action.type === 'tool') { setActiveTool(action.tool);
+      } else if (action.type === 'validate-signatures') { e.preventDefault(); void handleValidateSignatures();
+      } else if (action.type === 'nudge') {
         e.preventDefault();
-        handleSignatureDelete(selectedSignatureId);
-      } else if ((e.key === 'Delete' || e.key === 'Backspace') && activeFloatingTextId) {
+        if (action.target === 'embedded-image') void handleEmbeddedImageMove(action.dx, action.dy, true);
+        else if (action.target === 'floating-image') handleFloatingImageNudge(action.dx, action.dy);
+        else handleFloatingTextNudge(action.dx, action.dy);
+      } else if (action.type === 'delete' && action.target === 'signature') {
+        e.preventDefault(); handleSignatureDelete(selectedSignatureId!);
+      } else if (action.type === 'delete' && action.target === 'floating-text') {
         e.preventDefault();
         const nextTexts = floatingTextsRef.current.filter(p => p.id !== activeFloatingTextId);
-        setFloatingTexts(nextTexts);
-        floatingTextsRef.current = nextTexts;
-        pushEditorHistory('delete-text-box', { floatingTexts: nextTexts });
-        setActiveFloatingTextId(null);
-      } else if (e.key === 'Escape' && activeFloatingTextId) {
+        setFloatingTexts(nextTexts); floatingTextsRef.current = nextTexts;
+        pushEditorHistory('delete-text-box', { floatingTexts: nextTexts }); setActiveFloatingTextId(null);
+      } else if (action.type === 'delete' && action.target === 'floating-image') {
+        e.preventDefault();
+        const nextImages = floatingImagesRef.current.filter(p => p.id !== activeFloatingImageId);
+        setFloatingImages(nextImages); floatingImagesRef.current = nextImages;
+        pushEditorHistory('delete-image', { floatingImages: nextImages }); setActiveFloatingImageId(null);
+      } else if (action.type === 'delete' && action.target === 'embedded-image') {
+        e.preventDefault(); void handleDeleteSelectedDisplayItem();
+      } else if (action.type === 'escape-floating-text') {
         e.preventDefault();
         setActiveFloatingTextId(null);
         setActiveTool('select');
-      } else if (e.key === 'w' || e.key === 'W') {
-        if (!e.metaKey && !e.ctrlKey) setActiveTool('watermark');
-      } else if (e.key === 'x' || e.key === 'X') {
-        if (!e.metaKey && !e.ctrlKey) {
-          setActiveTool('security');
-          setIsPanelOpen(true);
-        }
-      } else if ((e.key === 'f' || e.key === 'F') && (e.metaKey || e.ctrlKey)) {
-        e.preventDefault();
-        setIsSearchOpen(v => !v);
       }
     }
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
-  }, [goToPrev, goToNext, zoomIn, zoomOut, editingLine, selectedSignatureId, handleSignatureDelete, activeTool, handleValidateSignatures, activeFloatingTextId, pushEditorHistory]);
+  }, [goToPrev, goToNext, zoomIn, zoomOut, editingLine, selectedDisplayItem, activeFloatingImageId, activeFloatingTextId, selectedSignatureId, handleSignatureDelete, activeTool, handleValidateSignatures, handleEmbeddedImageMove, handleFloatingImageNudge, handleFloatingTextNudge, handleDeleteSelectedDisplayItem, pushEditorHistory]);
 
   // Clean, Minimalist 3D Tilted Pink Square Rubber Block Eraser Cursor
   const eraser3dSvg = `<svg xmlns="http://www.w3.org/2000/svg" width="32" height="32" viewBox="0 0 32 32"><defs><filter id="er-pinksq-shadow" x="-30%" y="-30%" width="160%" height="160%"><feDropShadow dx="1" dy="1.4" stdDeviation="1.2" flood-color="#000000" flood-opacity="0.45"/></filter><linearGradient id="er-pink-top" x1="0" y1="0" x2="1" y2="1"><stop offset="0%" stop-color="#FFA8E0"/><stop offset="60%" stop-color="#FF65C8"/><stop offset="100%" stop-color="#E840A8"/></linearGradient><linearGradient id="er-pink-left" x1="0" y1="0" x2="1" y2="1"><stop offset="0%" stop-color="#FF52B7"/><stop offset="100%" stop-color="#D6208A"/></linearGradient><linearGradient id="er-pink-right" x1="0" y1="0" x2="1" y2="1"><stop offset="0%" stop-color="#BF157A"/><stop offset="100%" stop-color="#80094F"/></linearGradient></defs><g filter="url(#er-pinksq-shadow)"><path d="M 4 16 L 16 4 L 28 16 L 28 19 L 16 31 L 4 19 Z" fill="none" stroke="#FFFFFF" stroke-width="2.4" stroke-linejoin="round" stroke-linecap="round"/><path d="M 4 16 L 16 4 L 28 16 L 16 28 Z" fill="url(#er-pink-top)" stroke="#80094F" stroke-width="0.6"/><path d="M 4 16 L 16 28 L 16 31 L 4 19 Z" fill="url(#er-pink-left)" stroke="#80094F" stroke-width="0.6"/><path d="M 16 28 L 28 16 L 28 19 L 16 31 Z" fill="url(#er-pink-right)" stroke="#80094F" stroke-width="0.6"/><path d="M 4 16 L 16 4 L 22 10 L 10 22 Z" fill="#FFFFFF" fill-opacity="0.45"/><circle cx="4" cy="28" r="0.8" fill="#FFFFFF" stroke="#80094F" stroke-width="0.4"/></g></svg>`;
@@ -5467,9 +5460,26 @@ export default function EditorPage() {
                     value={ft.text}
                     autoFocus={isActive && activeFloatingTextId === ft.id}
                     onChange={(e) => {
-                      setFloatingTexts(prev => prev.map(p => p.id === ft.id ? { ...p, text: e.target.value } : p));
+                      setFloatingTexts(prev => {
+                        const next = prev.map(p => p.id === ft.id ? { ...p, text: e.target.value } : p);
+                        floatingTextsRef.current = next;
+                        return next;
+                      });
                     }}
-                    onFocus={() => setActiveFloatingTextId(ft.id)}
+                    onFocus={() => {
+                      setActiveFloatingTextId(ft.id);
+                      if (!floatingTextEditStartRef.current) {
+                        floatingTextEditStartRef.current = floatingTextsRef.current.map(text => ({ ...text }));
+                      }
+                    }}
+                    onBlur={() => {
+                      const before = floatingTextEditStartRef.current;
+                      const after = floatingTextsRef.current;
+                      floatingTextEditStartRef.current = null;
+                      if (before && JSON.stringify(before) !== JSON.stringify(after)) {
+                        pushEditorHistory('edit-text-box', { floatingTexts: after });
+                      }
+                    }}
                     className="bg-transparent outline-none overflow-hidden block resize"
                     style={{
                       fontFamily: ft.fontFamily,

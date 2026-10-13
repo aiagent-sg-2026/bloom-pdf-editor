@@ -31,7 +31,16 @@ describe('object insertion exports', () => {
     expect(source).toMatch(/ET\n[\d.]+ w\n[\d.-]+ [\d.-]+ m [\d.-]+ [\d.-]+ l S/);
     const fonts = (p.page.dict.get('Resources') as PDFDict).get('Font') as PDFDict;
     expect((fonts.get('TimesBoldItalic') as PDFDict).getName('Encoding')).toBe('WinAnsiEncoding');
-    expect(((p.page.dict.get('Resources') as PDFDict).get('ExtGState') as PDFDict).has('TxGS')).toBe(true);
+    const extGState = ((p.page.dict.get('Resources') as PDFDict).get('ExtGState') as PDFDict).get('TxGS') as PDFDict;
+    expect(extGState.getNumber('ca')).toBe(0.5);
+    expect(extGState.getNumber('CA')).toBe(0.5);
+  });
+
+  it('exports a new text box at the opacity selected before insertion', () => {
+    const p = page();
+    insertTextRun(new Uint8Array(), p.page, p.objects, '30 percent', 10, 100, 12, [0, 0, 0], { opacity: 0.3 });
+    const extGState = ((p.page.dict.get('Resources') as PDFDict).get('ExtGState') as PDFDict).get('TxGS') as PDFDict;
+    expect(extGState.getNumber('ca')).toBe(0.3);
   });
 
   it('creates indirect Flate RGB and alpha image streams', async () => {
