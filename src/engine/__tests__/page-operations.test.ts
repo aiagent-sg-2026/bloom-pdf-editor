@@ -1,8 +1,11 @@
 import { describe, expect, it } from 'vitest';
+import { writeFileSync } from 'node:fs';
 import { deletePage } from '../writer/page-operations';
 import { serializeDocument } from '../writer/serializer';
 import { PDFArray, PDFDict, PDFName, PDFNumber, PDFRef, PDFStream, type PDFDocumentData } from '../types';
 import { canvasToPdf, pdfToCanvas } from '../editing/coordinates';
+import { captureHistoryEntry, restoreDocumentStructure } from '../editing/editor-history';
+import { canvasToPdf as appCanvasToPdf, pdfToCanvas as appPdfToCanvas } from '../../app/editor/utils';
 
 function syntheticDocument(): PDFDocumentData {
   const objects = new Map<string, import('../types').PDFObject>();
@@ -64,10 +67,28 @@ describe('page deletion privacy', () => {
     const doc = syntheticDocument();
     deletePage(doc, 0);
     const bytes = await serializeDocument(doc);
+    writeFileSync('/tmp/bloom-page-delete-serialization-test.pdf', bytes);
     const text = new TextDecoder().decode(bytes);
     expect(text).not.toContain('ONLY_PAGE_ONE_SECRET');
     expect(doc.catalog.get('Outlines')).toBeUndefined();
     expect((doc.pages[0].dict.get('Annots'))).toBeUndefined();
+  });
+
+  it('restores a deleted page from the full structural history snapshot', async () => {
+    const doc = syntheticDocument();
+    const before = captureHistoryEntry(doc, 0, new TextEncoder().encode('ONLY_PAGE_ONE_SECRET'), {
+      drawnPaths: [], floatingTexts: [], floatingImages: [], signatures: [],
+    }, 'before-delete');
+    deletePage(doc, 0);
+
+    await restoreDocumentStructure(doc, before, async (refs, bytes, objects) => {
+      const content = objects.get(refs[0].toKey());
+      if (content instanceof PDFStream) content.decodedBytes = bytes;
+    });
+
+    expect(doc.pages).toHaveLength(3);
+    expect(doc.pages.map((page) => page.ref.toKey())).toEqual(['2_0', '3_0', '4_0']);
+    expect((doc.objects.get('10_0') as PDFStream).decodedBytes).toEqual(new TextEncoder().encode('ONLY_PAGE_ONE_SECRET'));
   });
 });
 
@@ -77,5 +98,13 @@ describe('rotated/cropped viewport coordinates', () => {
     const source = { x: 120, y: 240 };
     const canvas = pdfToCanvas(source.x, source.y, transform);
     expect(canvasToPdf(canvas.x, canvas.y, transform)).toEqual(source);
+  });
+});
+
+describe('editor rotated-page coordinate transforms', () => {
+  it.each([90, 180, 270])('round-trips rotation %i with explicit page width', (rotation) => {
+    const source = { x: 120, y: 240 };
+    const canvas = appPdfToCanvas(source.x, source.y, 2, 720, 0, 0, rotation, 0, 0, 540);
+    expect(appCanvasToPdf(canvas.cssX, canvas.cssY, 2, 540, 720, 0, 0, rotation, 0, 0)).toEqual(source);
   });
 });

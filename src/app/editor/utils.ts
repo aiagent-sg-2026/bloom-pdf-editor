@@ -161,6 +161,7 @@ export function pdfToCanvas(
   rotation = 0,
   cropBoxX = mediaBoxX,
   cropBoxY = mediaBoxY,
+  pageWidth = pageHeight,
 ): { cssX: number; cssY: number } {
   const r = ((rotation % 360) + 360) % 360;
   const cropWidth = r === 90 || r === 270 ? pageHeight : pageWidth;
