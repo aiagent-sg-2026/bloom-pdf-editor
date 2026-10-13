@@ -84,14 +84,15 @@ export function computeFileKeyR2R4(
   fileId: FileIdPair,
 ): Uint8Array {
   const keyLen = keyByteLength(enc);
-  let hash = md5(padPassword(password));
-
-  // Build input for next MD5: hash || O || P || ID[0] [|| FFFFFFFF]
-  const parts: Uint8Array[] = [hash, enc.O, int32LE(enc.P), fileId.permanent];
+  // Algorithm 2 hashes the padded password together with the rest of the
+  // file-key input in one MD5 operation.  Hashing the password separately
+  // first is not part of the PDF specification and makes every external
+  // R2–R4 file-key incompatible.
+  const parts: Uint8Array[] = [padPassword(password), enc.O, int32LE(enc.P), fileId.permanent];
   if (enc.revision >= 4 && !enc.encryptMetadata) {
     parts.push(new Uint8Array([0xff, 0xff, 0xff, 0xff]));
   }
-  hash = md5(concatBytes(...parts));
+  let hash = md5(concatBytes(...parts));
 
   if (enc.revision >= 3) {
     for (let i = 0; i < 50; i++) {
@@ -234,7 +235,10 @@ export async function hashRevision6(
   let k = await sha256(concatBytes(password, salt, userKey ?? new Uint8Array(0)));
   let round = 0;
 
-  while (round < 64 || k[k.length - 1] > round - 32) {
+  // Algorithm 2.B numbers the AES/hash rounds from 1.  There are always at
+  // least 64 rounds; after that, continue only while the last byte of E is
+  // greater than (round - 32), where `round` is the completed round count.
+  do {
     const k1Parts: Uint8Array[] = [];
     const block = concatBytes(password, k, userKey ?? new Uint8Array(0));
     // Repeat to 64 repetitions
@@ -255,8 +259,7 @@ export async function hashRevision6(
     else k = await sha512(e);
 
     round++;
-    if (round > 64 + 32) break; // safety
-  }
+  } while (round < 64 || k[k.length - 1] > round - 32);
 
   return k.subarray(0, 32);
 }
