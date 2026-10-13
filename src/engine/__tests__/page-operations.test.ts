@@ -4,18 +4,18 @@ import { deletePage } from '../writer/page-operations';
 import { serializeDocument } from '../writer/serializer';
 import { PDFArray, PDFDict, PDFName, PDFNumber, PDFRef, PDFStream, type PDFDocumentData } from '../types';
 import { canvasToPdf, pdfToCanvas } from '../editing/coordinates';
-import { captureHistoryEntry, restoreDocumentStructure } from '../editing/editor-history';
+import { EditorHistory, captureHistoryEntry, restoreDocumentStructure } from '../editing/editor-history';
 import { canvasToPdf as appCanvasToPdf, pdfToCanvas as appPdfToCanvas } from '../../app/editor/utils';
 
-function syntheticDocument(): PDFDocumentData {
+function syntheticDocument(pageCount = 3): PDFDocumentData {
   const objects = new Map<string, import('../types').PDFObject>();
   const pagesRef = new PDFRef(1, 0);
   const catalogRef = new PDFRef(8, 0);
   const pagesRoot = new PDFDict();
   pagesRoot.set('Type', new PDFName('Pages'));
-  const pageRefs = [2, 3, 4].map((n) => new PDFRef(n, 0));
+  const pageRefs = Array.from({ length: pageCount }, (_, index) => new PDFRef(index + 2, 0));
   pagesRoot.set('Kids', new PDFArray(pageRefs));
-  pagesRoot.set('Count', new PDFNumber(3));
+  pagesRoot.set('Count', new PDFNumber(pageCount));
   objects.set(pagesRef.toKey(), pagesRoot);
 
   const catalog = new PDFDict();
@@ -90,6 +90,65 @@ describe('page deletion privacy', () => {
     expect(doc.pages.map((page) => page.ref.toKey())).toEqual(['2_0', '3_0', '4_0']);
     expect((doc.objects.get('10_0') as PDFStream).decodedBytes).toEqual(new TextEncoder().encode('ONLY_PAGE_ONE_SECRET'));
   });
+
+  it('undoes and redoes deleting page 1 without losing page identity or content', async () => {
+    const doc = syntheticDocument(6);
+    const overlays = { drawnPaths: [], floatingTexts: [], floatingImages: [], signatures: [] };
+    const initialBytes = new TextEncoder().encode('ONLY_PAGE_ONE_SECRET');
+    const before = captureHistoryEntry(doc, 0, initialBytes, overlays, 'initial');
+    const history = new EditorHistory();
+    history.seed(before);
+
+    deletePage(doc, 0);
+    const exportedAfterDelete = await serializeDocument(doc);
+    expect(new TextDecoder().decode(exportedAfterDelete)).not.toContain('ONLY_PAGE_ONE_SECRET');
+    const afterDelete = captureHistoryEntry(
+      doc,
+      0,
+      new TextEncoder().encode('PAGE_2'),
+      overlays,
+      'delete-page',
+    );
+    history.push(afterDelete);
+
+    const restore = async (entry: ReturnType<typeof captureHistoryEntry>) => {
+      await restoreDocumentStructure(doc, entry, async (refs, bytes, objects) => {
+        const content = objects.get(refs[0].toKey());
+        if (content instanceof PDFStream) content.decodedBytes = new Uint8Array(bytes);
+      });
+    };
+    const pageState = () => doc.pages.map((page) => ({
+      ref: page.ref.toKey(),
+      bytes: Array.from((doc.objects.get(page.contentRefs[0].toKey()) as PDFStream).decodedBytes ?? []),
+    }));
+
+    expect(pageState()).toEqual([
+      { ref: '3_0', bytes: Array.from(new TextEncoder().encode('PAGE_2')) },
+      { ref: '4_0', bytes: Array.from(new TextEncoder().encode('PAGE_3')) },
+      { ref: '5_0', bytes: Array.from(new TextEncoder().encode('PAGE_4')) },
+      { ref: '6_0', bytes: Array.from(new TextEncoder().encode('PAGE_5')) },
+      { ref: '7_0', bytes: Array.from(new TextEncoder().encode('PAGE_6')) },
+    ]);
+
+    await restore(history.undo()!);
+    expect(pageState()).toEqual([
+      { ref: '2_0', bytes: Array.from(new TextEncoder().encode('ONLY_PAGE_ONE_SECRET')) },
+      { ref: '3_0', bytes: Array.from(new TextEncoder().encode('PAGE_2')) },
+      { ref: '4_0', bytes: Array.from(new TextEncoder().encode('PAGE_3')) },
+      { ref: '5_0', bytes: Array.from(new TextEncoder().encode('PAGE_4')) },
+      { ref: '6_0', bytes: Array.from(new TextEncoder().encode('PAGE_5')) },
+      { ref: '7_0', bytes: Array.from(new TextEncoder().encode('PAGE_6')) },
+    ]);
+    expect(new Set(doc.pages.map((page) => page.ref.toKey())).size).toBe(6);
+
+    await restore(history.redo()!);
+    deletePage(doc, 0);
+    history.push(captureHistoryEntry(doc, 0, new TextEncoder().encode('PAGE_2'), overlays, 'delete-page-again'));
+    await restore(history.undo()!);
+    expect(pageState().map(({ ref }) => ref)).toEqual(['3_0', '4_0', '5_0', '6_0', '7_0']);
+    expect(new Set(doc.pages.map((page) => page.ref.toKey())).size).toBe(5);
+  });
+
 });
 
 describe('rotated/cropped viewport coordinates', () => {
