@@ -147,8 +147,10 @@ export function explodeTJGaps(
         out.push({ operator: 'TJ', operands: [new PDFArray(operands)], offset: inst.offset });
       }
     }
-    const next = instructions[i + 1]?.operator;
-    if (next === 'Td' || next === 'TD' || next === 'T*' || next === "'" || next === '"') {
+    // The next line-moving operator is relative to the ORIGINAL line matrix, which our absolute
+    // Tm pieces replaced. Look past state-only operators (Tf, Tc, rg, ...) to find it; stop at
+    // anything that shows text or sets the text matrix itself.
+    if (nextLineMove(instructions, i + 1)) {
       const last = run.glyphs[starts[starts.length - 1]]?.tRm;
       if (last) {
         const tState: Matrix = { a: fontSize * hScale, b: 0, c: 0, d: fontSize, e: 0, f: rise };
@@ -159,6 +161,18 @@ export function explodeTJGaps(
     }
   }
   return splitBytesEqual(out, instructions) ? contentBytes : compileInstructions(out);
+}
+
+const LINE_MOVE_OPS = new Set(['Td', 'TD', 'T*', "'", '"']);
+const TEXT_BARRIER_OPS = new Set(['Tm', 'BT', 'ET', 'Tj', 'TJ']);
+
+function nextLineMove(instructions: CSInstruction[], from: number): boolean {
+  for (let k = from; k < instructions.length; k++) {
+    const op = instructions[k].operator;
+    if (LINE_MOVE_OPS.has(op)) return true;
+    if (TEXT_BARRIER_OPS.has(op)) return false;
+  }
+  return false;
 }
 
 function splitBytesEqual(out: CSInstruction[], original: CSInstruction[]): boolean {
