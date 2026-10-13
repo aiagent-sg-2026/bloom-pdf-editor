@@ -612,6 +612,14 @@ export function insertTextRun(
   y: number,
   fontSize: number,
   color: [number, number, number],
+  options: {
+    fontFamily?: string;
+    bold?: boolean;
+    italic?: boolean;
+    underline?: boolean;
+    opacity?: number;
+    width?: number;
+  } = {},
 ): Uint8Array {
   // Ensure the page has the Helv font in its resources
   const resourcesObj = page.dict.get('Resources');
@@ -628,31 +636,71 @@ export function insertTextRun(
     resources.set('Font', fontDict);
   }
   
-  if (!fontDict.has('Helv')) {
+  const family = (options.fontFamily || 'Helvetica').toLowerCase();
+  const baseFamily = family.includes('times') ? 'Times' : family.includes('courier') ? 'Courier' : 'Helvetica';
+  const fontName = baseFamily === 'Times'
+    ? (options.bold && options.italic ? 'Times-BoldItalic' : options.bold ? 'Times-Bold' : options.italic ? 'Times-Italic' : 'Times-Roman')
+    : baseFamily === 'Courier'
+      ? (options.bold && options.italic ? 'Courier-BoldOblique' : options.bold ? 'Courier-Bold' : options.italic ? 'Courier-Oblique' : 'Courier')
+      : (options.bold && options.italic ? 'Helvetica-BoldOblique' : options.bold ? 'Helvetica-Bold' : options.italic ? 'Helvetica-Oblique' : 'Helvetica');
+  const resourceName = fontName === 'Helvetica' ? 'Helv' : fontName.replace(/[^A-Za-z]/g, '').slice(0, 8);
+  if (!fontDict.has(resourceName)) {
     const helvetica = new PDFDict();
     helvetica.set('Type', new PDFName('Font'));
     helvetica.set('Subtype', new PDFName('Type1'));
-    helvetica.set('BaseFont', new PDFName('Helvetica'));
-    fontDict.set('Helv', helvetica);
+    helvetica.set('BaseFont', new PDFName(fontName));
+    helvetica.set('Encoding', new PDFName('WinAnsiEncoding'));
+    fontDict.set(resourceName, helvetica);
   }
 
-  // PDF strings are usually encoded in MacRoman or PDFDocEncoding for standard fonts.
-  // For basic text, just convert chars to a PDF string.
-  // (In a full implementation, we'd encode correctly using the font's encoding).
-  let encodedText = '';
-  for (let i = 0; i < text.length; i++) {
-    const code = text.charCodeAt(i);
-    if (code < 256) {
-      encodedText += String.fromCharCode(code);
-    } else {
-      encodedText += '?'; // fallback for unsupported chars in standard font
+  const safeColor = color.map(v => Number.isFinite(v) ? Math.max(0, Math.min(1, v)) : 0) as [number, number, number];
+  const [r, g, b] = safeColor;
+  const lines = text.split(/\r?\n/);
+  const leading = Math.max(0.1, fontSize * 1.2);
+  const commands: string[] = [`\nq`, `${r} ${g} ${b} rg`];
+  const opacity = options.opacity == null ? 1 : Math.max(0, Math.min(1, options.opacity));
+  if (opacity < 1) {
+    const gs = new PDFDict();
+    gs.set('Type', new PDFName('ExtGState'));
+    gs.set('ca', new PDFNumber(opacity));
+    const gsName = 'TxGS';
+    let gsResources = resources.get('ExtGState');
+    if (!(gsResources instanceof PDFDict)) { gsResources = new PDFDict(); resources.set('ExtGState', gsResources); }
+    gsResources.set(gsName, gs);
+    commands.push(`/${gsName} gs`);
+  }
+  commands.push('BT');
+  const widthLimit = Number.isFinite(options.width) && (options.width || 0) > 0 ? options.width! : Infinity;
+  lines.forEach((line, lineIndex) => {
+    const chunks: string[] = [];
+    let current = '';
+    const approxCharWidth = Math.max(1, fontSize * 0.5);
+    for (const word of line.split(/(\s+)/)) {
+      if (current && (current.length + word.length) * approxCharWidth > widthLimit) {
+        chunks.push(current); current = '';
+      }
+      current += word;
     }
-  }
-  const pdfString = new PDFString(encodedText);
-  const escaped = serializeToString(pdfString);
-
-  const [r, g, b] = color;
-  const injection = `\nq\nBT\n${r} ${g} ${b} rg\n/Helv ${fontSize} Tf\n1 0 0 1 ${x} ${y} Tm\n${escaped} Tj\nET\nQ\n`;
+    chunks.push(current);
+    chunks.forEach((chunk, chunkIndex) => {
+      const dy = (lineIndex + chunkIndex) * leading;
+      commands.push(`1 0 0 1 ${x} ${y - dy} Tm`);
+      let run = '';
+      const flush = () => { if (run) { commands.push(`/${resourceName} ${fontSize} Tf`); commands.push(`${serializeToString(encodeTextWinAnsi(run).pdfString)} Tj`); run = ''; } };
+      for (const ch of chunk) {
+        const glyph = getBuiltInFallbackGlyph(ch);
+        if (glyph) {
+          flush();
+          const fallbackName = ensureBuiltInFallbackFont(page, objects, glyph.fontKind);
+          commands.push(`/${fallbackName} ${fontSize} Tf ${serializeToString(new PDFString(String.fromCharCode(glyph.code)))} Tj`);
+        } else run += ch;
+      }
+      flush();
+      if (options.underline && chunk.length) commands.push(`0 -${fontSize * 0.12} ${Math.max(1, chunk.length * fontSize * 0.5)} -${fontSize * 0.12} m S`);
+    });
+  });
+  commands.push('ET', 'Q', '');
+  const injection = `\n${commands.join('\n')}`;
   const enc = new TextEncoder();
   const injectionBytes = enc.encode(injection);
 

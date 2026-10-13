@@ -51,7 +51,7 @@ export { ingestPage, blockPlainText } from './bloom';
 export type { BloomBlock, BloomPage } from './bloom';
 
 export { applyRunPositionShifts, findAndReplace, insertTextRun } from './editor/text-editor';
-export { insertImageRun, replaceImageXObject } from './editor/image-editor';
+export { insertImageRun, replaceImageXObject, createRGBAImageObjects } from './editor/image-editor';
 export { applyObjectTransform, deleteObject } from './editor/object-editor';
 export { addHighlightFromLineSelection } from './editor/highlight';
 export { updatePageContent, serializeObject } from './editor/stream-compiler';

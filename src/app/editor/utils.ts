@@ -306,7 +306,8 @@ export function caretIndexFromPdfX(pdfX: number, run: TextRun): number {
 
 /** Convert #RRGGBB to [r,g,b] where each is 0-1 */
 export function hexToRGB(hex: string): [number, number, number] {
-  const clean = hex.replace('#', '');
+  const clean = hex.trim().replace(/^#/, '');
+  if (!/^(?:[0-9a-f]{3}|[0-9a-f]{6})$/i.test(clean)) return [0, 0, 0];
   if (clean.length === 3) {
     return [
       parseInt(clean[0]+clean[0], 16) / 255,
