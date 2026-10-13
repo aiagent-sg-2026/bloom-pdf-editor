@@ -141,6 +141,8 @@ export class SecurityEngine implements ISecurityEngine {
     };
 
     await decryptDocumentObjects(doc, ctx);
+    // Saving decrypted objects must produce an unencrypted PDF, not retain stale /Encrypt metadata.
+    doc.decryptedFromEncrypted = true;
     this.contexts.set(doc, ctx);
 
     const rawPerms = this.permissions.fromEncryptDict(enc);
@@ -154,6 +156,7 @@ export class SecurityEngine implements ISecurityEngine {
       throw new Error('Document is already encrypted — decrypt first or save a new copy');
     }
     const ctx = await encryptDocumentObjects(doc, options);
+    delete doc.decryptedFromEncrypted;
     this.contexts.set(doc, ctx);
     return doc;
   }
@@ -165,6 +168,7 @@ export class SecurityEngine implements ISecurityEngine {
       result.doc.objects.delete(result.context.encrypt.ref.toKey());
     }
     this.contexts.delete(result.doc);
+    delete result.doc.decryptedFromEncrypted;
     return result.doc;
   }
 

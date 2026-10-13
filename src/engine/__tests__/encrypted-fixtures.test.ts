@@ -1,8 +1,10 @@
 import { describe, expect, it } from 'vitest';
-import { readFileSync } from 'fs';
+import { spawnSync } from 'child_process';
+import { readFileSync, unlinkSync, writeFileSync } from 'fs';
 import { join } from 'path';
+import { tmpdir } from 'os';
 import { parsePDF } from '../parser/parser';
-import { serializeDocument } from '../writer/serializer';
+import { saveDocument } from '../writer/save-pipeline';
 import { securityEngine } from '../security';
 import { PDFStream } from '../types';
 
@@ -31,8 +33,24 @@ describe('qpdf encrypted fixtures', () => {
       await expect(securityEngine.open(parsed, 'wrong-password')).rejects.toThrow(/password/i);
       const opened = await securityEngine.open(parsed, password);
       expect(streamText(opened.doc)).toContain('Hello encrypted');
-      const saved = await serializeDocument(opened.doc);
+      const saved = await saveDocument(opened.doc);
       expect(saved.length).toBeGreaterThan(0);
+
+      const reparsed = await parsePDF(saved);
+      expect(reparsed.xref.trailerDict.has('Encrypt')).toBe(false);
+      expect(streamText(reparsed)).toContain('Hello encrypted');
+
+      const outputPath = join(tmpdir(), `bloom-resaved-${name}`);
+      writeFileSync(outputPath, saved);
+      try {
+        const qpdfResult = spawnSync('qpdf', ['--check', outputPath], {
+          encoding: 'utf8',
+        });
+        expect(qpdfResult.status).toBe(0);
+        expect(`${qpdfResult.stdout}${qpdfResult.stderr}`).not.toMatch(/WARNING|ERROR/);
+      } finally {
+        unlinkSync(outputPath);
+      }
     }, 30000);
   }
 });

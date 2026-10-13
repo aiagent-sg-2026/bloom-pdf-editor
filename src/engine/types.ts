@@ -320,4 +320,6 @@ export interface PDFDocumentData {
   info: PDFDocumentInfo;
   /** The raw file bytes (kept for incremental saves) */
   rawBytes: Uint8Array;
+  /** True after securityEngine.open() has decrypted the in-memory objects. */
+  decryptedFromEncrypted?: boolean;
 }
