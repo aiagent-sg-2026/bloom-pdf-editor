@@ -652,6 +652,10 @@ export function insertTextRun(
     helvetica.set('Encoding', new PDFName('WinAnsiEncoding'));
     fontDict.set(resourceName, helvetica);
   }
+  const selectedFont = fontDict.get(resourceName);
+  if (selectedFont instanceof PDFDict && !selectedFont.has('Encoding')) {
+    selectedFont.set('Encoding', new PDFName('WinAnsiEncoding'));
+  }
 
   const safeColor = color.map(v => Number.isFinite(v) ? Math.max(0, Math.min(1, v)) : 0) as [number, number, number];
   const [r, g, b] = safeColor;
@@ -663,6 +667,7 @@ export function insertTextRun(
     const gs = new PDFDict();
     gs.set('Type', new PDFName('ExtGState'));
     gs.set('ca', new PDFNumber(opacity));
+    gs.set('CA', new PDFNumber(opacity));
     const gsName = 'TxGS';
     let gsResources = resources.get('ExtGState');
     if (!(gsResources instanceof PDFDict)) { gsResources = new PDFDict(); resources.set('ExtGState', gsResources); }

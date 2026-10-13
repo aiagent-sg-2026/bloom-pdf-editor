@@ -144,7 +144,7 @@ export class RedactionEngine implements IRedactionEngine {
       quadPoints,
     };
     const objNum = getNextObjNum(doc);
-    const { dict } = createAnnotationDict(annot, objNum);
+    const { dict } = createAnnotationDict(annot, objNum, doc.objects);
     const ref = new PDFRef(objNum, 0);
     addAnnotationToPage(page.dict, dict, ref, doc.objects);
     return ref;
