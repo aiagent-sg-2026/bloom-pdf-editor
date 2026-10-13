@@ -1,5 +1,5 @@
 import { parseContentStream, type CSInstruction } from './operator-lexer';
-import { prettyPrint } from './parser';
+import { compileInstructions } from '../editor/text-editor';
 import { interpretPage, type Matrix } from './interpreter';
 import {
   PDFArray,
@@ -111,7 +111,6 @@ export function explodeTJGaps(
     for (let j = 0; j < arr.length; j++) {
       const item = arr.get(j)!;
       if (item instanceof PDFNumber) {
-        const effectiveSize = run.glyphs[Math.min(glyphCount, run.glyphs.length - 1)]?.fontSize || fontSize;
         if (Math.abs(item.value) / 1000 >= COLUMN_GUTTER_FACTOR) {
           pieces.push([]);
           starts.push(glyphCount);
@@ -119,9 +118,6 @@ export function explodeTJGaps(
         } else {
           pieces[pieces.length - 1].push(item);
         }
-        // Keep this read explicit: the threshold is scale-invariant, while
-        // effectiveSize documents that the decision is in rendered units.
-        void effectiveSize;
       } else {
         pieces[pieces.length - 1].push(item);
         glyphCount += Math.max(1, composite ? Math.ceil(stringByteLength(item) / 2) : stringByteLength(item));
@@ -162,7 +158,7 @@ export function explodeTJGaps(
       }
     }
   }
-  return splitBytesEqual(out, instructions) ? contentBytes : prettyPrint(out);
+  return splitBytesEqual(out, instructions) ? contentBytes : compileInstructions(out);
 }
 
 function splitBytesEqual(out: CSInstruction[], original: CSInstruction[]): boolean {

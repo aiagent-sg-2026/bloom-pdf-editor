@@ -48,4 +48,15 @@ describe('explodeTJGaps', () => {
     expect(after.find(r => r.text === 'C')!.y).toBeCloseTo(before.find(r => r.text === 'C')!.y, 2);
     expect(buildDocumentFlow(after).lines.length).toBeGreaterThanOrEqual(2);
   });
+
+  it('keeps non-ASCII string bytes intact when it rewrites the stream', () => {
+    // 0xB1 is a single WinAnsi byte; a UTF-8 re-encode would turn it into C2 B1.
+    const f = fixture('');
+    f.bytes = Uint8Array.from(Array.from('BT\n/F1 12 Tf\n1 0 0 1 40 700 Tm\n[(A)-3000(B)] TJ\n0 -20 Td\n(X\xb1Y) Tj\nET\n').map(c => c.charCodeAt(0)));
+    const out = explodeTJGaps(f.bytes, f.page, f.objects);
+    expect(out).not.toBe(f.bytes);
+    const text = Array.from(out).map(b => String.fromCharCode(b)).join('');
+    expect(text).toMatch(/X(\\261|\xb1)Y/);
+    expect(Array.from(out)).not.toContain(0xc2);
+  });
 });
