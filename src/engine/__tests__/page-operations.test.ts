@@ -1,5 +1,9 @@
 import { describe, expect, it } from 'vitest';
+import { execFileSync, spawnSync } from 'node:child_process';
 import { writeFileSync } from 'node:fs';
+import { mkdtempSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { deletePage } from '../writer/page-operations';
 import { serializeDocument } from '../writer/serializer';
 import { PDFArray, PDFDict, PDFName, PDFNumber, PDFRef, PDFStream, type PDFDocumentData } from '../types';
@@ -147,6 +151,28 @@ describe('page deletion privacy', () => {
     await restore(history.undo()!);
     expect(pageState().map(({ ref }) => ref)).toEqual(['3_0', '4_0', '5_0', '6_0', '7_0']);
     expect(new Set(doc.pages.map((page) => page.ref.toKey())).size).toBe(5);
+  });
+
+  const qpdfAvailable = (() => {
+    try {
+      execFileSync('qpdf', ['--version'], { stdio: 'ignore' });
+      return true;
+    } catch {
+      return false;
+    }
+  })();
+
+  it.skipIf(!qpdfAvailable)('writes qpdf-clean output without the deleted page marker', async () => {
+    const doc = syntheticDocument(6);
+    deletePage(doc, 0);
+    const bytes = await serializeDocument(doc);
+    const path = join(mkdtempSync(join(tmpdir(), 'bloom-page-delete-')), 'deleted-page.pdf');
+    writeFileSync(path, bytes);
+    expect(new TextDecoder().decode(bytes)).not.toContain('ONLY_PAGE_ONE_SECRET');
+    const result = spawnSync('qpdf', ['--check', path], { encoding: 'utf8' });
+    const diagnostics = `${result.stdout ?? ''}\n${result.stderr ?? ''}`;
+    expect(result.status).toBe(0);
+    expect(diagnostics).not.toMatch(/WARNING|ERROR/);
   });
 
 });
