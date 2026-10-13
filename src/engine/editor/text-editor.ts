@@ -34,6 +34,7 @@ import {
 import { resolveRef } from '../parser/parser';
 import { loadFont, type FontData, charCodeToUnicode } from '../fonts/font-parser';
 import { ensureFallbackFont } from '../fonts/font-augmentation';
+import { ensureBuiltInFallbackFont, getBuiltInFallbackGlyph } from '../fonts/symbol-fallback';
 import { resolveRunStyleFlags } from '../flow/metrics';
 import { serializeToString } from './stream-compiler';
 import { isolateBaseCtm } from './content-append';
@@ -113,6 +114,7 @@ export function applyTextEdits(
     // Encode with the run's font; subset/CID fonts often can't encode typed ASCII (`.` → missing/`?`)
     let encoded = encodeTextForFont(edit.newText, fontData);
     let useFallbackFont: string | null = null;
+    const specialChars = Array.from(edit.newText).some(ch => getBuiltInFallbackGlyph(ch) !== null);
     const lossy = isEncodingLossy(edit.newText, encoded, fontData);
 
     if (lossy) {
@@ -121,9 +123,14 @@ export function applyTextEdits(
       const flags = resolveRunStyleFlags(edit.targetRun.fontName, fontData);
       useFallbackFont = ensureFallbackFont(page, objects, flags);
       encoded = encodeTextWinAnsi(edit.newText);
-      needsFontAugmentation = true;
-      if (encoded.missing.length > 0) {
-        missingCharCodes.push(...encoded.missing);
+      const unknown = encoded.missing.filter(cp => getBuiltInFallbackGlyph(String.fromCodePoint(cp)) === null);
+      needsFontAugmentation = unknown.length > 0;
+      missingCharCodes.push(...unknown);
+      if (specialChars) {
+        for (const ch of Array.from(edit.newText)) {
+          const glyph = getBuiltInFallbackGlyph(ch);
+          if (glyph) ensureBuiltInFallbackFont(page, objects, glyph.fontKind);
+        }
       }
     } else if (encoded.missing.length > 0) {
       needsFontAugmentation = true;
@@ -195,6 +202,19 @@ export function applyTextEdits(
 
     // Spaces: subset fonts often have ~0 space advance (live CSS shows gaps,
     // PDF does not). Emit TJ with explicit advances instead of a bare string.
+    if (specialChars && useFallbackFont) {
+      const inserted = applySpecialFallbackShowing(
+        instructions,
+        matched.index,
+        edit.newText,
+        useFallbackFont,
+        edit.targetRun.fontName,
+        runFontSize(edit.targetRun),
+      );
+      indexOffset += inserted;
+      continue;
+    }
+
     const tjArr = matched.instruction.operator === 'TJ' ? matched.instruction.operands[0] : null;
     const patched =
       !useFallbackFont && tjArr instanceof PDFArray
@@ -1173,6 +1193,53 @@ function insertFallbackFontAround(
     inserted += 1;
   }
   return inserted;
+}
+
+/** Replace one text-showing operation with adjacent WinAnsi/Symbol/Dingbats runs. */
+function applySpecialFallbackShowing(
+  instructions: CSInstruction[],
+  textIndex: number,
+  text: string,
+  fallbackFont: string,
+  originalFont: string,
+  visualSize: number,
+): number {
+  let size = Number.isFinite(visualSize) && visualSize > 0 ? visualSize : 12;
+  let previousFont = originalFont.replace(/^\//, '');
+  for (let i = textIndex - 1; i >= 0; i--) {
+    if (instructions[i].operator === 'BT') break;
+    if (instructions[i].operator === 'Tf' && instructions[i].operands.length >= 2) {
+      const name = instructions[i].operands[0];
+      const tfSize = instructions[i].operands[1];
+      if (name instanceof PDFName) previousFont = name.name;
+      if (tfSize instanceof PDFNumber && tfSize.value > 0) size = tfSize.value;
+      break;
+    }
+  }
+
+  const ops: CSInstruction[] = [];
+  let normal = '';
+  const flushNormal = () => {
+    if (!normal) return;
+    ops.push({ operator: 'Tf', operands: [new PDFName(fallbackFont), new PDFNumber(size)], offset: 0 });
+    ops.push({ operator: 'Tj', operands: [encodeTextWinAnsi(normal).pdfString], offset: 0 });
+    normal = '';
+  };
+  for (const ch of Array.from(text)) {
+    const glyph = getBuiltInFallbackGlyph(ch);
+    if (!glyph) {
+      normal += ch;
+      continue;
+    }
+    flushNormal();
+    const resource = glyph.fontKind === 'Symbol' ? 'SymAug' : 'DingAug';
+    ops.push({ operator: 'Tf', operands: [new PDFName(resource), new PDFNumber(size)], offset: 0 });
+    ops.push({ operator: 'Tj', operands: [new PDFString(String.fromCharCode(glyph.code))], offset: 0 });
+  }
+  flushNormal();
+  ops.push({ operator: 'Tf', operands: [new PDFName(previousFont), new PDFNumber(size)], offset: 0 });
+  instructions.splice(textIndex, 1, ...ops);
+  return ops.length - 1;
 }
 
 function buildReverseUnicodeMap(fontData: FontData): Map<string, number> {
