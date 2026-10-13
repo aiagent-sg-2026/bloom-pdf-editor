@@ -77,7 +77,7 @@ export function addLinkFromLineSelection(
   };
 
   const objNum = getNextObjNum(doc);
-  const { dict } = createAnnotationDict(annot, objNum);
+  const { dict } = createAnnotationDict(annot, objNum, doc.objects);
 
   // Visible thin blue border so links are discoverable (Acrobat-like)
   dict.set('Border', new PDFArray([
@@ -206,7 +206,7 @@ export function updatePageLinkUrl(
     url: normalized,
   };
   const objNum = getNextObjNum(doc);
-  const { dict } = createAnnotationDict(annot, objNum);
+  const { dict } = createAnnotationDict(annot, objNum, doc.objects);
   dict.set('Border', new PDFArray([
     new PDFNumber(0),
     new PDFNumber(0),

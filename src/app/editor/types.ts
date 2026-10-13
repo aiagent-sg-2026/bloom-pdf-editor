@@ -59,6 +59,10 @@ export interface FloatingText {
   fontSize: number;
   fontFamily: string;
   color: string;
+  bold?: boolean;
+  italic?: boolean;
+  underline?: boolean;
+  opacity?: number;
 }
 
 export interface FloatingImage {
