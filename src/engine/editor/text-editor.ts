@@ -16,7 +16,7 @@
  * recompiles the stream.
  */
 
-import { ctmBefore, deltaThroughInverse } from './matrix';
+import { ctmBefore, deltaThroughInverse, invertMatrix } from './matrix';
 import { parseContentStream, type CSInstruction } from '../content/operator-lexer';
 import { interpretPage, type TextRun } from '../content/interpreter';
 import {
@@ -1199,9 +1199,13 @@ function buildReverseUnicodeMap(fontData: FontData): Map<string, number> {
   // Type3 Differences often map ASCII codes to .notdef (g0); inventing
   // identity mappings makes encode look successful while drawing solid bars.
   const isType3 = !!(fontData.charProcs && fontData.charProcs.size > 0);
+  // Embedded SUBSETS only carry glyphs for characters the source used, so an
+  // identity guess for anything else draws .notdef (an empty box).
+  const isSubset = /^[A-Z]{6}\+/.test(fontData.baseFont || '') && fontData.toUnicode.size > 0;
   if (!fontData.isComposite && !isType3) {
     for (let i = 0x20; i <= 0x7e; i++) {
       const char = String.fromCharCode(i);
+      if (isSubset && i !== 0x20) continue;
       if (!reverse.has(char)) {
         reverse.set(char, i);
       }
@@ -1251,8 +1255,15 @@ function insertEraseRectForRun(
   const eraseX = run.x - pad;
   const eraseY = run.y - descent - pad;
 
+  // run.x/y are page-space; undo any base CTM (e.g. Firefox's top-level flip).
+  const inv = invertMatrix(ctmBefore(instructions, btIndex));
+  const toBase: CSInstruction[] =
+    inv && inv.some((v, i) => Math.abs(v - [1, 0, 0, 1, 0, 0][i]) > 1e-9)
+      ? [{ operator: 'cm', operands: inv.map((v) => new PDFNumber(v)), offset: 0 }]
+      : [];
   const eraseOps: CSInstruction[] = [
     { operator: 'q', operands: [], offset: 0 },
+    ...toBase,
     { operator: 'rg', operands: [new PDFNumber(1), new PDFNumber(1), new PDFNumber(1)], offset: 0 },
     {
       operator: 're',
