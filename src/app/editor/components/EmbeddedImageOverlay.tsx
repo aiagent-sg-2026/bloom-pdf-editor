@@ -19,6 +19,8 @@ interface EmbeddedImageOverlayProps {
   onDeselect: () => void;
 }
 
+export const EMBEDDED_IMAGE_OVERLAY_LAYERS = { overlay: 70, handle: 80 } as const;
+
 /**
  * Interactive frame over a selected embedded PDF image — drag + SE resize.
  * Visual feedback is local; PDF mutation commits on pointer-up.
@@ -130,7 +132,7 @@ export function EmbeddedImageOverlay(props: EmbeddedImageOverlayProps) {
 
   return (
     <div
-      className="absolute z-30 border-2 border-[#3b82f6] border-dashed bg-[#3b82f6]/10 cursor-move"
+      className="absolute z-[70] pointer-events-auto border-2 border-[#3b82f6] border-dashed bg-[#3b82f6]/10 cursor-move"
       style={{ left: box.left, top: box.top, width: box.width, height: box.height }}
       onClick={(e) => e.stopPropagation()}
       onPointerDown={(e) => begin('move', e)}
@@ -169,7 +171,7 @@ export function EmbeddedImageOverlay(props: EmbeddedImageOverlayProps) {
         <div
           key={corner}
           data-handle={corner}
-          className={`absolute w-2.5 h-2.5 bg-[#3b82f6] border border-white rounded-sm z-40 ${
+          className={`absolute w-2.5 h-2.5 bg-[#3b82f6] border border-white rounded-sm z-[80] pointer-events-auto ${
             corner === 'nw' || corner === 'se' ? 'cursor-nwse-resize' : 'cursor-nesw-resize'
           }`}
           style={{
