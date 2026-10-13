@@ -10,7 +10,7 @@ const fixtureDir = join(__dirname, 'fixtures', 'encrypted');
 const fixtures = [
   ['aes-256-r6.pdf', 'userpass'],
   ['aes-128-r4.pdf', 'userpass'],
-  ['rc4-128-r3.pdf', 'userpass'],
+  ['rc4-128-r4.pdf', 'userpass'],
   ['rc4-40-empty-user-r2.pdf', ''],
 ] as const;
 
