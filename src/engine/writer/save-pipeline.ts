@@ -14,8 +14,9 @@ function hasFinalizedSignature(bytes: Uint8Array): boolean {
   for (let i = 0; i < bytes.length; i += 0x8000) {
     text += String.fromCharCode(...bytes.subarray(i, Math.min(i + 0x8000, bytes.length)));
   }
-  return /\/ByteRange\s*\[\s*0\s+\d+\s+\d+\s+\d+\s*\]/.test(text) &&
-    /\/Contents\s*<[0-9a-fA-F]+>/.test(text);
+  if (!/\/ByteRange\s*\[\s*0\s+\d+\s+\d+\s+\d+\s*\]/.test(text)) return false;
+  const contents = text.match(/\/Contents\s*<([0-9a-fA-F]+)>/);
+  return contents != null && /[1-9a-fA-F]/.test(contents[1]);
 }
 
 /**

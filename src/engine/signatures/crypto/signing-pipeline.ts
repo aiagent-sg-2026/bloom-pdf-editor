@@ -180,6 +180,20 @@ export async function signDocumentCryptographic(
   }
 
   const modified = new Set<string>([fieldRef.toKey(), sigRef.toKey()]);
+  // Field creation mutates the catalog's AcroForm and the page's Annots.
+  // Both objects must be present in the signing revision, otherwise readers
+  // cannot discover the field/widget even though the CMS is valid.
+  for (const [key, object] of doc.objects) {
+    if (object === doc.catalog) modified.add(key);
+  }
+  const fieldDict = doc.objects.get(fieldRef.toKey());
+  const pageRef = fieldDict instanceof PDFDict && fieldDict.get('P') instanceof PDFRef
+    ? fieldDict.get('P') as PDFRef
+    : null;
+  const fieldPage = pageRef ? doc.pages.find((page) => page.ref.toKey() === pageRef.toKey()) : undefined;
+  if (fieldPage) modified.add(fieldPage.ref.toKey());
+  const acro = doc.catalog.get('AcroForm');
+  if (acro instanceof PDFRef) modified.add(acro.toKey());
   const newObjects = new Map<string, import('../../types').PDFObject>();
   for (const [key, obj] of doc.objects) {
     if (!doc.xref?.entries?.has(key) && key !== fieldRef.toKey() && key !== sigRef.toKey()) {
