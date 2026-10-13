@@ -2,6 +2,7 @@
 
 import React, { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { GripHorizontal } from 'lucide-react';
+import { isPointNearRectEdge, pointerDragDelta } from './pointerDragGeometry';
 
 /** One styled fragment inside the line editor (mirrors PDF runs). */
 export interface OverlaySegmentStyle {
@@ -84,6 +85,7 @@ export function EditableLineBox(props: EditableLineBoxProps) {
   const visibleRef = useRef<HTMLDivElement>(null);
   const charEndsRef = useRef<number[]>([]);
   const dragMode = useRef<DragMode>(null);
+  const captureTarget = useRef<HTMLElement | null>(null);
   const dragStart = useRef({ x: 0, y: 0, ox: 0, oy: 0, w: 0, h: 0 });
   const selectDrag = useRef<{ anchor: number } | null>(null);
   const frozenScaleX = useRef<number | null>(null);
@@ -266,8 +268,10 @@ export function EditableLineBox(props: EditableLineBoxProps) {
   const onPointerMove = useCallback((e: PointerEvent) => {
     const mode = dragMode.current;
     if (!mode) return;
-    const dx = e.clientX - dragStart.current.x;
-    const dy = e.clientY - dragStart.current.y;
+    const { x: dx, y: dy } = pointerDragDelta(
+      dragStart.current,
+      { x: e.clientX, y: e.clientY },
+    );
 
     if (mode === 'move') {
       onOffsetChange(dragStart.current.ox + dx, dragStart.current.oy + dy, e.altKey);
@@ -283,9 +287,13 @@ export function EditableLineBox(props: EditableLineBoxProps) {
     }
   }, [onOffsetChange, onSizeChange, width, height, fontSizeCss]);
 
-  const endDrag = useCallback(() => {
+  const endDrag = useCallback((event?: PointerEvent) => {
     dragMode.current = null;
     onDragEnd?.();
+    if (event && captureTarget.current?.hasPointerCapture?.(event.pointerId)) {
+      captureTarget.current.releasePointerCapture(event.pointerId);
+    }
+    captureTarget.current = null;
     window.removeEventListener('pointermove', onPointerMove);
     window.removeEventListener('pointerup', endDrag);
   }, [onPointerMove, onDragEnd]);
@@ -293,6 +301,8 @@ export function EditableLineBox(props: EditableLineBoxProps) {
   const startDrag = useCallback((mode: DragMode, e: React.PointerEvent) => {
     e.preventDefault();
     e.stopPropagation();
+    captureTarget.current = e.currentTarget as HTMLElement;
+    captureTarget.current.setPointerCapture?.(e.pointerId);
     dragMode.current = mode;
     dragStart.current = {
       x: e.clientX,
@@ -315,6 +325,13 @@ export function EditableLineBox(props: EditableLineBoxProps) {
     if (e.altKey || e.metaKey) {
       startDrag('move', e);
       return;
+    }
+    if (e.pointerType === 'touch') {
+      const rect = (e.currentTarget as HTMLElement).getBoundingClientRect();
+      if (isPointNearRectEdge(e.clientX, e.clientY, rect)) {
+        startDrag('move', e);
+        return;
+      }
     }
     e.preventDefault();
     e.stopPropagation();
@@ -393,7 +410,7 @@ export function EditableLineBox(props: EditableLineBoxProps) {
 
   return (
     <div
-      className="absolute z-20"
+      className="absolute z-20 touch-none"
       style={{
         left: left + offsetCssX,
         top: top + offsetCssY,
@@ -427,12 +444,12 @@ export function EditableLineBox(props: EditableLineBoxProps) {
 
       {/* Move hit targets (positioned outside text bounds so text click/caret positioning is unimpeded) */}
       <div
-        className="absolute -top-2.5 left-0 right-0 h-2.5 cursor-grab active:cursor-grabbing z-30"
+        className="absolute -top-2.5 left-0 right-0 h-2.5 cursor-grab active:cursor-grabbing z-30 touch-none"
         onPointerDown={(e) => startDrag('move', e)}
         title="Drag to move text"
       />
       <div
-        className="absolute -bottom-2.5 left-0 right-0 h-2.5 cursor-grab active:cursor-grabbing z-30"
+        className="absolute -bottom-2.5 left-0 right-0 h-2.5 cursor-grab active:cursor-grabbing z-30 touch-none"
         onPointerDown={(e) => {
           const rect = (e.currentTarget as HTMLElement).getBoundingClientRect();
           if (e.clientX > rect.right - 16) return;
@@ -441,12 +458,12 @@ export function EditableLineBox(props: EditableLineBoxProps) {
         title="Drag to move text"
       />
       <div
-        className="absolute top-0 bottom-0 -left-2.5 w-2.5 cursor-grab active:cursor-grabbing z-30"
+        className="absolute top-0 bottom-0 -left-2.5 w-2.5 cursor-grab active:cursor-grabbing z-30 touch-none"
         onPointerDown={(e) => startDrag('move', e)}
         title="Drag to move text"
       />
       <div
-        className="absolute -top-7 left-1/2 -translate-x-1/2 flex items-center gap-1 px-2 py-0.5 bg-[#E8607A] hover:bg-[#D94D6A] text-white text-[9px] font-semibold rounded shadow-md cursor-grab active:cursor-grabbing z-40 select-none whitespace-nowrap border border-white/30 transition-colors"
+        className="absolute -top-7 left-1/2 -translate-x-1/2 flex items-center gap-1 px-2 py-0.5 bg-[#E8607A] hover:bg-[#D94D6A] text-white text-[9px] font-semibold rounded shadow-md cursor-grab active:cursor-grabbing z-40 select-none whitespace-nowrap border border-white/30 transition-colors touch-none"
         onPointerDown={(e) => startDrag('move', e)}
         title="Drag to move text"
       >
@@ -549,17 +566,17 @@ export function EditableLineBox(props: EditableLineBoxProps) {
 
       {/* Resize handles */}
       <div
-        className="absolute top-0 -right-1.5 w-3 h-full cursor-ew-resize z-30"
+        className="absolute top-0 -right-1.5 w-3 h-full cursor-ew-resize z-30 touch-none"
         onPointerDown={(e) => startDrag('resize-e', e)}
         title="Resize width"
       />
       <div
-        className="absolute -bottom-1.5 left-0 h-3 w-full cursor-ns-resize z-30"
+        className="absolute -bottom-1.5 left-0 h-3 w-full cursor-ns-resize z-30 touch-none"
         onPointerDown={(e) => startDrag('resize-s', e)}
         title="Resize height"
       />
       <div
-        className="absolute -right-1.5 -bottom-1.5 w-3.5 h-3.5 bg-[#E8607A] border-2 border-white rounded-sm cursor-se-resize z-40 shadow"
+        className="absolute -right-1.5 -bottom-1.5 w-3.5 h-3.5 bg-[#E8607A] border-2 border-white rounded-sm cursor-se-resize z-40 shadow touch-none"
         onPointerDown={(e) => startDrag('resize-se', e)}
         title="Resize"
       />

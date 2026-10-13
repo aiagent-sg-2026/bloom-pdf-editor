@@ -66,7 +66,7 @@ export function Toolbar({
   const { theme, toggleTheme } = useTheme();
 
   return (
-    <header className="flex items-center justify-between px-2 md:px-4 h-12 md:h-14 bg-panel/90 backdrop-blur-lg border-b border-app shrink-0 z-40">
+    <header className="flex flex-wrap items-center justify-between gap-y-1 px-2 md:px-4 py-1 md:py-0 min-h-12 md:h-14 bg-panel/90 backdrop-blur-lg border-b border-app shrink-0 z-40">
       {/* ── Left: close + logo + filename ── */}
       <div className="flex items-center gap-1.5 md:gap-3 shrink-0">
         <button 
@@ -94,7 +94,7 @@ export function Toolbar({
       </div>
 
       {/* ── Center: undo/redo, page nav, zoom ── */}
-      <div className="flex items-center gap-1 md:gap-2 bg-panel-elevated px-1.5 md:px-2 py-1 md:py-1.5 rounded-lg border border-app shadow-sm overflow-x-auto scrollbar-hide">
+      <div className="order-3 basis-full md:order-none md:basis-auto flex items-center justify-center gap-1 md:gap-2 bg-panel-elevated px-1.5 md:px-2 py-1 md:py-1.5 rounded-lg border border-app shadow-sm overflow-x-auto scrollbar-hide">
         <button
           onClick={onUndo}
           disabled={!canUndo}
