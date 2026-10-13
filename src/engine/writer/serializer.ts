@@ -83,10 +83,13 @@ export async function serializeDocument(doc: PDFDocumentData): Promise<Uint8Arra
   chunks.push(xrefBytes);
   currentOffset += xrefBytes.length;
 
-  // 5. Write trailer (preserve Encrypt + ID for secured documents)
+  // 5. Write trailer. A document opened by securityEngine has plaintext objects,
+  // so omit /Encrypt and emit the saved document as an unencrypted PDF.
   const catalogRef = doc.xref.trailerDict.getRef('Root');
   const infoRef = doc.xref.trailerDict.get('Info');
-  const encryptRef = doc.xref.trailerDict.get('Encrypt');
+  const encryptRef = doc.decryptedFromEncrypted
+    ? undefined
+    : doc.xref.trailerDict.get('Encrypt');
   const idArr = doc.xref.trailerDict.get('ID');
 
   const trailerDict = new PDFDict();
@@ -139,7 +142,9 @@ async function _serializeCompact(doc: PDFDocumentData): Promise<Uint8Array> {
   }
 
   const catalogRef = doc.xref.trailerDict.getRef('Root');
-  const encryptRef = doc.xref.trailerDict.getRef('Encrypt');
+  const encryptRef = doc.decryptedFromEncrypted
+    ? undefined
+    : doc.xref.trailerDict.getRef('Encrypt');
 
   // Pack objects into ObjStm containers
   const pack = await packIntoObjectStreams(

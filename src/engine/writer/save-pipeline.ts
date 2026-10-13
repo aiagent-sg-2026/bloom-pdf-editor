@@ -7,6 +7,17 @@ import { serializeDocument } from './serializer';
 import { saveIncremental } from './incremental-writer';
 import { garbageCollect, rootsFromTrailer, deduplicateStreams, applyRefMap } from '../optimize';
 
+/** A signed PDF must be exported byte-for-byte from the finalized buffer. */
+function hasFinalizedSignature(bytes: Uint8Array): boolean {
+  if (!bytes || bytes.length === 0) return false;
+  let text = '';
+  for (let i = 0; i < bytes.length; i += 0x8000) {
+    text += String.fromCharCode(...bytes.subarray(i, Math.min(i + 0x8000, bytes.length)));
+  }
+  return /\/ByteRange\s*\[\s*0\s+\d+\s+\d+\s+\d+\s*\]/.test(text) &&
+    /\/Contents\s*<[0-9a-fA-F]+>/.test(text);
+}
+
 /**
  * Quick save: append only changed objects when possible.
  */
@@ -15,7 +26,10 @@ export async function saveQuick(
   modifiedKeys?: Set<string>,
   newObjects?: Map<string, PDFObject>,
 ): Promise<Uint8Array> {
-  if (!doc.rawBytes || doc.rawBytes.length === 0) {
+  if (doc.rawBytes.length > 0 && hasFinalizedSignature(doc.rawBytes)) {
+    return new Uint8Array(doc.rawBytes);
+  }
+  if (doc.rawBytes.length === 0) {
     return serializeDocument(doc);
   }
 
@@ -35,6 +49,9 @@ export async function saveQuick(
  * Optimized save: garbage-collect unreachable objects, dedupe streams, full serialize.
  */
 export async function saveOptimized(doc: PDFDocumentData): Promise<Uint8Array> {
+  if (doc.rawBytes.length > 0 && hasFinalizedSignature(doc.rawBytes)) {
+    return new Uint8Array(doc.rawBytes);
+  }
   try {
     const roots = rootsFromTrailer(doc.xref.trailerDict);
     const gc = garbageCollect(doc.objects, roots, { deduplicateStreams: true });

@@ -4,8 +4,6 @@
  */
 
 import { describe, it, expect, beforeEach } from 'vitest';
-import { readFileSync } from 'fs';
-import { join } from 'path';
 import {
   calculateByteRange,
   validateByteRange,
@@ -35,8 +33,9 @@ import {
   PDFRef,
 } from '../../types';
 import { serializeDocument } from '../../writer/serializer';
+import { getTestCredentials } from './test-credentials';
 
-const fixtures = join(__dirname, 'fixtures');
+const credentials = getTestCredentials();
 
 function latin1(str: string): Uint8Array {
   const b = new Uint8Array(str.length);
@@ -170,8 +169,7 @@ describe('Phase 8 — ByteRange calculator & injector', () => {
 
 describe('Phase 8 — end-to-end finalize via signing pipeline', () => {
   it('signs with imported RSA key and validates ByteRange digest', async () => {
-    const pem = readFileSync(join(fixtures, 'signer.pem'), 'utf8');
-    const bundle = await importFromPem(pem, 'fixture');
+    const bundle = await importFromPem(credentials.pem, 'fixture');
     expect(bundle.key).not.toBeNull();
     expect(bundle.leaf).not.toBeNull();
 
@@ -218,8 +216,8 @@ describe('Phase 9 — certificates', () => {
   });
 
   it('detects formats and parses PEM/DER', async () => {
-    const pem = readFileSync(join(fixtures, 'bloom-test-cert.pem'), 'utf8');
-    const der = new Uint8Array(readFileSync(join(fixtures, 'bloom-test-cert.der')));
+    const pem = credentials.certificatePem;
+    const der = credentials.certificateDer;
     expect(isPem(pem)).toBe(true);
     expect(decodePem(pem).length).toBe(1);
     expect(detectCertificateFileFormat('x.pem', new TextEncoder().encode(pem))).toBe('pem');
@@ -238,8 +236,7 @@ describe('Phase 9 — certificates', () => {
 
   it('imports key+cert PEM into CertificateManager and selects it', async () => {
     const mgr = resetCertificateManagerForTests(null);
-    const pem = readFileSync(join(fixtures, 'signer.pem'), 'utf8');
-    const identity = await mgr.importPem(pem, 'Signer');
+    const identity = await mgr.importPem(credentials.pem, 'Signer');
     expect(identity.hasPrivateKey).toBe(true);
     expect(identity.leaf?.subject.commonName).toBe('Bloom Test Signer');
     expect(mgr.getSelected()?.id).toBe(identity.id);
@@ -264,7 +261,7 @@ describe('Phase 9 — certificates', () => {
     } as Storage;
 
     const mgr = resetCertificateManagerForTests(fakeStorage);
-    await mgr.importPem(readFileSync(join(fixtures, 'signer.pem'), 'utf8'));
+    await mgr.importPem(credentials.pem);
     expect(mgr.getSelectedKey()).not.toBeNull();
 
     // Rehydrate in a new manager — public cert restored, key not
