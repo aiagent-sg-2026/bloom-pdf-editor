@@ -22,7 +22,7 @@ import {
   hitTestTextLine, findNearestTextLine, caretIndexFromLineX,
   getLineBounds, getOverlayFontFamily, getOverlayFontStyle, getDisplayFontFamily,
 } from './utils';
-import { buildDisplayListIndex, hitTestDisplayList, isSelectableDisplayItem, EditorHistory, captureHistoryEntry, restoreAnnotSnapshot, parseOverlaySnapshot, deleteObject, visualFontSize, resolveRunStyleFlags, transformObject, applyObjectTransform, distributeTextChangeToSegments, segmentAtIndex, createVisualSignature, hitTestSignature, moveSignature, resizeSignature, rotateSignature, setSignatureOpacity, setSignatureLocked, deleteSignature, updateSignature, getSignatureLibrary, DEFAULT_SIGNATURE_SIZE, detectSignatureFieldsOnPage, hitTestSignatureField, createSignatureFieldAtPoint, applySignatureFieldAppearanceAsync, getCertificateManager, signDocumentCryptographic, validateDocumentSignatures, enableLongTermValidation, getLtvStatus, listManagedSignatures, buildRevisionViewer, lockSignaturesAfterSigning, pushRecentSignatureId, orderLibraryByRecent, SIGNATURE_SHORTCUTS } from '@/engine/browser-core';
+import { buildDisplayListIndex, hitTestDisplayList, isSelectableDisplayItem, EditorHistory, captureHistoryEntry, restoreAnnotSnapshot, restoreDocumentStructure, parseOverlaySnapshot, deleteObject, visualFontSize, resolveRunStyleFlags, transformObject, applyObjectTransform, distributeTextChangeToSegments, segmentAtIndex, createVisualSignature, hitTestSignature, moveSignature, resizeSignature, rotateSignature, setSignatureOpacity, setSignatureLocked, deleteSignature, updateSignature, getSignatureLibrary, DEFAULT_SIGNATURE_SIZE, detectSignatureFieldsOnPage, hitTestSignatureField, createSignatureFieldAtPoint, applySignatureFieldAppearanceAsync, getCertificateManager, signDocumentCryptographic, validateDocumentSignatures, enableLongTermValidation, getLtvStatus, listManagedSignatures, buildRevisionViewer, lockSignaturesAfterSigning, pushRecentSignatureId, orderLibraryByRecent, SIGNATURE_SHORTCUTS } from '@/engine/browser-core';
 import type { QuadTree, SelectableItem, EditableObject } from '@/engine/browser-core';
 import { findMatchingFlowLine } from './flowLineMatch';
 
@@ -599,12 +599,14 @@ export default function EditorPage() {
   const applyHistoryEntry = useCallback(async (entry: import('@/engine/browser-core').EditorHistoryEntry, displayPageIndex?: number) => {
     if (!doc || !engineRef.current) return;
     const engine = engineRef.current;
-    const pages = entry.pages ?? [{ pageIndex: entry.pageIndex, contentBytes: entry.contentBytes, annotSnapshot: entry.annotSnapshot }];
-    for (const pageState of pages) {
-      const page = doc.pages[pageState.pageIndex];
-      if (!page) continue;
-      await engine.updatePageContent(page.contentRefs, pageState.contentBytes, doc.objects);
-      restoreAnnotSnapshot(page.dict, doc.objects, pageState.annotSnapshot);
+    if (entry.pages) {
+      await restoreDocumentStructure(doc, entry, engine.updatePageContent);
+    } else {
+      const page = entry.pageKey ? doc.pages.find((candidate) => candidate.ref.toKey() === entry.pageKey) : doc.pages[entry.pageIndex];
+      if (page) {
+        await engine.updatePageContent(page.contentRefs, entry.contentBytes, doc.objects);
+        restoreAnnotSnapshot(page.dict, doc.objects, entry.annotSnapshot);
+      }
     }
     setDrawnPaths(parseOverlaySnapshot<DrawnPath[]>(entry.overlays.drawnPathsJson));
     setFloatingTexts(parseOverlaySnapshot<FloatingText[]>(entry.overlays.floatingTextsJson));
@@ -613,7 +615,8 @@ export default function EditorPage() {
     setSignatures(sigs);
     signaturesRef.current = sigs;
     setSelectedSignatureId(null);
-    const nextPage = displayPageIndex ?? entry.pageIndex;
+    const stablePageIndex = entry.pageKey ? doc.pages.findIndex((page) => page.ref.toKey() === entry.pageKey) : entry.pageIndex;
+    const nextPage = displayPageIndex ?? (stablePageIndex >= 0 ? stablePageIndex : Math.min(entry.pageIndex, doc.pages.length - 1));
     if (nextPage !== currentPage) setCurrentPage(nextPage);
     syncTxState();
     setRenderKey((k) => k + 1);
@@ -4437,20 +4440,22 @@ export default function EditorPage() {
         nextPage = currentPage - 1;
       }
       refreshAfterPageOp(doc, nextPage);
+      pushEditorHistory('delete-page', undefined, nextPage);
     } catch (e) {
       setError(`Failed to delete page: ${e instanceof Error ? e.message : String(e)}`);
     }
-  }, [doc, currentPage, refreshAfterPageOp]);
+  }, [doc, currentPage, refreshAfterPageOp, pushEditorHistory]);
 
   const handleRotatePage = useCallback((index: number) => {
     if (!doc || !engineRef.current) return;
     try {
       engineRef.current.rotatePageBy(doc, index, 90);
       refreshAfterPageOp(doc);
+      pushEditorHistory('rotate-page', undefined, index);
     } catch (e) {
       setError(`Failed to rotate page: ${e instanceof Error ? e.message : String(e)}`);
     }
-  }, [doc, refreshAfterPageOp]);
+  }, [doc, refreshAfterPageOp, pushEditorHistory]);
 
   const handleReorderPages = useCallback((fromIndex: number, toIndex: number) => {
     if (!doc || !engineRef.current || fromIndex === toIndex) return;
@@ -4465,10 +4470,11 @@ export default function EditorPage() {
         nextPage = currentPage + 1;
       }
       refreshAfterPageOp(doc, nextPage);
+      pushEditorHistory('reorder-pages', undefined, nextPage);
     } catch (e) {
       setError(`Failed to reorder pages: ${e instanceof Error ? e.message : String(e)}`);
     }
-  }, [doc, currentPage, refreshAfterPageOp]);
+  }, [doc, currentPage, refreshAfterPageOp, pushEditorHistory]);
 
   const handleMergePdf = useCallback(async (file: File) => {
     if (!doc || !engineRef.current) return;
@@ -4478,10 +4484,11 @@ export default function EditorPage() {
       const insertAt = doc.pages.length;
       engineRef.current.insertPagesFromDocument(doc, sourceDoc, insertAt);
       refreshAfterPageOp(doc);
+      pushEditorHistory('insert-pages', undefined, Math.min(insertAt, doc.pages.length - 1));
     } catch (e) {
       setError(`Failed to merge PDF: ${e instanceof Error ? e.message : String(e)}`);
     }
-  }, [doc, refreshAfterPageOp]);
+  }, [doc, refreshAfterPageOp, pushEditorHistory]);
 
   const handleSplitCurrentPage = useCallback(async () => {
     if (!doc || !engineRef.current) return;
@@ -4585,10 +4592,11 @@ export default function EditorPage() {
       engineRef.current.insertPagesFromDocument(doc, sourceDoc, index);
       const nextPage = currentPage >= index ? currentPage + sourceDoc.pages.length : currentPage;
       refreshAfterPageOp(doc, nextPage);
+      pushEditorHistory('insert-pages', undefined, Math.min(nextPage, doc.pages.length - 1));
     } catch (e) {
       setError(`Failed to insert PDF: ${e instanceof Error ? e.message : String(e)}`);
     }
-  }, [doc, currentPage, refreshAfterPageOp]);
+  }, [doc, currentPage, refreshAfterPageOp, pushEditorHistory]);
 
 
   // ── Keyboard shortcuts (global — NOT during editing) ──
