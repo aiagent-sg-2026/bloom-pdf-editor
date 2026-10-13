@@ -41,6 +41,7 @@ export {
   getTableRowLines,
   insertTableColumnRight,
   applyStyleToSelectionOnPage,
+  moveUnderlinesWithRuns,
   detectTablesOnPage,
 } from './flow';
 export type { TextLine, TextStylePatch, DetectedTable } from './flow';

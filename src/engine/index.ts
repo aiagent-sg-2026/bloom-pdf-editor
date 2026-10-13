@@ -124,6 +124,7 @@ export {
   measureText,
   layoutShapedGlyphs,
   applyStyleToSelection,
+  moveUnderlinesWithRuns,
   applyStyleToLine,
   applyStyleToSelectionOnPage,
   collectBatchedFontSizeTrailingShifts,

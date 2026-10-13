@@ -101,3 +101,22 @@ describe('remove underline on a flipped-CTM page', () => {
     expect(text).not.toMatch(/ l\s+S/);
   });
 });
+
+describe('moving text carries its path underline', () => {
+  it('shifts the stroke by the same delta, once', async () => {
+    const { moveUnderlinesWithRuns } = await import('../flow/style-edit');
+    const content =
+      '1 0 0 -1 0 792 cm\n0 0 0 RG q 1 0 0 1 0 0 cm\n50 101.2 m 90 101.2 l S Q\n0 0 0 RG q 1 0 0 1 0 0 cm\n50 101.2 m 90 101.2 l S Q\nBT\n10 0 0 -10 50 100 Tm\n/F1 1 Tf\n[(AAAA)] TJ\nET\n';
+    const { bytes, page, objects } = makePage(content);
+    const flow = buildDocumentFlow(interpretPage(bytes, page, objects).textRuns);
+    const out = moveUnderlinesWithRuns(bytes, flow.lines[0].runs, 7, 5); // page space: +7 right, +5 up
+    const text = new TextDecoder().decode(out);
+    const ms = [...text.matchAll(/([\d.]+) ([\d.]+) m\n([\d.]+) ([\d.]+) l/g)];
+    expect(ms.length).toBe(2);
+    for (const m of ms) {
+      expect(Math.abs(Number(m[1]) - 57)).toBeLessThan(0.01);
+      expect(Math.abs(Number(m[2]) - 96.2)).toBeLessThan(0.01); // flipped: up = smaller user y
+      expect(Math.abs(Number(m[3]) - 97)).toBeLessThan(0.01);
+    }
+  });
+});
