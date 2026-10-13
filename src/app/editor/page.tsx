@@ -2066,6 +2066,11 @@ export default function EditorPage() {
     setSelectedCertificateId(mgr.getSelected()?.id ?? null);
   }, []);
 
+  const handleCertificateImportChange = useCallback((list: ManagedIdentity[]) => {
+    setCertificateIdentities(list);
+    setSelectedCertificateId(getCertificateManager().getSelected()?.id ?? null);
+  }, []);
+
   useEffect(() => {
     const t = window.setTimeout(refreshCertificateIdentities, 80);
     return () => window.clearTimeout(t);
@@ -6051,10 +6056,7 @@ export default function EditorPage() {
       <CertificateImportDialog
         open={certificateImportOpen}
         onOpenChange={setCertificateImportOpen}
-        onChange={(list) => {
-          setCertificateIdentities(list);
-          setSelectedCertificateId(getCertificateManager().getSelected()?.id ?? null);
-        }}
+        onChange={handleCertificateImportChange}
       />
 
       {/* ── Export Panel ── */}

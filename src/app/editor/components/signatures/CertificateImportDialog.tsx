@@ -40,8 +40,6 @@ export function CertificateImportDialog({
   useEffect(() => {
     if (!open) return;
     setError(null);
-    setPassword('');
-    setPemPaste('');
     // Hydrate may be async on first open
     const t = window.setTimeout(refresh, 50);
     return () => window.clearTimeout(t);
