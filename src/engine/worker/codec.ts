@@ -28,6 +28,8 @@ export interface WireDocument {
   info: PDFDocumentData['info'];
   rawBytes: WireBytes | null;
   decryptedFromEncrypted?: PDFDocumentData['decryptedFromEncrypted'];
+  encryptionFileKey?: WireBytes;
+  encryptionAlgorithm?: PDFDocumentData['encryptionAlgorithm'];
 }
 
 export interface DehydrateOptions { includeRawBytes?: boolean }
@@ -68,6 +70,8 @@ export function dehydrateDocument(doc: PDFDocumentData, options: DehydrateOption
     info: { ...doc.info },
     rawBytes,
     decryptedFromEncrypted: doc.decryptedFromEncrypted,
+    encryptionFileKey: doc.encryptionFileKey?.slice(),
+    encryptionAlgorithm: doc.encryptionAlgorithm,
   };
 }
 
@@ -111,6 +115,8 @@ export function hydrateDocument(wire: WireDocument, rawBytes?: Uint8Array): PDFD
     info: { ...wire.info },
     rawBytes: rawBytes !== undefined ? rawBytes : wire.rawBytes?.slice() ?? new Uint8Array(),
     decryptedFromEncrypted: wire.decryptedFromEncrypted,
+    encryptionFileKey: wire.encryptionFileKey?.slice(),
+    encryptionAlgorithm: wire.encryptionAlgorithm,
   };
   return doc;
 }

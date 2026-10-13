@@ -322,4 +322,8 @@ export interface PDFDocumentData {
   rawBytes: Uint8Array;
   /** True after securityEngine.open() has decrypted the in-memory objects. */
   decryptedFromEncrypted?: boolean;
+  /** Authenticated file key retained only for re-encrypting save output. */
+  encryptionFileKey?: Uint8Array;
+  /** Original file cipher used by the Standard Security Handler. */
+  encryptionAlgorithm?: 'RC4-40' | 'RC4-128' | 'AES-128' | 'AES-256';
 }

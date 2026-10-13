@@ -32,6 +32,7 @@ import { serializeIndirectObject } from '../editor/stream-compiler';
 import { concatBytes } from '../editor/stream-compiler';
 import { packIntoObjectStreams, buildXRefStream } from '../optimize/object-streams';
 import { garbageCollect, rootsFromTrailer } from '../optimize/garbage-collect';
+import { getReencryptSaveContext, prepareEncryptedObjects } from '../security/encryption/encrypt-objects';
 
 // ─── Full document serialization ────────────────────────────────────────────
 
@@ -56,7 +57,11 @@ export async function serializeDocument(doc: PDFDocumentData): Promise<Uint8Arra
   const reachable = roots.length > 0
     ? garbageCollect(doc.objects, roots).objects
     : doc.objects;
-  const objectEntries = Array.from(reachable.entries());
+  const reencrypt = getReencryptSaveContext(doc);
+  const serializedObjects = reencrypt
+    ? await prepareEncryptedObjects(reachable, doc.xref.trailerDict.getRef('Encrypt')?.toKey(), reencrypt)
+    : reachable;
+  const objectEntries = Array.from(serializedObjects.entries());
 
   // Assign sequential object numbers
   const objNumMap = new Map<string, { objNum: number; genNum: number }>();
@@ -91,13 +96,10 @@ export async function serializeDocument(doc: PDFDocumentData): Promise<Uint8Arra
   chunks.push(xrefBytes);
   currentOffset += xrefBytes.length;
 
-  // 5. Write trailer. A document opened by securityEngine has plaintext objects,
-  // so omit /Encrypt and emit the saved document as an unencrypted PDF.
+  // 5. Write trailer. Re-encrypted saves retain the original /Encrypt and /ID.
   const catalogRef = doc.xref.trailerDict.getRef('Root');
   const infoRef = doc.xref.trailerDict.get('Info');
-  const encryptRef = doc.decryptedFromEncrypted
-    ? undefined
-    : doc.xref.trailerDict.get('Encrypt');
+  const encryptRef = doc.xref.trailerDict.get('Encrypt');
   const idArr = doc.xref.trailerDict.get('ID');
 
   const trailerDict = new PDFDict();
@@ -125,6 +127,10 @@ export async function serializeDocument(doc: PDFDocumentData): Promise<Uint8Arra
  * Falls back to standard serialization on failure.
  */
 export async function serializeDocumentCompact(doc: PDFDocumentData): Promise<Uint8Array> {
+  // Object streams are deliberately disabled for re-encrypted output. This
+  // keeps each indirect object independently encrypted and leaves xref data
+  // outside the encryption boundary.
+  if (getReencryptSaveContext(doc)) return serializeDocument(doc);
   try {
     return await _serializeCompact(doc);
   } catch (err) {

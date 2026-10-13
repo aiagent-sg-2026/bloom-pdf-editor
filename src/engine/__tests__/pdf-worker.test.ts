@@ -61,6 +61,17 @@ describe('PDF worker codec', () => {
     expect(hydrateDocument(dehydrateDocument(doc)).decryptedFromEncrypted).toBe(true);
   });
 
+  it('round-trips the authenticated file key only through the wire document', () => {
+    const doc = fixture();
+    doc.decryptedFromEncrypted = true;
+    doc.encryptionFileKey = new Uint8Array([1, 2, 3, 4]);
+    doc.encryptionAlgorithm = 'AES-256';
+    const hydrated = hydrateDocument(dehydrateDocument(doc));
+    expect(Array.from(hydrated.encryptionFileKey ?? [])).toEqual([1, 2, 3, 4]);
+    expect(hydrated.encryptionAlgorithm).toBe('AES-256');
+    expect(dehydrateDocument(doc)).not.toHaveProperty('password');
+  });
+
   it('copies snapshot bytes before transfer and preserves explicit rawBytes identity', () => {
     const doc = fixture();
     const originalRaw = doc.rawBytes;
@@ -144,19 +155,25 @@ describe('PDF worker codec', () => {
           : { type: commandType, requestId: `${fixtureName}-${commandType}`, document: wire });
         if (response.type !== 'RESULT' || !response.bytes) throw new Error('worker save failed');
         const reparsed = await parseDirect(response.bytes);
+        expect(reparsed.xref.trailerDict.has('Encrypt')).toBe(true);
+        const reopened = await securityEngine.open(reparsed, password);
         let text = '';
-        for (const object of reparsed.objects.values()) {
+        for (const object of reopened.doc.objects.values()) {
           if (object instanceof PDFStream) text += new TextDecoder().decode(object.getBytes());
         }
         expect(text).toContain('Hello encrypted');
+        expect(new TextDecoder().decode(response.bytes)).not.toContain('Hello encrypted');
 
         const outputPath = join(tmpdir(), `bloom-worker-${fixtureName}-${commandType}.pdf`);
         writeFileSync(outputPath, response.bytes);
         try {
           const qpdf = spawnSync('qpdf', [`--password=${password}`, '--check', outputPath], { encoding: 'utf8' });
-          if ((qpdf.error as NodeJS.ErrnoException | undefined)?.code === 'ENOENT') return;
-          expect(qpdf.status).toBe(0);
-          expect(`${qpdf.stdout}${qpdf.stderr}`).not.toMatch(/WARNING|ERROR/);
+          if ((qpdf.error as NodeJS.ErrnoException | undefined)?.code === 'ENOENT') {
+            console.info('SKIP qpdf assertion: qpdf is not installed');
+          } else {
+            expect(qpdf.status).toBe(0);
+            expect(`${qpdf.stdout}${qpdf.stderr}`).not.toMatch(/WARNING|ERROR/);
+          }
         } finally {
           unlinkSync(outputPath);
         }
