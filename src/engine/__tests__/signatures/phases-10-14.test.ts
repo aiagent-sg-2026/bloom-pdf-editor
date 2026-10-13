@@ -44,12 +44,13 @@ import {
 } from '../../signatures';
 
 const generatedFixtures = mkdtempSync(join(tmpdir(), 'bloom-signature-'));
-const signerPem = join(generatedFixtures, 'signer.pem');
+const signerKey = join(generatedFixtures, 'signer.key');
+const signerCert = join(generatedFixtures, 'signer.crt');
 
 beforeAll(() => {
   execFileSync('openssl', [
     'req', '-x509', '-newkey', 'rsa:2048', '-nodes',
-    '-keyout', signerPem, '-out', signerPem,
+    '-keyout', signerKey, '-out', signerCert,
     '-days', '1', '-subj', '/CN=Bloom Test Signer',
   ], { stdio: 'ignore' });
 });
@@ -111,7 +112,7 @@ function makeBasePdf(): PDFDocumentData {
 }
 
 async function signFixtureField(doc: PDFDocumentData, name: string) {
-  const pem = readFileSync(signerPem, 'utf8');
+  const pem = `${readFileSync(signerKey, 'utf8')}\n${readFileSync(signerCert, 'utf8')}`;
   const bundle = await importFromPem(pem, 'fixture');
   doc.rawBytes = await serializeDocument(doc);
   const fieldRef = createSignatureField(doc, 0, {
