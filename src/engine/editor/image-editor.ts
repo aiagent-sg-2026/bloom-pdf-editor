@@ -5,6 +5,11 @@ import { getResource } from '../parser/parser';
 import { isolateBaseCtm } from './content-append';
 import { flateEncode } from '../parser/filters';
 
+export interface ImageRunOptions {
+  rotationDegrees?: number;
+  opacity?: number;
+}
+
 /** Build indirect Flate RGB + DeviceGray soft-mask image objects from RGBA pixels. */
 export async function createRGBAImageObjects(
   rgba: Uint8Array,
@@ -59,7 +64,8 @@ export async function insertImageRun(
   y: number,
   width: number,
   height: number,
-  getNextObjNum: () => number
+  getNextObjNum: () => number,
+  options?: ImageRunOptions,
 ): Promise<{ newContentBytes: Uint8Array }> {
   
   // 1. Convert Data URL to Uint8Array
@@ -89,7 +95,7 @@ export async function insertImageRun(
     const built = await createRGBAImageObjects(new Uint8Array(rgba), trueWidth, trueHeight, getNextObjNum);
     if (built.smaskRef && built.smask) objects.set(built.smaskRef.toKey(), built.smask);
     objects.set(built.imageRef.toKey(), built.image);
-    return registerImageRun(page, objects, built.imageRef, x, y, width, height, contentBytes);
+    return registerImageRun(page, objects, built.imageRef, x, y, width, height, contentBytes, options);
   }
 
   // 3. Create the Image XObject dictionary
@@ -133,10 +139,7 @@ export async function insertImageRun(
   }
   xobjects.set(imgName, objRef);
 
-  // 6. Inject the 'Do' command into the content stream
-  const bottomY = y - height;
-  
-  const injection = `\nq\n${width} 0 0 ${height} ${x} ${bottomY} cm\n/${imgName} Do\nQ\n`;
+  const injection = buildImageInjection(page, objects, imgName, x, y, width, height, options);
   const enc = new TextEncoder();
   const injectionBytes = enc.encode(injection);
 
@@ -148,7 +151,7 @@ export async function insertImageRun(
   return { newContentBytes };
 }
 
-function registerImageRun(page: PDFPageInfo, objects: Map<string, PDFObject>, objRef: PDFRef, x: number, y: number, width: number, height: number, contentBytes: Uint8Array): { newContentBytes: Uint8Array } {
+function registerImageRun(page: PDFPageInfo, objects: Map<string, PDFObject>, objRef: PDFRef, x: number, y: number, width: number, height: number, contentBytes: Uint8Array, options?: ImageRunOptions): { newContentBytes: Uint8Array } {
   const resourcesObj = page.dict.get('Resources');
   let resources = resourcesObj instanceof PDFRef ? objects.get(resourcesObj.toKey()) as PDFDict : resourcesObj as PDFDict;
   if (!(resources instanceof PDFDict)) { resources = new PDFDict(); page.dict.set('Resources', resources); }
@@ -156,10 +159,62 @@ function registerImageRun(page: PDFPageInfo, objects: Map<string, PDFObject>, ob
   if (!(xobjects instanceof PDFDict)) { xobjects = new PDFDict(); resources.set('XObject', xobjects); }
   let imgName = 'Im1'; let i = 1; while (xobjects.has(imgName)) imgName = `Im${++i}`;
   xobjects.set(imgName, objRef);
-  const injection = `\nq\n${width} 0 0 ${height} ${x} ${y - height} cm\n/${imgName} Do\nQ\n`;
+  const injection = buildImageInjection(page, objects, imgName, x, y, width, height, options);
   const injectionBytes = new TextEncoder().encode(injection); const base = isolateBaseCtm(contentBytes);
   const newContentBytes = new Uint8Array(base.length + injectionBytes.length); newContentBytes.set(base); newContentBytes.set(injectionBytes, base.length);
   return { newContentBytes };
+}
+
+function buildImageInjection(
+  page: PDFPageInfo,
+  objects: Map<string, PDFObject>,
+  imageName: string,
+  x: number,
+  y: number,
+  width: number,
+  height: number,
+  options?: ImageRunOptions,
+): string {
+  const rotation = options?.rotationDegrees ?? 0;
+  const opacity = options?.opacity ?? 1;
+  let graphicsStateName: string | undefined;
+  if (opacity < 1) {
+    graphicsStateName = addImageOpacityGraphicsState(page, objects, opacity);
+  }
+
+  // The overlay rotates clockwise in CSS. PDF's positive angle is counter-clockwise,
+  // so negate the overlay angle in the PDF user-space rotation matrix.
+  const rotationCommands = rotation === 0 ? '' : [
+    `1 0 0 1 ${x + width / 2} ${y - height / 2} cm`,
+    `${formatNumber(Math.cos(-rotation * Math.PI / 180))} ${formatNumber(Math.sin(-rotation * Math.PI / 180))} ${formatNumber(-Math.sin(-rotation * Math.PI / 180))} ${formatNumber(Math.cos(-rotation * Math.PI / 180))} 0 0 cm`,
+    `1 0 0 1 ${-(x + width / 2)} ${-(y - height / 2)} cm`,
+  ].join('\n') + '\n' : '';
+  const opacityCommand = graphicsStateName ? `/${graphicsStateName} gs\n` : '';
+  return `\nq\n${opacityCommand}${rotationCommands}${width} 0 0 ${height} ${x} ${y - height} cm\n/${imageName} Do\nQ\n`;
+}
+
+function addImageOpacityGraphicsState(page: PDFPageInfo, objects: Map<string, PDFObject>, opacity: number): string {
+  const resourcesObj = page.dict.get('Resources');
+  const resources = resourcesObj instanceof PDFRef ? objects.get(resourcesObj.toKey()) as PDFDict : resourcesObj as PDFDict;
+  const resolvedResources = resources instanceof PDFDict ? resources : new PDFDict();
+  if (resolvedResources !== resources) page.dict.set('Resources', resolvedResources);
+  const extObj = resolvedResources.get('ExtGState');
+  const ext = extObj instanceof PDFRef ? objects.get(extObj.toKey()) as PDFDict : extObj as PDFDict;
+  const extGStates = ext instanceof PDFDict ? ext : new PDFDict();
+  if (extGStates !== ext) resolvedResources.set('ExtGState', extGStates);
+  let name = 'SigGS1';
+  let i = 1;
+  while (extGStates.has(name)) name = `SigGS${++i}`;
+  const gs = new PDFDict();
+  gs.set('Type', new PDFName('ExtGState'));
+  gs.set('ca', new PDFNumber(Math.max(0, Math.min(1, opacity))));
+  gs.set('CA', new PDFNumber(Math.max(0, Math.min(1, opacity))));
+  extGStates.set(name, gs);
+  return name;
+}
+
+function formatNumber(value: number): string {
+  return Number(value.toFixed(10)).toString();
 }
 
 /**
