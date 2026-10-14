@@ -22,6 +22,98 @@ function fixture(content: string) {
 }
 
 describe('explodeTJGaps', () => {
+  function glyphSnapshot(bytes: Uint8Array, f: ReturnType<typeof fixture>) {
+    return interpretPage(bytes, f.page, f.objects).textRuns.flatMap(r =>
+      r.glyphs.map(g => ({ text: g.unicode, x: g.tRm.e, y: g.tRm.f })));
+  }
+
+  function expectSameGlyphs(before: ReturnType<typeof glyphSnapshot>, after: ReturnType<typeof glyphSnapshot>) {
+    expect(after.map(g => g.text)).toEqual(before.map(g => g.text));
+    expect(after).toHaveLength(before.length);
+    for (let i = 0; i < before.length; i++) {
+      expect(after[i].x).toBeCloseTo(before[i].x, 3);
+      expect(after[i].y).toBeCloseTo(before[i].y, 3);
+    }
+  }
+
+  it('preserves every run in a shared-BT Firefox/cairo-style relative layout', () => {
+    const f = fixture(`1 0 0 -1 0 792 cm
+BT
+/F1 9 Tf
+9 0 0 -9 454.5 121 Tm
+33.333333 9 Td
+[(QUOT)75(A)73(TION NO.)-4344(:)]TJ
+/F1 9 Tf
+[()-501(DQ1)75(157)]TJ
+/F1 9 Tf
+0 -1.5 Td
+[(QUOT)75(A)73(TION DA)74(TE)-3474(:)]TJ
+/F1 9 Tf
+[()-501(08 NOV 2025)]TJ
+0 -1.5 Td
+[(QUOT)75(A)73(TION DA)74(TE)-3474(:)]TJ
+/F1 9 Tf
+[()-501(09 NOV 2025)]TJ
+0 -1.5 Td
+(FINAL) Tj
+ET
+`);
+    const before = glyphSnapshot(f.bytes, f);
+    const normalized = explodeTJGaps(f.bytes, f.page, f.objects);
+    expectSameGlyphs(before, glyphSnapshot(normalized, f));
+  });
+
+  it('restores line state for mixed line-moving operators and text state', () => {
+    const f = fixture(`BT
+/F1 10 Tf 1 0.35 -0.2 1 40 700 Tm
+3 Tc 2 Tw 80 Tz
+[(A)-3000(B)] TJ (C) Tj
+12 -18 TD
+[(D)-3000(E)] TJ
+T*
+(F) '
+20 1 (G) "
+[(H)-3000(I)] TJ
+ET
+BT
+/F1 10 Tf 1 0 0 1 200 500 Tm
+[(J)-3000(K)] TJ
+ET
+`);
+    const before = glyphSnapshot(f.bytes, f);
+    const normalized = explodeTJGaps(f.bytes, f.page, f.objects);
+    expectSameGlyphs(before, glyphSnapshot(normalized, f));
+    expect(explodeTJGaps(normalized, f.page, f.objects)).toEqual(normalized);
+  });
+
+  it('keeps a no-gap stream byte-identical', () => {
+    const f = fixture('BT /F1 10 Tf 1 0 0 1 40 700 Tm [(A)-400(B) 300(C)] TJ ET\n');
+    expect(explodeTJGaps(f.bytes, f.page, f.objects)).toBe(f.bytes);
+  });
+
+  it('preserves seeded random streams and remains idempotent', () => {
+    let seed = 0x5eed1234;
+    const random = (n: number) => {
+      seed = (seed * 1664525 + 1013904223) >>> 0;
+      return seed % n;
+    };
+    const moves = ['0 -12 Td', 'T*', "(x) '", '20 1 (x) "'];
+    for (let caseNo = 0; caseNo < 200; caseNo++) {
+      const rows: string[] = ['BT', '/F1 10 Tf', `${random(2) ? '1 0.2 -0.1 1' : '1 0 0 1'} ${40 + random(120)} ${700 - random(100)} Tm`];
+      for (let row = 0; row < 3 + random(4); row++) {
+        rows.push(`${random(5)} Tc ${random(4)} Tw ${60 + random(60)} Tz`);
+        rows.push(random(2) ? `[(A)-${1400 + random(3000)}(B)] TJ` : `[(A)-${1400 + random(3000)}(B)] TJ (C) Tj`);
+        rows.push(moves[random(moves.length)]);
+      }
+      rows.push('[(Z)-3000(Q)] TJ', 'ET');
+      const f = fixture(`${rows.join('\n')}\n`);
+      const before = glyphSnapshot(f.bytes, f);
+      const once = explodeTJGaps(f.bytes, f.page, f.objects);
+      expectSameGlyphs(before, glyphSnapshot(once, f));
+      expect(explodeTJGaps(once, f.page, f.objects)).toEqual(once);
+    }
+  });
+
   it('preserves glyph order and positions while splitting gutter cells', () => {
     const f = fixture('BT\n/F1 12 Tf\n1 0 0 1 40 700 Tm\n[(DESC)-3000(UNIT)-3000(PRICE)] TJ\nET\n');
     const before = interpretPage(f.bytes, f.page, f.objects);
