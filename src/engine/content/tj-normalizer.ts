@@ -39,8 +39,17 @@ function translation(tx: number, ty: number): Matrix {
   return { a: 1, b: 0, c: 0, d: 1, e: tx, f: ty };
 }
 
-function stringByteLength(obj: PDFObject): number {
-  return obj instanceof PDFString || obj instanceof PDFHexString ? obj.toBytes().length : 0;
+function countGlyphs(obj: PDFObject, composite: boolean): number {
+  if (obj instanceof PDFArray) {
+    let count = 0;
+    for (const item of obj.items) count += countGlyphs(item, composite);
+    return count;
+  }
+  if (obj instanceof PDFString || obj instanceof PDFHexString) {
+    // Match showTextString: empty strings emit no glyphs, CID codes use two bytes.
+    return Math.ceil(obj.toBytes().length / (composite ? 2 : 1));
+  }
+  return 0;
 }
 
 function restoreDelta(from: Matrix, to: Matrix): [number, number] {
@@ -55,6 +64,8 @@ function restoreDelta(from: Matrix, to: Matrix): [number, number] {
  * Split only large TJ numeric gaps into independently editable Tj operations.
  * The original interpreter supplies the exact page-space start matrix for each
  * piece, which avoids duplicating font, spacing, composite-code, and CTM logic.
+ * Runs may span several shows; source instruction boundaries identify the
+ * current TJ's glyphs without resetting its continuing text matrix.
  */
 export function explodeTJGaps(
   contentBytes: Uint8Array,
@@ -123,11 +134,19 @@ export function explodeTJGaps(
     const arr = inst.operands[0];
     const run = original.textRuns.find(r => r.sourceInstructionIndices?.includes(i));
     if (!run) { out.push(inst); continue; }
-    const pieces: PDFObject[][] = [[]];
-    const starts: number[] = [0];
-    let glyphCount = 0;
-    let split = false;
     const composite = original.fonts.get(run.fontName)?.isComposite ?? false;
+    // interpretPage merges adjacent shows, even across Tf. Piece starts are
+    // local to this TJ, so skip glyphs belonging to earlier shows in the run.
+    let glyphCount = 0;
+    for (const sourceIndex of run.sourceInstructionIndices ?? []) {
+      if (sourceIndex === i) break;
+      for (const operand of instructions[sourceIndex].operands) {
+        glyphCount += countGlyphs(operand, composite);
+      }
+    }
+    const pieces: PDFObject[][] = [[]];
+    const starts: number[] = [glyphCount];
+    let split = false;
     for (let j = 0; j < arr.length; j++) {
       const item = arr.get(j)!;
       if (item instanceof PDFNumber) {
@@ -140,7 +159,7 @@ export function explodeTJGaps(
         }
       } else {
         pieces[pieces.length - 1].push(item);
-        glyphCount += Math.max(1, composite ? Math.ceil(stringByteLength(item) / 2) : stringByteLength(item));
+        glyphCount += countGlyphs(item, composite);
       }
     }
     if (!split || pieces.some((p, n) => n > 0 && !p.some(o => o instanceof PDFString || o instanceof PDFHexString))) {
