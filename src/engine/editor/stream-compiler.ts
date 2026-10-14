@@ -22,7 +22,23 @@ import {
   PDFStream,
   PDFString,
 } from '../types';
+import type { PDFPageInfo } from '../types';
 import { flateEncode } from '../parser/filters';
+
+// Keep the existing refs-based update API while retaining the owner of an empty array.
+const contentOwners = new WeakMap<PDFRef[], PDFPageInfo>();
+const contentStructureChanges = new WeakMap<Map<string, PDFObject>, Set<string>>();
+
+/** Register newly constructed pages so missing /Contents can be attached on first edit. */
+export function bindPageContentRefs<T extends PDFPageInfo>(page: T): T {
+  if (page.contentRefs.length === 0) contentOwners.set(page.contentRefs, page);
+  return page;
+}
+
+/** Page dictionaries and newly allocated streams required by explicit incremental saves. */
+export function pageContentModifiedKeys(objects: Map<string, PDFObject>): Iterable<string> {
+  return contentStructureChanges.get(objects) ?? [];
+}
 
 // ─── Content stream compilation ─────────────────────────────────────────────
 
@@ -51,9 +67,9 @@ export async function compileContentStream(
 
 /**
  * Update a page's content stream with new bytes.
- * Handles both single stream and array of streams.
+ * Handles single streams, arrays of streams, and registered pages without /Contents.
  *
- * @param page The page whose content to update
+ * @param contentRefs The page's content references, registered when the page is constructed
  * @param newContentBytes The new decoded content stream bytes
  * @param objects The document object map (will be mutated)
  * @param compress Whether to FlateDecode compress the output
@@ -64,9 +80,27 @@ export async function updatePageContent(
   objects: Map<string, PDFObject>,
   compress: boolean = true,
 ): Promise<void> {
+  const owner = contentRefs.length === 0 ? contentOwners.get(contentRefs) : undefined;
+  if (contentRefs.length === 0 && !owner) {
+    throw new Error('Cannot attach content to an unregistered page');
+  }
   const newStream = await compileContentStream(newContentBytes, compress);
 
-  if (contentRefs.length === 0) return;
+  if (owner && contentRefs.length === 0) {
+    let maxObjNum = 0;
+    for (const key of objects.keys()) {
+      maxObjNum = Math.max(maxObjNum, parseInt(key, 10));
+    }
+    const ref = new PDFRef(maxObjNum + 1, 0);
+    objects.set(ref.toKey(), newStream);
+    owner.dict.set('Contents', ref);
+    contentRefs.push(ref);
+    let changes = contentStructureChanges.get(objects);
+    if (!changes) contentStructureChanges.set(objects, changes = new Set());
+    changes.add(ref.toKey());
+    changes.add(owner.ref.toKey());
+    return;
+  }
 
   if (contentRefs.length === 1) {
     // Single content stream — replace it

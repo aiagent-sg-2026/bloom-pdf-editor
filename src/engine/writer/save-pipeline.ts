@@ -8,7 +8,7 @@ import { saveIncremental } from './incremental-writer';
 import { garbageCollect, rootsFromTrailer, deduplicateStreams, applyRefMap } from '../optimize';
 import { getReencryptSaveContext } from '../security/encryption/encrypt-objects';
 import { parsePDF } from '../parser/parser';
-import { serializeToString } from '../editor/stream-compiler';
+import { pageContentModifiedKeys, serializeToString } from '../editor/stream-compiler';
 import { decryptDocumentObjects } from '../security/encryption/decrypt-pipeline';
 import { parseFileId } from '../security/encryption/encrypt-dict';
 import { unicodeFontModifiedKeys } from '../fonts/unicode-font-embed';
@@ -108,6 +108,7 @@ export async function saveQuick(
   if (modifiedKeys?.size || newObjects?.size) {
     for (const key of unicodeFontModifiedKeys(doc.objects)) mods.add(key);
     for (const key of registeredFontKeys(doc.objects)) mods.add(key);
+    for (const key of pageContentModifiedKeys(doc.objects)) mods.add(key);
   }
   if (mods.size === 0 && (!newObjects || newObjects.size === 0)) {
     return serializeDocument(doc);
