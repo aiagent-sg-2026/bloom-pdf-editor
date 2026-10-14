@@ -240,5 +240,10 @@ streams must retain the original glyph sequence and positions. Finalized
 signature markers must retain every original byte. These markers test save
 policy, not cryptographic signature validity.
 
+Producer edit contracts retain the exact ordered list of separate text runs.
+Untouched runs require exact text, font size, baseline y, and glyph text, with
+an absolute `1e-6` tolerance for x, bounds, and glyph coordinates: TJ gap
+compensation can change floating-point representation without moving a run.
+
 Pull requests run TypeScript checking, the complete Vitest suite, and Next build
 in `.github/workflows/ci.yml`.

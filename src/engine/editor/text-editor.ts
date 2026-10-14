@@ -1607,7 +1607,7 @@ export function patchTJPreservingGaps(
         const compensate = emWidth ? Math.round((newAdv - oldAdv) * 1000) : 0;
         if (!compensated && compensate !== 0 && Math.abs(it.value) >= GAP_ADJUST) {
           compensated = true;
-          const next = it.value < 0 ? Math.min(-200, it.value + compensate) : Math.max(200, it.value - compensate);
+          const next = it.value + compensate;
           out.push(new PDFNumber(next));
         } else {
           out.push(it);
