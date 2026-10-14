@@ -3144,11 +3144,7 @@ export default function EditorPage() {
       }
 
       // Must finish before the caller saves — otherwise Download exports without the new text/images.
-      try {
-        await engine.updatePageContent(page.contentRefs, newContentBytes, doc.objects);
-      } catch (e) {
-        console.error('[Editor] Failed to commit content:', e);
-      }
+      await engine.updatePageContent(page.contentRefs, newContentBytes, doc.objects);
     }
 
     const clearedOverlays = { drawnPaths: [] as DrawnPath[], floatingTexts: [] as FloatingText[], floatingImages: [] as FloatingImage[] };
@@ -4055,15 +4051,25 @@ export default function EditorPage() {
   }, [editingLine, handleEditSubmit]);
 
   // ── Navigation handlers ──
-  const goToPrev = useCallback(() => {
-    commitDrawingsToPdf();
+  const goToPrev = useCallback(async () => {
+    try {
+      await commitDrawingsToPdf();
+    } catch (e) {
+      setError(`Failed to commit page overlays: ${e instanceof Error ? e.message : String(e)}`);
+      return;
+    }
     closeLinkPopover();
     setLinkCreatePending(false);
     setCurrentPage(p => Math.max(0, p - 1));
   }, [commitDrawingsToPdf, closeLinkPopover]);
 
-  const goToNext = useCallback(() => {
-    commitDrawingsToPdf();
+  const goToNext = useCallback(async () => {
+    try {
+      await commitDrawingsToPdf();
+    } catch (e) {
+      setError(`Failed to commit page overlays: ${e instanceof Error ? e.message : String(e)}`);
+      return;
+    }
     closeLinkPopover();
     setLinkCreatePending(false);
     setCurrentPage(p => Math.min(totalPages - 1, p + 1));
@@ -6018,8 +6024,13 @@ export default function EditorPage() {
             currentPage={currentPage}
             thumbnails={thumbnails}
             isGeneratingThumbnails={isGeneratingThumbnails}
-            onPageSelect={(i) => {
-              commitDrawingsToPdf();
+            onPageSelect={async (i) => {
+              try {
+                await commitDrawingsToPdf();
+              } catch (e) {
+                setError(`Failed to commit page overlays: ${e instanceof Error ? e.message : String(e)}`);
+                return;
+              }
               closeLinkPopover();
               setLinkCreatePending(false);
               setCurrentPage(i);
@@ -6055,8 +6066,13 @@ export default function EditorPage() {
             currentPage={currentPage}
             thumbnails={thumbnails}
             isGeneratingThumbnails={isGeneratingThumbnails}
-            onPageSelect={(i) => {
-              commitDrawingsToPdf();
+            onPageSelect={async (i) => {
+              try {
+                await commitDrawingsToPdf();
+              } catch (e) {
+                setError(`Failed to commit page overlays: ${e instanceof Error ? e.message : String(e)}`);
+                return;
+              }
               closeLinkPopover();
               setLinkCreatePending(false);
               setCurrentPage(i);
