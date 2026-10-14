@@ -157,6 +157,120 @@ describe('page deletion privacy', () => {
     expect(new TextDecoder().decode(bytes)).not.toContain('ONLY_PAGE_ONE_SECRET');
   });
 
+  it.each([false, true])('preserves surviving flat destinations and other name trees (indirect: %s)', async (indirect) => {
+    const doc = syntheticDocument();
+    const deletedRef = doc.pages[0].ref;
+    const survivingRef = doc.pages[1].ref;
+    const survivingDestination = new PDFDict([['D', new PDFArray([survivingRef, new PDFName('Fit')])]]);
+    doc.objects.set('50_0', survivingDestination);
+    const destTree = new PDFDict([
+      ['Names', new PDFArray([
+        new PDFString('deleted'), new PDFArray([deletedRef, new PDFName('Fit')]),
+        new PDFString('surviving'), new PDFRef(50, 0),
+      ])],
+      ['Limits', new PDFArray([new PDFString('deleted'), new PDFString('surviving')])],
+    ]);
+    const files = new PDFDict([['Names', new PDFArray([
+      new PDFString('attachment.txt'), new PDFDict([
+        ['Type', new PDFName('Filespec')], ['F', new PDFString('attachment.txt')],
+      ]),
+    ])]]);
+    const scripts = new PDFDict([['Names', new PDFArray([
+      new PDFString('script'), new PDFDict([
+        ['S', new PDFName('JavaScript')], ['JS', new PDFString('app.alert("kept")')],
+      ]),
+    ])]]);
+    const names = new PDFDict([['Dests', destTree], ['EmbeddedFiles', files], ['JavaScript', scripts]]);
+    doc.objects.set('51_0', names);
+    doc.catalog.set('Names', indirect ? new PDFRef(51, 0) : names);
+    doc.catalog.set('Dests', new PDFDict([
+      ['deleted', new PDFArray([deletedRef, new PDFName('Fit')])],
+      ['surviving', new PDFRef(50, 0)],
+    ]));
+
+    deletePage(doc, 0);
+    const reparsed = await parsePDF(await serializeDocument(doc));
+    const namesObject = reparsed.catalog.get('Names');
+    const keptNames = (namesObject instanceof PDFRef ? reparsed.objects.get(namesObject.toKey()) : namesObject) as PDFDict;
+    expect(keptNames).toBeInstanceOf(PDFDict);
+    const keptTree = keptNames.getDict('Dests')!;
+    expect(keptTree.getArray('Names')!.items.map((item) => item instanceof PDFString ? item.value : null))
+      .toEqual(['surviving', null]);
+    const keptDestination = keptTree.getArray('Names')!.items[1] as PDFRef;
+    const destination = reparsed.objects.get(keptDestination.toKey()) as PDFDict;
+    expect((destination.getArray('D')!.items[0] as PDFRef).equals(survivingRef)).toBe(true);
+    const limits = keptTree.getArray('Limits');
+    if (limits) expect(limits.items.map((item) => (item as PDFString).value)).toEqual(['surviving', 'surviving']);
+    expect(keptNames.getDict('EmbeddedFiles')!.getArray('Names')!.items[0]).toEqual(new PDFString('attachment.txt'));
+    expect((keptNames.getDict('EmbeddedFiles')!.getArray('Names')!.items[1] as PDFDict).getString('F')).toBe('attachment.txt');
+    expect((keptNames.getDict('JavaScript')!.getArray('Names')!.items[1] as PDFDict).getString('JS')).toBe('app.alert("kept")');
+    expect(reparsed.catalog.getDict('Dests')!.get('deleted')).toBeUndefined();
+    expect(reparsed.catalog.getDict('Dests')!.get('surviving')).toBeInstanceOf(PDFRef);
+    expect(reparsed.pages).toHaveLength(2);
+  });
+
+  it('prunes nested destination leaves and repairs limits without losing surviving siblings', async () => {
+    const doc = syntheticDocument();
+    const destination = (pageIndex: number) => new PDFArray([doc.pages[pageIndex].ref, new PDFName('Fit')]);
+    const limits = (first: string, last: string) => new PDFArray([new PDFString(first), new PDFString(last)]);
+    doc.objects.set('50_0', new PDFDict([
+      ['Names', new PDFArray([new PDFString('a'), destination(0)])], ['Limits', limits('a', 'a')],
+    ]));
+    doc.objects.set('51_0', new PDFDict([
+      ['Names', new PDFArray([new PDFString('b'), destination(0), new PDFString('c'), destination(1)])],
+      ['Limits', limits('b', 'c')],
+    ]));
+    doc.objects.set('52_0', new PDFDict([
+      ['Kids', new PDFArray([new PDFRef(50, 0), new PDFRef(51, 0)])], ['Limits', limits('a', 'c')],
+    ]));
+    doc.objects.set('53_0', new PDFDict([
+      ['Names', new PDFArray([new PDFString('d'), destination(2)])], ['Limits', limits('d', 'd')],
+    ]));
+    const tree = new PDFDict([['Kids', new PDFArray([new PDFRef(52, 0), new PDFRef(53, 0)])]]);
+    doc.catalog.set('Names', new PDFDict([['Dests', tree]]));
+
+    deletePage(doc, 0);
+    const reparsed = await parsePDF(await serializeDocument(doc));
+    const root = reparsed.catalog.getDict('Names')!.getDict('Dests')!;
+    expect(root.getArray('Kids')!.items).toEqual([new PDFRef(52, 0), new PDFRef(53, 0)]);
+    const branch = reparsed.objects.get('52_0') as PDFDict;
+    expect(branch.getArray('Kids')!.items).toEqual([new PDFRef(51, 0)]);
+    expect(branch.getArray('Limits')!.items).toEqual(limits('c', 'c').items);
+    const leaf = reparsed.objects.get('51_0') as PDFDict;
+    expect(leaf.getArray('Names')!.items[0]).toEqual(new PDFString('c'));
+    expect(leaf.getArray('Names')!.items).toHaveLength(2);
+    const leafLimits = leaf.getArray('Limits');
+    if (leafLimits) expect(leafLimits.items).toEqual(limits('c', 'c').items);
+    expect((leaf.getArray('Names')!.items[1] as PDFArray).items[0]).toEqual(reparsed.pages[0].ref);
+    expect((reparsed.objects.get('53_0') as PDFDict).getArray('Names')!.items)
+      .toEqual([new PDFString('d'), new PDFArray([reparsed.pages[1].ref, new PDFName('Fit')])]);
+    expect(reparsed.objects.has('50_0')).toBe(false);
+  });
+
+  it.each([false, true])('removes empty destination trees but only removes an empty Names dictionary (other tree: %s)', async (otherTree) => {
+    const doc = syntheticDocument();
+    const destTree = new PDFDict([['Names', new PDFArray([
+      new PDFString('deleted'), new PDFArray([doc.pages[0].ref, new PDFName('Fit')]),
+    ])]]);
+    const names = new PDFDict([['Dests', new PDFDict([['Kids', new PDFArray([destTree])]])]]);
+    if (otherTree) names.set('EmbeddedFiles', new PDFDict([['Names', new PDFArray([
+      new PDFString('attachment.txt'), new PDFDict([['F', new PDFString('attachment.txt')]]),
+    ])]]));
+    doc.catalog.set('Names', names);
+    doc.catalog.set('Dests', new PDFDict([['deleted', new PDFArray([doc.pages[0].ref, new PDFName('Fit')])]]));
+
+    deletePage(doc, 0);
+    const reparsed = await parsePDF(await serializeDocument(doc));
+    expect(reparsed.catalog.get('Dests')).toBeUndefined();
+    if (otherTree) {
+      expect(reparsed.catalog.getDict('Names')!.get('Dests')).toBeUndefined();
+      expect(reparsed.catalog.getDict('Names')!.getDict('EmbeddedFiles')!.getArray('Names')!.items[0])
+        .toEqual(new PDFString('attachment.txt'));
+    } else {
+      expect(reparsed.catalog.get('Names')).toBeUndefined();
+    }
+  });
+
   it('restores a deleted page from the full structural history snapshot', async () => {
     const doc = syntheticDocument();
     const before = captureHistoryEntry(doc, 0, new TextEncoder().encode('ONLY_PAGE_ONE_SECRET'), {
