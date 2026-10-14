@@ -100,18 +100,22 @@ export function usePdfDocument(onParsed?: (doc: PDFDocumentData, engine: typeof 
 
   const download = useCallback(async (mode: 'quick' | 'optimized' = 'optimized') => {
     if (!doc || !engineRef.current) return;
-    const engine = engineRef.current;
-    const bytes = mode === 'quick'
-      ? await engine.saveQuick(doc, modifiedKeys)
-      : await engine.saveOptimized(doc);
+    try {
+      const engine = engineRef.current;
+      const bytes = mode === 'quick'
+        ? await engine.saveQuick(doc, modifiedKeys)
+        : await engine.saveOptimized(doc);
 
-    const blob = new Blob([bytes as BlobPart], { type: 'application/pdf' });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement('a');
-    a.href = url;
-    a.download = fileName.replace(/\.pdf$/i, '') + (mode === 'optimized' ? '-edited.pdf' : '-quick.pdf');
-    a.click();
-    URL.revokeObjectURL(url);
+      const blob = new Blob([bytes as BlobPart], { type: 'application/pdf' });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = fileName.replace(/\.pdf$/i, '') + (mode === 'optimized' ? '-edited.pdf' : '-quick.pdf');
+      a.click();
+      URL.revokeObjectURL(url);
+    } catch (e) {
+      setError(`Download failed: ${e instanceof Error ? e.message : String(e)}`);
+    }
   }, [doc, fileName, modifiedKeys]);
 
   return {

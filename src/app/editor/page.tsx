@@ -850,6 +850,9 @@ export default function EditorPage() {
           });
         } catch (e) {
           console.warn('[Editor] Session autosave failed:', e);
+          if (e instanceof Error && e.name === 'SignedDocumentEditError') {
+            setError(`Session autosave failed: ${e.message}`);
+          }
         }
       })();
     }, 2500);
@@ -4446,15 +4449,10 @@ export default function EditorPage() {
         targetBytes: opts.targetBytes,
       });
 
-      // Hard safety: never hand the user a bigger file than they started with
-      let outBytes = result.bytes;
-      let outLen = result.compressedBytes;
-      let note = result.message;
-      if (originalLen > 0 && outLen > originalLen) {
-        outBytes = doc.rawBytes!;
-        outLen = originalLen;
-        note = `Compression produced a larger file (${(result.compressedBytes / 1024).toFixed(1)} KB). Kept original ${(originalLen / 1024).toFixed(1)} KB instead.`;
-      }
+      // The engine's result preserves current edits, even if it exceeds the upload size.
+      const outBytes = result.bytes;
+      const outLen = result.compressedBytes;
+      const note = result.message;
 
       console.log('[Compress]', note, {
         method: result.method,
