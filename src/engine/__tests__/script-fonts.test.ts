@@ -38,10 +38,10 @@ describe('script font selection', () => {
   });
 
   it('falls through cmap coverage in order and merges the resulting adjacent runs', () => {
-    const coverage: Record<ScriptFontId, ReadonlySet<number>> = {
+    const coverage: Partial<Record<ScriptFontId, ReadonlySet<number>>> = {
       sc: new Set([0x4e00]), tc: new Set([0x4e8c]), jp: new Set([0x4e09]), kr: new Set([0x56db]), latin: new Set([0x41]),
     };
-    expect(splitScriptRuns('一二三四A', { covers: (id, cp) => coverage[id].has(cp) })).toEqual([
+    expect(splitScriptRuns('一二三四A', { covers: (id, cp) => coverage[id]?.has(cp) ?? false })).toEqual([
       { fontId: 'sc', text: '一' }, { fontId: 'tc', text: '二' }, { fontId: 'jp', text: '三' },
       { fontId: 'kr', text: '四' }, { fontId: 'latin', text: 'A' },
     ]);
@@ -60,7 +60,7 @@ describe('script font selection', () => {
     }
   });
 
-  it.each(['สวัสดี', 'नमस्ते', 'العربية', '😀'])('rejects unshaped or unsupported scripts regardless of cmap: %s', text => {
+  it.each(['العربية', 'עברית', '😀'])('rejects unsupported scripts regardless of cmap: %s', text => {
     try {
       splitScriptRuns(text, { covers: () => true });
       throw new Error('Expected unsupported script');

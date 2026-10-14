@@ -146,6 +146,9 @@ export interface TextRun {
   type: 'text';
   /** The Unicode text content */
   text: string;
+  /** Marked-content replacement text; glyph-level editing is unsafe. */
+  actualText?: boolean;
+  actualTextLayout?: { x: number; y: number; width: number };
   /** Individual glyph positions */
   glyphs: GlyphPosition[];
   /** Original text-showing instruction indices that produced this run */
@@ -458,6 +461,7 @@ export function interpretPage(
   let textMatrix = identityMatrix();     // Tm: text matrix
   let textLineMatrix = identityMatrix(); // For T* and TD tracking
   let inTextBlock = false;
+  const markedContent: { text?: string; start: number; matrix: Matrix; ctm: Matrix }[] = [];
 
   // Path construction
   let currentPath: PathSegment[] = [];
@@ -914,8 +918,47 @@ export function interpretPage(
         break;
       }
 
-      // ── Marked content (skip) ───────────────────────────────────────
-      case 'BMC': case 'BDC': case 'EMC':
+      // ActualText replaces logical text, not glyph outlines or positions.
+      case 'BMC': case 'BDC': {
+        let properties: PDFObject | undefined = ops[1];
+        if (properties instanceof PDFName) properties = getResource(page.resources, 'Properties', properties.name, objects);
+        if (properties instanceof PDFRef) properties = resolveRef(properties, objects);
+        const actual = properties instanceof PDFDict ? properties.get('ActualText') : undefined;
+        let text: string | undefined;
+        if (actual instanceof PDFHexString || actual instanceof PDFString) {
+          const bytes = actual.toBytes();
+          if (bytes[0] === 0xfe && bytes[1] === 0xff) {
+            text = '';
+            for (let at = 2; at + 1 < bytes.length; at += 2) text += String.fromCharCode((bytes[at] << 8) | bytes[at + 1]);
+          } else text = actual instanceof PDFHexString ? actual.toText() : actual.value;
+        }
+        markedContent.push({ text, start: rawTextRuns.length, matrix: { ...textMatrix }, ctm: { ...gs.ctm } });
+        break;
+      }
+      case 'EMC': {
+        const span = markedContent.pop();
+        if (!span || span.text === undefined) break;
+        const runs = rawTextRuns.slice(span.start);
+        if (!runs.length) break;
+        const first = runs[0], glyphs = runs.flatMap(run => run.glyphs);
+        const [x, y] = transformPoint(span.ctm, span.matrix.e, span.matrix.f);
+        const [endX] = transformPoint(gs.ctm, textMatrix.e, textMatrix.f);
+        const combined: TextRun = {
+          ...first, text: span.text, actualText: true, glyphs,
+          actualTextLayout: { x, y, width: endX - x },
+          sourceInstructionIndices: runs.flatMap(run => run.sourceInstructionIndices ?? []),
+          x: Math.min(...runs.map(run => run.x)), y: Math.min(...runs.map(run => run.y)),
+          width: Math.max(...runs.map(run => run.x + run.width)) - Math.min(...runs.map(run => run.x)),
+          height: Math.max(...runs.map(run => run.y + run.height)) - Math.min(...runs.map(run => run.y)),
+        };
+        const replaced = new Set(runs), firstIndex = displayList.indexOf(first);
+        for (let at = displayList.length - 1; at >= firstIndex; at--) {
+          if (replaced.has(displayList[at] as TextRun)) displayList.splice(at, 1);
+        }
+        displayList.splice(firstIndex, 0, combined);
+        rawTextRuns.splice(span.start, runs.length, combined);
+        break;
+      }
       case 'MP': case 'DP':
         break;
 
@@ -974,7 +1017,7 @@ function mergeAdjacentTextRuns(displayList: DisplayItem[], rawTextRuns: TextRun[
     const a = displayList[i];
     const b = displayList[i + 1];
 
-    if (a.type !== 'text' || b.type !== 'text') {
+    if (a.type !== 'text' || b.type !== 'text' || a.actualText || b.actualText) {
       i++;
       continue;
     }
@@ -1371,12 +1414,14 @@ function repairObscureApostropheGlyphs(glyphs: GlyphPosition[]): void {
  */
 function repairApostrophesAcrossRuns(runs: TextRun[]): void {
   for (let i = 0; i < runs.length; i++) {
+    if (runs[i].actualText) continue;
     repairObscureApostropheGlyphs(runs[i].glyphs);
     runs[i].text = runs[i].glyphs.map(g => g.unicode).join('');
   }
 
   for (let i = 0; i < runs.length; i++) {
     const run = runs[i];
+    if (run.actualText) continue;
     if (run.glyphs.length === 0) continue;
     const onlyObscure = run.glyphs.every(g => isObscureSymbol(g.unicode));
     if (!onlyObscure && !run.glyphs.some(g => isObscureSymbol(g.unicode))) continue;
