@@ -399,6 +399,18 @@ export class PDFLexer {
       this.pos = startPos;
       return this.readKeyword(offset);
     }
+    // Tolerate producer scientific notation; serializers emit decimal operands.
+    if (this.data[this.pos] === 0x65 || this.data[this.pos] === 0x45) {
+      let end = this.pos + 1;
+      if (this.data[end] === PLUS || this.data[end] === MINUS) end++;
+      const digits = end;
+      while (end < this.length && isDigit(this.data[end])) end++;
+      if (end > digits) {
+        isReal = true;
+        while (this.pos < end) numStr += String.fromCharCode(this.data[this.pos++]);
+      }
+    }
+
 
     const num = isReal ? parseFloat(numStr) : parseInt(numStr, 10);
     return {
