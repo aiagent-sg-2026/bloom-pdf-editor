@@ -1,6 +1,7 @@
 import { PDFDict, PDFName, PDFRef, type PDFObject, type PDFPageInfo } from '../types';
 import { resolveRef } from '../parser/parser';
 import { SYMBOL_TO_UNICODE, ZAPF_DINGBATS_TO_UNICODE } from './dingbat-encodings';
+import { registerFontObject } from './font-augmentation';
 
 export type BuiltInFallbackKind = 'Symbol' | 'ZapfDingbats';
 export interface BuiltInFallbackGlyph { fontKind: BuiltInFallbackKind; code: number }
@@ -54,7 +55,7 @@ export function ensureBuiltInFallbackFont(
     font.set('Subtype', new PDFName('Type1'));
     font.set('BaseFont', new PDFName(kind));
     // Built-in SymbolEncoding/ZapfDingbatsEncoding is selected by omission.
-    fonts.set(resourceName, font);
+    fonts.set(resourceName, registerFontObject(objects, font));
   }
   return resourceName;
 }

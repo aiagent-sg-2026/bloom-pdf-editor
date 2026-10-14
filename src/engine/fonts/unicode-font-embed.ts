@@ -166,17 +166,28 @@ export async function prepareUnicodeFont(
       // Type0, descendant, descriptor, program, CIDToGIDMap, ToUnicode.
       const refs = existing?.refs ?? Array.from({ length: 6 }, (_, i) => new PDFRef(next + i, 0));
       const scale = 1000 / font.unitsPerEm;
-      let italicAngle = 0, capHeight = font.ascent;
+      // parseTTF's layout metrics may be overridden by OS/2; PDF descriptors need signed metrics.
+      let ascent = font.ascent, descent = font.descent;
+      const hhea = font.tables.get('hhea');
+      if (hhea && hhea.length >= 8) {
+        const v = new DataView(bytes.buffer, bytes.byteOffset + hhea.offset, hhea.length);
+        ascent = v.getInt16(4); descent = v.getInt16(6);
+      } else if (os2 && os2.length >= 72) {
+        const v = new DataView(bytes.buffer, bytes.byteOffset + os2.offset, os2.length);
+        ascent = v.getInt16(68); descent = v.getInt16(70);
+      }
+      ascent = Math.abs(ascent); descent = -Math.abs(descent);
+      let italicAngle = 0, capHeight = ascent;
       const post = font.tables.get('post');
       if (post && post.length >= 8) italicAngle = new DataView(bytes.buffer, bytes.byteOffset + post.offset, post.length).getInt32(4) / 65536;
       if (os2 && os2.length >= 90) {
         const v = new DataView(bytes.buffer, bytes.byteOffset + os2.offset, os2.length);
-        if (v.getUint16(0) >= 2) capHeight = v.getInt16(88);
+        if (v.getUint16(0) >= 2 && v.getInt16(88) > 0) capHeight = v.getInt16(88);
       }
       const descriptor = new PDFDict([
         ['Type', new PDFName('FontDescriptor')], ['FontName', new PDFName(name)],
         ['Flags', new PDFNumber(4)], ['FontBBox', new PDFArray(font.bbox.map(n => new PDFNumber(n * scale)))],
-        ['Ascent', new PDFNumber(font.ascent * scale)], ['Descent', new PDFNumber(font.descent * scale)],
+        ['Ascent', new PDFNumber(ascent * scale)], ['Descent', new PDFNumber(descent * scale)],
         ['CapHeight', new PDFNumber(capHeight * scale)], ['ItalicAngle', new PDFNumber(italicAngle)],
         ['StemV', new PDFNumber(80)], ['FontFile2', refs[3]],
       ]);

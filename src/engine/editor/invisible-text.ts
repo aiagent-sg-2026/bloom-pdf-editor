@@ -12,6 +12,7 @@ import {
 import { getPageContentBytes, resolveRef } from '../parser/parser';
 import { updatePageContent, concatBytes } from './stream-compiler';
 import { serializeToString } from './stream-compiler';
+import { registerFontObject } from '../fonts/font-augmentation';
 
 export interface InvisibleWord {
   text: string;
@@ -37,7 +38,7 @@ function ensureHelv(page: PDFDocumentData['pages'][0], objects: PDFDocumentData[
     helvetica.set('Type', new PDFName('Font'));
     helvetica.set('Subtype', new PDFName('Type1'));
     helvetica.set('BaseFont', new PDFName('Helvetica'));
-    fontDict.set('Helv', helvetica);
+    fontDict.set('Helv', registerFontObject(objects, helvetica));
   }
 }
 

@@ -36,7 +36,7 @@ import {
   type EncodedText,
   type RunPositionShift,
 } from '../editor/text-editor';
-import { ensureFallbackFont } from '../fonts/font-augmentation';
+import { ensureFallbackFont, registerFontObject } from '../fonts/font-augmentation';
 import { ctmBefore, deltaThroughInverse, invertMatrix } from '../editor/matrix';
 import { updatePageContent } from '../editor/stream-compiler';
 import { parseContentStream, type CSInstruction } from '../content/operator-lexer';
@@ -642,7 +642,7 @@ function ensureStandard14Font(
   dict.set('Type', new PDFName('Font'));
   dict.set('Subtype', new PDFName('Type1'));
   dict.set('BaseFont', new PDFName(baseFont));
-  fontDict.set(resourceKey, dict);
+  fontDict.set(resourceKey, registerFontObject(objects, dict));
   return resourceKey;
 }
 

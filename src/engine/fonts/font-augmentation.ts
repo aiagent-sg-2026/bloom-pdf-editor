@@ -20,6 +20,26 @@ const FALLBACK_FONT = 'HelvAug';
 const FALLBACK_FONT_BOLD = 'HelvAugBold';
 const FALLBACK_FONT_OBLIQUE = 'HelvAugOblique';
 const FALLBACK_FONT_BOLD_OBLIQUE = 'HelvAugBoldOblique';
+const registeredFonts = new WeakMap<Map<string, PDFObject>, Set<string>>();
+
+/** Newly indirect fonts must join explicitly incremental saves, including worker saves. */
+export function registeredFontKeys(objects: Map<string, PDFObject>): ReadonlySet<string> {
+  return registeredFonts.get(objects) ?? new Set<string>();
+}
+
+/** Store a font outside resource dictionaries so readers can identify its xref entry. */
+export function registerFontObject(
+  objects: Map<string, PDFObject>, font: PDFDict, minimumObjectNumber = 1,
+): PDFRef {
+  let next = minimumObjectNumber;
+  for (const key of objects.keys()) next = Math.max(next, Number.parseInt(key.split('_')[0], 10) + 1);
+  const ref = new PDFRef(next, 0);
+  objects.set(ref.toKey(), font);
+  let keys = registeredFonts.get(objects);
+  if (!keys) registeredFonts.set(objects, keys = new Set<string>());
+  keys.add(ref.toKey());
+  return ref;
+}
 
 /**
  * Ensure a Helvetica Type1 fallback font exists in page Resources.
@@ -66,7 +86,7 @@ export function ensureFallbackFont(
     helvetica.set('Subtype', new PDFName('Type1'));
     helvetica.set('BaseFont', new PDFName(baseFont));
     helvetica.set('Encoding', new PDFName('WinAnsiEncoding'));
-    fontDict.set(resourceName, helvetica);
+    fontDict.set(resourceName, registerFontObject(objects, helvetica));
   }
 
   return resourceName;

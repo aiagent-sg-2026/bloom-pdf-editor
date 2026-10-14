@@ -24,6 +24,7 @@ import {
 } from '../../types';
 import { getNextObjNum } from '../../writer/serializer';
 import { resolveRef } from '../../parser/parser';
+import { registerFontObject } from '../../fonts/font-augmentation';
 
 // ─── Resource manager ───────────────────────────────────────────────────────
 
@@ -66,14 +67,14 @@ export class AppearanceResourceManager {
     return name;
   }
 
-  /** Build /Resources dictionary (inline dicts + refs). */
-  toResourcesDict(): PDFDict {
+  /** Build /Resources with indirect fonts and existing XObject/ExtGState definitions. */
+  toResourcesDict(objects: Map<string, PDFObject>): PDFDict {
     const resources = new PDFDict();
 
     if (this.fonts.size > 0) {
       const fontDict = new PDFDict();
       for (const [name, val] of this.fonts) {
-        fontDict.set(name, val);
+        fontDict.set(name, val instanceof PDFDict ? registerFontObject(objects, val) : val);
       }
       resources.set('Font', fontDict);
     }
@@ -259,7 +260,7 @@ export function serializeAppearanceStream(
     new PDFNumber(bbox.y + bbox.height),
   ]));
   dict.set('Matrix', new PDFArray(matrix.map((n) => new PDFNumber(n))));
-  dict.set('Resources', resources.toResourcesDict());
+  dict.set('Resources', resources.toResourcesDict(doc.objects));
 
   // Compression is optional and async in this engine — leave uncompressed by default
   // so appearance generation stays synchronous. Callers can Flate later if needed.

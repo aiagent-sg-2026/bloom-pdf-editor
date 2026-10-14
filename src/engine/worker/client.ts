@@ -4,6 +4,7 @@ import type { PDFDocumentData, PDFObject } from '../types';
 import { collectTransferBuffers, dehydrateDocument, hydrateDocument } from './codec';
 import type { WorkerCommand, WorkerResponse } from './protocol';
 import { unicodeFontModifiedKeys } from '../fonts/unicode-font-embed';
+import { registeredFontKeys } from '../fonts/font-augmentation';
 type WorkerRequest = WorkerCommand extends infer T ? T extends { requestId: string } ? Omit<T, 'requestId'> : never : never;
 
 type Pending = { resolve: (value: WorkerResponse) => void; reject: (error: unknown) => void };
@@ -48,7 +49,7 @@ export async function parsePDF(data: Uint8Array, options?: ParsePDFOptions): Pro
 
 export async function saveQuick(doc: PDFDocumentData, modifiedKeys?: Set<string>, newObjects?: Map<string, PDFObject>): Promise<Uint8Array> {
   if (modifiedKeys?.size || newObjects?.size) {
-    modifiedKeys = new Set([...modifiedKeys ?? [], ...unicodeFontModifiedKeys(doc.objects)]);
+    modifiedKeys = new Set([...modifiedKeys ?? [], ...unicodeFontModifiedKeys(doc.objects), ...registeredFontKeys(doc.objects)]);
   }
   const combinedObjects = new Map(doc.objects);
   if (newObjects) for (const [key, value] of newObjects) combinedObjects.set(key, value);

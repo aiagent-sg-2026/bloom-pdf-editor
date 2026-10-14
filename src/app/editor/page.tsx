@@ -49,6 +49,7 @@ import { useTextStyleActions, type TextStyleUI } from './hooks/useTextStyleActio
 import { useIsMobile } from './hooks/useIsMobile';
 import { editorKeyboardAction } from './keyboard-actions';
 import { floatingTextPdfDelta, shouldStartFloatingTextDrag } from './components/pointerDragGeometry';
+import { initialFloatingTextSelection } from './components/floatingTextSelection';
 
 export interface SearchMatch {
   id: string;
@@ -483,6 +484,7 @@ export default function EditorPage() {
   const floatingImagesRef = useRef<FloatingImage[]>([]);
   floatingImagesRef.current = floatingImages;
   const floatingTextEditStartRef = useRef<FloatingText[] | null>(null);
+  const pendingFloatingTextSelectionRef = useRef<string | null>(null);
   const signaturesRef = useRef<VisualSignature[]>([]);
 
   const syncTxState = useCallback(() => {
@@ -2791,6 +2793,7 @@ export default function EditorPage() {
       };
 
       const nextTexts = [...floatingTextsRef.current, newBox];
+      pendingFloatingTextSelectionRef.current = newBox.id;
       setFloatingTexts(nextTexts);
       floatingTextsRef.current = nextTexts;
       pushEditorHistory('add-text-box', { floatingTexts: nextTexts });
@@ -3165,7 +3168,7 @@ export default function EditorPage() {
 
       const annotRef = new engine.PDFRef(annotationObjNum, 0);
       engine.addAnnotationToPage(page.dict, dict, annotRef, doc.objects);
-      currentObjNum += 2;
+      currentObjNum = engine.getNextObjNum(doc);
     }
 
     let newContentBytes: Uint8Array;
@@ -5656,7 +5659,12 @@ export default function EditorPage() {
                         return next;
                       });
                     }}
-                    onFocus={() => {
+                    onFocus={(e) => {
+                      const selection = initialFloatingTextSelection(pendingFloatingTextSelectionRef.current, ft.id, ft.text);
+                      if (selection) {
+                        pendingFloatingTextSelectionRef.current = null;
+                        e.currentTarget.setSelectionRange(...selection);
+                      }
                       setActiveFloatingTextId(ft.id);
                       if (!floatingTextEditStartRef.current) {
                         floatingTextEditStartRef.current = floatingTextsRef.current.map(text => ({ ...text }));
