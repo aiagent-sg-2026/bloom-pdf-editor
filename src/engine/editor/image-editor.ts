@@ -182,13 +182,17 @@ function buildImageInjection(
     graphicsStateName = addImageOpacityGraphicsState(page, objects, opacity);
   }
 
-  // The overlay rotates clockwise in CSS. PDF's positive angle is counter-clockwise,
-  // so negate the overlay angle in the PDF user-space rotation matrix.
-  const rotationCommands = rotation === 0 ? '' : [
-    `1 0 0 1 ${x + width / 2} ${y - height / 2} cm`,
-    `${formatNumber(Math.cos(-rotation * Math.PI / 180))} ${formatNumber(Math.sin(-rotation * Math.PI / 180))} ${formatNumber(-Math.sin(-rotation * Math.PI / 180))} ${formatNumber(Math.cos(-rotation * Math.PI / 180))} 0 0 cm`,
-    `1 0 0 1 ${-(x + width / 2)} ${-(y - height / 2)} cm`,
-  ].join('\n') + '\n' : '';
+  // The signature rotation is already a PDF-convention angle: positive values
+  // rotate counter-clockwise, matching the CSS overlay's negative angle.
+  let rotationCommands = '';
+  if (rotation !== 0) {
+    const angle = rotation * Math.PI / 180;
+    rotationCommands = [
+      `1 0 0 1 ${x + width / 2} ${y - height / 2} cm`,
+      `${formatNumber(Math.cos(angle))} ${formatNumber(Math.sin(angle))} ${formatNumber(-Math.sin(angle))} ${formatNumber(Math.cos(angle))} 0 0 cm`,
+      `1 0 0 1 ${-(x + width / 2)} ${-(y - height / 2)} cm`,
+    ].join('\n') + '\n';
+  }
   const opacityCommand = graphicsStateName ? `/${graphicsStateName} gs\n` : '';
   return `\nq\n${opacityCommand}${rotationCommands}${width} 0 0 ${height} ${x} ${y - height} cm\n/${imageName} Do\nQ\n`;
 }

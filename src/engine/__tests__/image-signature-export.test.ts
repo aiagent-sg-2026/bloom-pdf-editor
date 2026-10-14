@@ -42,8 +42,8 @@ describe('signature image export transforms', () => {
   });
 
   it.each([
-    [90, '1 0 0 1 40 50 cm\n0 -1 1 0 0 0 cm\n1 0 0 1 -40 -50 cm'],
-    [30, '1 0 0 1 40 50 cm\n0.8660254038 -0.5 0.5 0.8660254038 0 0 cm\n1 0 0 1 -40 -50 cm'],
+    [90, '1 0 0 1 40 50 cm\n0 1 -1 0 0 0 cm\n1 0 0 1 -40 -50 cm'],
+    [30, '1 0 0 1 40 50 cm\n0.8660254038 0.5 -0.5 0.8660254038 0 0 cm\n1 0 0 1 -40 -50 cm'],
   ])('emits the expected center rotation matrix for %i degrees', async (degrees, expected) => {
     globalThis.Image = MockImage as unknown as typeof Image;
     const p = makePage();
