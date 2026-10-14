@@ -9,6 +9,8 @@ import type { PDFObject, PDFPageInfo } from '../types';
 import {
   applyTextEdits,
   applyRunPositionShifts,
+  assertTextEncodable,
+  loadFontForName,
   type EditResult,
   type TextEdit,
   type RunPositionShift,
@@ -357,6 +359,13 @@ export function applyLineTextEdit(
       });
     }
   }
+  // Position shifts can reindex the live runs. Reject unsupported text before that mutation.
+  for (const edit of edits) {
+    if (edit.newText !== edit.targetRun.text) {
+      assertTextEncodable(edit.newText, loadFontForName(edit.targetRun.fontName, page, objects));
+    }
+  }
+
 
   // Shifts must use the same caret-aware split as the text rewrite.
   const editShifts = primarySegmentEdits
