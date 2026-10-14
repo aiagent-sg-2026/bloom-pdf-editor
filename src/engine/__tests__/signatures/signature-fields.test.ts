@@ -140,7 +140,7 @@ describe('Phase 5 — appearance streams', () => {
     rm.ensureOpacity(0.5);
     const imgRef = new PDFRef(99, 0);
     expect(rm.addImageXObject(imgRef)).toBe('Im1');
-    const res = rm.toResourcesDict();
+    const res = rm.toResourcesDict(doc.objects);
     expect(res.get('Font')).toBeInstanceOf(PDFDict);
     expect(res.get('XObject')).toBeInstanceOf(PDFDict);
     expect(res.get('ExtGState')).toBeInstanceOf(PDFDict);

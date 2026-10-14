@@ -1,3 +1,4 @@
+import { readFileSync } from 'node:fs';
 import { describe, expect, it, vi } from 'vitest';
 import { prepareUnicodeFont, ensureUnicodeFont, encodeUnicodeText, unicodeGlyphWidth, hasUnicodeGlyph } from '../fonts/unicode-font-embed';
 import { UnsupportedGlyphsError } from '../fonts/unsupported-glyphs';
@@ -55,6 +56,23 @@ describe('on-demand Unicode PDF font graph', () => {
     expect(recovered).toBe(text);
     expect((graph.descendant.get('W') as PDFArray).items.map(obj => obj instanceof PDFArray ? obj.items.map(n => (n as PDFNumber).value) : (obj as PDFNumber).value)).toEqual([1, [1000, 1100, 1000]]);
     expect(new TextDecoder().decode(graph.toUnicode.getBytes())).toContain('<d840dc00>');
+  });
+
+  it('uses signed hhea metrics and head bounds in 1000-unit PDF descriptors', async () => {
+    const noto = new Uint8Array(readFileSync(new URL('../../../public/fonts/NotoSansSC-Regular.ttf', import.meta.url)));
+    for (const source of [syntheticUnicodeFont(), noto]) {
+      const parsed = parseTTF(source), hhea = parsed.tables.get('hhea')!, head = parsed.tables.get('head')!;
+      const view = new DataView(source.buffer, source.byteOffset, source.byteLength);
+      const scale = 1000 / parsed.unitsPerEm, doc = unicodeDocument();
+      await prepareUnicodeFont(doc.objects, [0x8ba1], source);
+      const { descriptor } = fontGraph(doc);
+      expect(descriptor.getNumber('Ascent')).toBeGreaterThan(0);
+      expect(descriptor.getNumber('Descent')).toBeLessThanOrEqual(0);
+      expect(descriptor.getNumber('Ascent')).toBe(view.getInt16(hhea.offset + 4) * scale);
+      expect(descriptor.getNumber('Descent')).toBe(view.getInt16(hhea.offset + 6) * scale);
+      expect((descriptor.get('FontBBox') as PDFArray).items.map(obj => (obj as PDFNumber).value))
+        .toEqual([36, 38, 40, 42].map(offset => view.getInt16(head.offset + offset) * scale));
+    }
   });
 
   it('extends one graph across edits and concurrent preparations without changing old CIDs', async () => {

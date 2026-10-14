@@ -31,6 +31,7 @@ import {
   type PDFRectangle,
 } from '../types';
 import { flateEncode } from '../parser/filters';
+import { registerFontObject } from '../fonts/font-augmentation';
 
 // ─── Annotation types ───────────────────────────────────────────────────────
 
@@ -145,7 +146,7 @@ export type Annotation =
 export function createAnnotationDict(
   annotation: Annotation,
   nextObjNum: number,
-  objects?: Map<string, PDFObject>,
+  objects: Map<string, PDFObject>,
 ): { dict: PDFDict; appearanceStream: PDFStream | null } {
   const dict = new PDFDict();
 
@@ -199,7 +200,7 @@ export function createAnnotationDict(
       if (annotation.borderWidth > 0) {
         dict.set('BS', buildBorderStyle(annotation.borderWidth));
       }
-      appearanceStream = buildFreeTextAppearance(annotation);
+      appearanceStream = buildFreeTextAppearance(annotation, objects, nextObjNum + 2);
       break;
 
     case 'Ink':
@@ -262,7 +263,7 @@ export function createAnnotationDict(
     case 'Stamp':
       dict.set('Subtype', new PDFName('Stamp'));
       dict.set('Name', new PDFName(annotation.stampName));
-      appearanceStream = buildStampAppearance(annotation);
+      appearanceStream = buildStampAppearance(annotation, objects, nextObjNum + 2);
       break;
 
     case 'Redact':
@@ -301,7 +302,7 @@ export function createAnnotationDict(
     // PDFs and are rejected by pdfium/poppler.
     const appearanceRef = new PDFRef(nextObjNum + 1, 0);
     apDict.set('N', appearanceRef);
-    objects?.set(appearanceRef.toKey(), appearanceStream);
+    objects.set(appearanceRef.toKey(), appearanceStream);
     dict.set('AP', apDict);
   }
 
@@ -388,7 +389,7 @@ function buildHighlightAppearance(annot: HighlightAnnotation): PDFStream {
   return buildAppearanceStream(lines.join('\n'), rect, opacity);
 }
 
-function buildFreeTextAppearance(annot: FreeTextAnnotation): PDFStream {
+function buildFreeTextAppearance(annot: FreeTextAnnotation, objects: Map<string, PDFObject>, minimumObjectNumber: number): PDFStream {
   const { rect, text, fontSize, textColor, color, borderWidth } = annot;
   const w = rect.width;
   const h = rect.height;
@@ -422,7 +423,7 @@ function buildFreeTextAppearance(annot: FreeTextAnnotation): PDFStream {
   helvetica.set('Type', new PDFName('Font'));
   helvetica.set('Subtype', new PDFName('Type1'));
   helvetica.set('BaseFont', new PDFName('Helvetica'));
-  fontDict.set('Helv', helvetica);
+  fontDict.set('Helv', registerFontObject(objects, helvetica, minimumObjectNumber));
 
   const resources = new PDFDict();
   resources.set('Font', fontDict);
@@ -556,7 +557,7 @@ function buildCircleAppearance(annot: CircleAnnotation): PDFStream {
   return buildAppearanceStream(lines.join('\n'), rect, annot.opacity);
 }
 
-function buildStampAppearance(annot: StampAnnotation): PDFStream {
+function buildStampAppearance(annot: StampAnnotation, objects: Map<string, PDFObject>, minimumObjectNumber: number): PDFStream {
   const { rect, color, stampName } = annot;
   const w = rect.width;
   const h = rect.height;
@@ -587,7 +588,7 @@ function buildStampAppearance(annot: StampAnnotation): PDFStream {
   helvetica.set('Type', new PDFName('Font'));
   helvetica.set('Subtype', new PDFName('Type1'));
   helvetica.set('BaseFont', new PDFName('Helvetica'));
-  fontDict.set('Helv', helvetica);
+  fontDict.set('Helv', registerFontObject(objects, helvetica, minimumObjectNumber));
   const resources = new PDFDict();
   resources.set('Font', fontDict);
   stream.dict.set('Resources', resources);

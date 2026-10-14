@@ -112,6 +112,9 @@ Keep injected source bytes immutable while the document uses them.
   from hmtx to 1000/em, and a symbolic FontDescriptor (Flags 4). `/FontFile2`
   contains the Flate-compressed subset and an uncompressed `/Length1`.
   Six-letter subset tags prefix `NotoSansSC`.
+  Descriptor ascent/descent use signed `hhea` metrics (OS/2 typo metrics when
+  absent), and `head` bounds are scaled to 1000/em. Cap height comes from OS/2
+  when positive, italic angle from `post`, and StemV defaults to 80.
 - Compact two-byte CIDs identify Unicode scalars, not UTF-8 bytes or guessed
   glyph IDs. `/ToUnicode` maps every used CID to UTF-16BE, including surrogate
   pairs for supplementary scalars, in bounded bfchar blocks.
@@ -121,6 +124,9 @@ Keep injected source bytes immutable while the document uses them.
   compact-CID graph. The full source font remains available for new glyphs.
   Concurrent preparations are serialized; restored object graphs invalidate
   stale subset coverage.
+- Newly added Standard 14 page, annotation, signature, and AcroForm resource
+  fonts are indirect objects. Their references remain resolvable across full
+  and explicitly incremental saves, including the worker bridge.
 
 Only used outlines, composite dependencies, retained metrics/hinting/metadata,
 and the PDF font graph increase exported PDF size—not the entire source font.
@@ -131,6 +137,10 @@ The asset is distributed under SIL OFL-1.1; its copyright and license are in
 to the OFL font-software license.
 
 #### Commit, layout, and save behavior
+
+New Add Text Box placeholders are selected in full on their first focus.
+The creation-only selection is consumed once; existing boxes retain native
+caret and focus behavior.
 
 Preparation validates coverage, builds the subset, and compresses it before
 publishing PDF objects. Load, parse, subset, or compression failures become

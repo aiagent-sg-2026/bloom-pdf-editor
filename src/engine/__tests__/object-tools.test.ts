@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { insertTextRun } from '../editor/text-editor';
 import { createRGBAImageObjects } from '../editor/image-editor';
+import { resolveRef } from '../parser/parser';
 import { PDFDict, PDFName, PDFNumber, PDFRef, PDFStream, type PDFObject, type PDFPageInfo } from '../types';
 
 function page(): { page: PDFPageInfo; objects: Map<string, PDFObject> } {
@@ -29,8 +30,12 @@ describe('object insertion exports', () => {
     expect(source).not.toContain('NaN');
     expect(source).not.toMatch(/\d m S/);
     expect(source).toMatch(/ET\n[\d.]+ w\n[\d.-]+ [\d.-]+ m [\d.-]+ [\d.-]+ l S/);
-    const fonts = (p.page.dict.get('Resources') as PDFDict).get('Font') as PDFDict;
-    expect((fonts.get('TimesBoldItalic') as PDFDict).getName('Encoding')).toBe('WinAnsiEncoding');
+    const fonts = resolveRef(p.page.resources.get('Font')!, p.objects) as PDFDict;
+    const fontRef = fonts.get('TimesBoldItalic')!;
+    expect(fontRef).toBeInstanceOf(PDFRef);
+    const font = resolveRef(fontRef, p.objects);
+    expect(font).toBeInstanceOf(PDFDict);
+    expect((font as PDFDict).getName('Encoding')).toBe('WinAnsiEncoding');
     const extGState = ((p.page.dict.get('Resources') as PDFDict).get('ExtGState') as PDFDict).get('TxGS') as PDFDict;
     expect(extGState.getNumber('ca')).toBe(0.5);
     expect(extGState.getNumber('CA')).toBe(0.5);

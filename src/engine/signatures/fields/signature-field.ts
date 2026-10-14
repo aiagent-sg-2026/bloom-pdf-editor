@@ -14,6 +14,7 @@ import {
   type PDFRectangle,
 } from '../../types';
 import { resolveRef } from '../../parser/parser';
+import { registerFontObject } from '../../fonts/font-augmentation';
 import {
   detectFormFieldsOnPage,
   listAllFormWidgets,
@@ -301,7 +302,7 @@ export function ensureAcroFormCatalog(doc: PDFDocumentData): PDFDict {
   helv.set('Type', new PDFName('Font'));
   helv.set('Subtype', new PDFName('Type1'));
   helv.set('BaseFont', new PDFName('Helvetica'));
-  fontDict.set('Helv', helv);
+  fontDict.set('Helv', registerFontObject(doc.objects, helv));
   const dr = new PDFDict();
   dr.set('Font', fontDict);
   acroDict.set('DR', dr);

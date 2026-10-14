@@ -34,7 +34,7 @@ import {
 } from '../types';
 import { resolveRef, resolvePageResources } from '../parser/parser';
 import { loadFont, type FontData, charCodeToUnicode } from '../fonts/font-parser';
-import { ensureFallbackFont } from '../fonts/font-augmentation';
+import { ensureFallbackFont, registerFontObject } from '../fonts/font-augmentation';
 import { ensureBuiltInFallbackFont, getBuiltInFallbackGlyph } from '../fonts/symbol-fallback';
 import { UnsupportedGlyphsError } from '../fonts/unsupported-glyphs';
 import {
@@ -679,9 +679,9 @@ export function insertTextRun(
     helvetica.set('Subtype', new PDFName('Type1'));
     helvetica.set('BaseFont', new PDFName(fontName));
     helvetica.set('Encoding', new PDFName('WinAnsiEncoding'));
-    fontDict.set(resourceName, helvetica);
+    fontDict.set(resourceName, registerFontObject(objects, helvetica));
   }
-  const selectedFont = fontDict.get(resourceName);
+  const selectedFont = resolveRef(fontDict.get(resourceName)!, objects);
   if (selectedFont instanceof PDFDict && !selectedFont.has('Encoding')) {
     selectedFont.set('Encoding', new PDFName('WinAnsiEncoding'));
   }
