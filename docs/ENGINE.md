@@ -41,6 +41,20 @@ Synthetic serialize/reopen regressions:
 
 Synthetic public-decoder regressions: `npm test -- src/engine/__tests__/image-decoder.test.ts`.
 
+### Content-stream edit integrity
+
+Parsed inline images retain their original `BI` dictionary, `ID` separator,
+binary payload, and `EI` terminator as a byte view of the input stream. Keep
+that input immutable. Both instruction compilation and pretty-printing copy
+the image bytes unchanged; TJ normalization uses the same compilation path.
+Unfiltered images with known sample dimensions skip embedded `EI` samples.
+Filtered images and resource-defined colour spaces still use delimiter scanning.
+
+String-only edits preserve `'` and `"` operators, including the word/character
+spacing operands of `"`. Rewrites that split a quote show across fallback fonts
+emit explicit `Tw`/`Tc` for `"` and `T*` before showing the replacement text.
+Empty grouped quote siblings retain their line movement and spacing state.
+
 ### Text-edit backgrounds
 
 Complete text-operator rewrites do not paint an erase rectangle. Replacing

@@ -33,6 +33,8 @@ export interface CSInstruction {
   operands: PDFObject[];
   /** Byte offset of the operator in the content stream */
   offset: number;
+  /** Original BI dictionary, ID separator, binary data and EI terminator. */
+  inlineImageBytes?: Uint8Array;
 }
 
 // ─── Operator classification ────────────────────────────────────────────────
@@ -142,6 +144,7 @@ export function parseContentStream(data: Uint8Array): CSInstruction[] {
             operator: 'BI',
             operands: inlineImg ? [inlineImg] : [],
             offset,
+            inlineImageBytes: inlineImg ? data.subarray(offset, lexer.position) : undefined,
           });
           operandStack.length = 0;
           break;
@@ -278,10 +281,11 @@ function parseCSDictionary(lexer: PDFLexer): PDFDict {
 
 /**
  * Parse an inline image (BI ... ID <data> EI).
- * Returns a PDFDict containing the image dictionary and a __rawData property.
+ * Returns the image dictionary with offsets into the original stream.
  */
 function parseInlineImage(lexer: PDFLexer, data: Uint8Array): PDFDict | null {
   const dict = new PDFDict();
+  let foundData = false;
 
   // Parse key-value pairs until 'ID' keyword
   while (!lexer.isEOF) {
@@ -290,8 +294,11 @@ function parseInlineImage(lexer: PDFLexer, data: Uint8Array): PDFDict | null {
     if (!token) return null;
 
     if (token.type === TokenType.Keyword && token.value === 'ID') {
-      // Skip exactly one byte of whitespace after ID
-      lexer.position += 1;
+      // CRLF is one end-of-line separator, not a leading image sample.
+      const separator = lexer.position;
+      if (!isInlineImageWhitespace(data[separator])) return null;
+      lexer.position += data[separator] === 0x0d && data[separator + 1] === 0x0a ? 2 : 1;
+      foundData = true;
       break;
     }
 
@@ -320,33 +327,59 @@ function parseInlineImage(lexer: PDFLexer, data: Uint8Array): PDFDict | null {
     }
   }
 
-  // Read image data until we find 'EI'
+  if (!foundData) return null;
+
   const startPos = lexer.position;
-  const eiPos = lexer.searchForward('EI', startPos);
-
-  if (eiPos === -1) return null;
-
-  // Verify EI is preceded by whitespace (to avoid matching inside data)
-  let actualEiPos = eiPos;
-  while (actualEiPos > startPos) {
-    const prevByte = data[actualEiPos - 1];
-    if (prevByte === 0x0a || prevByte === 0x0d || prevByte === 0x20) {
+  // Known unfiltered sample lengths keep even whitespace-delimited EI samples
+  // inside the payload. Filtered/resource colour spaces need delimiter scanning.
+  const sampleLength = inlineImageSampleLength(dict);
+  let actualEiPos = lexer.searchForward('EI', startPos + (sampleLength ?? 0));
+  while (actualEiPos !== -1) {
+    const after = actualEiPos + 2;
+    if (actualEiPos > startPos && isInlineImageWhitespace(data[actualEiPos - 1])
+      && (after === data.length || isInlineImageWhitespace(data[after]))) {
       break;
     }
-    // Search for next EI
-    const nextEi = lexer.searchForward('EI', actualEiPos + 2);
-    if (nextEi === -1) break;
-    actualEiPos = nextEi;
+    actualEiPos = lexer.searchForward('EI', after);
   }
+  if (actualEiPos === -1) return null;
 
-  const imageData = data.slice(startPos, actualEiPos);
-  lexer.position = actualEiPos + 2; // past 'EI'
-
-  // Store raw image data as a hex string representation
+  lexer.position = actualEiPos + 2;
+  // Keep the existing data range, including the separator preceding EI.
   dict.set('__imageDataOffset', new PDFNumber(startPos));
-  dict.set('__imageDataLength', new PDFNumber(imageData.length));
+  dict.set('__imageDataLength', new PDFNumber(actualEiPos - startPos));
 
   return dict;
+}
+
+/** PDF whitespace includes NUL, tab and form feed as well as line endings. */
+function isInlineImageWhitespace(byte: number): boolean {
+  return byte === 0 || byte === 9 || byte === 10 || byte === 12 || byte === 13 || byte === 32;
+}
+
+const INLINE_IMAGE_COMPONENTS: Record<string, number> = {
+  DeviceGray: 1, DeviceRGB: 3, DeviceCMYK: 4,
+};
+
+function inlineImageSampleLength(dict: PDFDict): number | null {
+  if (dict.has('Filter')) return null;
+  const width = dict.get('Width');
+  const height = dict.get('Height');
+  const mask = dict.get('ImageMask');
+  const isMask = mask instanceof PDFBoolean && mask.value;
+  const bitsObject = dict.get('BitsPerComponent');
+  const bits = isMask ? 1 : bitsObject instanceof PDFNumber ? bitsObject.value : 0;
+  const colorSpace = dict.get('ColorSpace');
+  const components = isMask ? 1 : colorSpace instanceof PDFName
+    ? INLINE_IMAGE_COMPONENTS[colorSpace.name]
+    : undefined;
+  if (!(width instanceof PDFNumber) || !(height instanceof PDFNumber)
+    || !components
+    || !Number.isSafeInteger(width.value) || width.value <= 0
+    || !Number.isSafeInteger(height.value) || height.value <= 0
+    || !Number.isSafeInteger(bits) || bits <= 0) return null;
+  const length = Math.ceil(width.value * components * bits / 8) * height.value;
+  return Number.isSafeInteger(length) ? length : null;
 }
 
 /**
