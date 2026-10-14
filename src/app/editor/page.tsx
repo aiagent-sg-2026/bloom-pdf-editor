@@ -25,6 +25,7 @@ import {
 import { buildDisplayListIndex, hitTestDisplayList, isSelectableDisplayItem, EditorHistory, captureHistoryEntry, restoreAnnotSnapshot, restoreDocumentStructure, parseOverlaySnapshot, deleteObject, visualFontSize, resolveRunStyleFlags, transformObject, applyObjectTransform, distributeTextChangeToSegments, segmentAtIndex, createVisualSignature, hitTestSignature, moveSignature, resizeSignature, rotateSignature, setSignatureOpacity, setSignatureLocked, deleteSignature, updateSignature, visualSignatureToImagePlacement, getSignatureLibrary, DEFAULT_SIGNATURE_SIZE, detectSignatureFieldsOnPage, hitTestSignatureField, createSignatureFieldAtPoint, applySignatureFieldAppearanceAsync, getCertificateManager, signDocumentCryptographic, validateDocumentSignatures, enableLongTermValidation, getLtvStatus, listManagedSignatures, buildRevisionViewer, lockSignaturesAfterSigning, pushRecentSignatureId, orderLibraryByRecent, SIGNATURE_SHORTCUTS } from '@/engine/browser-core';
 import type { QuadTree, SelectableItem, EditableObject } from '@/engine/browser-core';
 import { findMatchingFlowLine } from './flowLineMatch';
+import { commitThenCleanup } from './commit-after-success';
 
 import { Toolbar } from './components/Toolbar';
 import { ToolsSidebar } from './components/ToolsSidebar';
@@ -3100,9 +3101,10 @@ export default function EditorPage() {
       currentObjNum += 2;
     }
 
+    let newContentBytes: Uint8Array;
     if (fTexts.length > 0 || fImages.length > 0 || signaturePlacements.length > 0) {
-      let contentBytes = engine.getPageContentBytes(page, doc.objects);
-      let newContentBytes: any = new Uint8Array(contentBytes);
+      const contentBytes = engine.getPageContentBytes(page, doc.objects);
+      newContentBytes = new Uint8Array(contentBytes);
 
       for (const ft of fTexts) {
         if (!ft.text.trim()) continue;
@@ -3144,23 +3146,32 @@ export default function EditorPage() {
         newContentBytes = b;
       }
 
-      // Must finish before the caller saves — otherwise Download exports without the new text/images.
-      await engine.updatePageContent(page.contentRefs, newContentBytes, doc.objects);
     }
 
-    const clearedOverlays = { drawnPaths: [] as DrawnPath[], floatingTexts: [] as FloatingText[], floatingImages: [] as FloatingImage[] };
-    setDrawnPaths([]);
-    setFloatingTexts([]);
-    setFloatingImages([]);
-    setActiveFloatingTextId(null);
-    setActiveFloatingImageId(null);
-    const committedSignatureIds = new Set(signaturePlacements.map((signature) => signature.signatureId));
-    const remainingSignatures = signaturesRef.current.filter((signature) => !committedSignatureIds.has(signature.id));
-    setSignatures(remainingSignatures);
-    signaturesRef.current = remainingSignatures;
-    pushEditorHistory('commit-drawings', { ...clearedOverlays, signatures: remainingSignatures }, undefined, true);
-    setIsDirty(true);
-    setRenderKey(k => k + 1);
+    await commitThenCleanup(
+      async () => {
+        if (fTexts.length > 0 || fImages.length > 0 || signaturePlacements.length > 0) {
+          // Must finish before the caller saves — otherwise Download exports without the new text/images.
+          await engine.updatePageContent(page.contentRefs, newContentBytes, doc.objects);
+        }
+      },
+      () => {
+        const clearedOverlays = { drawnPaths: [] as DrawnPath[], floatingTexts: [] as FloatingText[], floatingImages: [] as FloatingImage[] };
+        setDrawnPaths([]);
+        setFloatingTexts([]);
+        setFloatingImages([]);
+        setActiveFloatingTextId(null);
+        setActiveFloatingImageId(null);
+        const committedSignatureIds = new Set(signaturePlacements.map((signature) => signature.signatureId));
+        const remainingSignatures = signaturesRef.current.filter((signature) => !committedSignatureIds.has(signature.id));
+        setSignatures(remainingSignatures);
+        signaturesRef.current = remainingSignatures;
+        pushEditorHistory('commit-drawings', { ...clearedOverlays, signatures: remainingSignatures }, undefined, true);
+        setIsDirty(true);
+        setRenderKey(k => k + 1);
+      },
+    );
+
   }, [doc, currentPage, drawnPaths, floatingTexts, floatingImages, scale, renderResult, pushEditorHistory]);
 
   const strokeShapePreview = useCallback((
