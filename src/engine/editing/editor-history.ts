@@ -20,6 +20,7 @@ import {
   type PDFObject,
 } from '../types';
 import { getPageContentBytes, resolvePageResources } from '../parser/parser';
+import { bindPageContentRefs } from '../editor/stream-compiler';
 
 export interface OverlaySnapshot {
   drawnPathsJson: string;
@@ -362,7 +363,7 @@ export async function restoreDocumentStructure(
     const dict = clonePDFObject(state.pageDict) as PDFDict;
     doc.objects.set(state.pageKey, dict);
     const refs = state.contentRefs.map(parseRefKey);
-    return {
+    return bindPageContentRefs({
       index: state.pageIndex,
       dict,
       mediaBox: { ...state.mediaBox },
@@ -371,12 +372,15 @@ export async function restoreDocumentStructure(
       ref,
       resources: resolvePageResources(dict, doc.objects),
       contentRefs: refs,
-    };
+    });
   });
   for (const state of snapshot.pages) {
     const page = doc.pages[state.pageIndex];
     if (page) {
-      await updatePageContent(page.contentRefs, state.contentBytes, doc.objects);
+      // An empty snapshot must retain the absence of /Contents, not create a new stream.
+      if (page.contentRefs.length > 0) {
+        await updatePageContent(page.contentRefs, state.contentBytes, doc.objects);
+      }
       restoreAnnotSnapshot(page.dict, doc.objects, state.annotSnapshot);
     }
   }

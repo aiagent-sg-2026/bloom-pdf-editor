@@ -4,6 +4,7 @@ import type { ImageItem } from '../content/interpreter';
 import { getResource, resolvePageResources, resolveRef } from '../parser/parser';
 import { isolateBaseCtm } from './content-append';
 import { flateEncode } from '../parser/filters';
+import { getNextObjNum as nextObjectNumber } from '../writer/serializer';
 
 export interface ImageRunOptions {
   rotationDegrees?: number;
@@ -208,13 +209,43 @@ function addImageOpacityGraphicsState(page: PDFPageInfo, objects: Map<string, PD
 function formatNumber(value: number): string {
   return Number(value.toFixed(10)).toString();
 }
+/** Count resource entries per page/form scope, including shared resource dictionaries. */
+function imageIsShared(doc: PDFDocumentData, image: PDFStream): boolean {
+  let uses = 0;
+  const forms = new Set<PDFStream>();
+  const countResources = (resources: PDFDict): boolean => {
+    const entry = resources.get('XObject');
+    const xobjects = entry ? resolveRef(entry, doc.objects) : undefined;
+    if (!(xobjects instanceof PDFDict)) return false;
+    for (const value of xobjects.values()) {
+      const object = resolveRef(value, doc.objects);
+      if (object === image && ++uses > 1) return true;
+      if (object instanceof PDFStream && object.dict.getName('Subtype') === 'Form') forms.add(object);
+    }
+    return false;
+  };
+  for (const page of doc.pages) {
+    if (countResources(page.resources)) return true;
+  }
+  // Forms can hold image references even when absent from the edited page's resources.
+  for (const object of doc.objects.values()) {
+    if (object instanceof PDFStream && object.dict.getName('Subtype') === 'Form') forms.add(object);
+  }
+  for (const form of forms) {
+    const entry = form.dict.get('Resources');
+    const resources = entry ? resolveRef(entry, doc.objects) : undefined;
+    if (resources instanceof PDFDict && countResources(resources)) return true;
+  }
+  return false;
+}
+
 
 /**
  * Replace an embedded image's pixel data while keeping the same placement
- * (cm / Do / bbox). The content stream is untouched — only the XObject stream
- * and Width/Height dictionary entries are updated.
+ * (cm / Do / bbox). Shared streams are replaced through page-local resource entries;
+ * single-use streams keep their object identity and indirect reference.
  *
- * @param imageDataUrl must be image/jpeg
+ * @param imageDataUrl JPEG or PNG data URL
  */
 export async function replaceImageXObject(
   doc: PDFDocumentData,
@@ -251,28 +282,53 @@ export async function replaceImageXObject(
   const trueWidth = img.naturalWidth;
   const trueHeight = img.naturalHeight;
 
-  if (imageDataUrl.startsWith('data:image/png') && getNextObjNum) {
+  // Reserve numbers locally: callers may compute max(objects) without reserving objects.
+  let nextObjNum = nextObjectNumber(doc);
+  const allocate = (): number => {
+    const objNum = Math.max(nextObjNum, getNextObjNum?.() ?? nextObjNum);
+    nextObjNum = objNum + 1;
+    return objNum;
+  };
+  let replacement: PDFStream;
+  let replacementRef: PDFRef | undefined;
+  if (imageDataUrl.startsWith('data:image/png')) {
     const canvas = document.createElement('canvas'); canvas.width = trueWidth; canvas.height = trueHeight;
     const ctx = canvas.getContext('2d'); if (!ctx) throw new Error('Canvas 2D context unavailable');
     ctx.drawImage(img, 0, 0);
-    const built = await createRGBAImageObjects(new Uint8Array(ctx.getImageData(0, 0, trueWidth, trueHeight).data), trueWidth, trueHeight, getNextObjNum);
+    const built = await createRGBAImageObjects(new Uint8Array(ctx.getImageData(0, 0, trueWidth, trueHeight).data), trueWidth, trueHeight, allocate);
     if (built.smaskRef && built.smask) doc.objects.set(built.smaskRef.toKey(), built.smask);
-    xobj.rawBytes = built.image.rawBytes;
-    xobj.decodedBytes = null;
-    for (const [key, value] of built.image.dict.entries()) xobj.dict.set(key, value);
+    replacement = built.image;
+    replacementRef = built.imageRef;
+  } else {
+    const dict = new PDFDict();
+    dict.set('Type', new PDFName('XObject'));
+    dict.set('Subtype', new PDFName('Image'));
+    dict.set('Width', new PDFNumber(trueWidth));
+    dict.set('Height', new PDFNumber(trueHeight));
+    dict.set('ColorSpace', new PDFName('DeviceRGB'));
+    dict.set('BitsPerComponent', new PDFNumber(8));
+    dict.set('Filter', new PDFName('DCTDecode'));
+    dict.set('Length', new PDFNumber(imageBytes.length));
+    replacement = new PDFStream(dict, imageBytes);
+  }
+
+  if (imageIsShared(doc, xobj)) {
+    const ref = replacementRef ?? new PDFRef(allocate(), 0);
+    const resources = new PDFDict([...page.resources.entries()]);
+    const entry = resources.get('XObject');
+    const previous = entry ? resolveRef(entry, doc.objects) : undefined;
+    const xobjects = new PDFDict(previous instanceof PDFDict ? [...previous.entries()] : []);
+    xobjects.set(name, ref);
+    resources.set('XObject', xobjects);
+    doc.objects.set(ref.toKey(), replacement);
+    page.dict.set('Resources', resources);
+    page.resources = resources;
     return;
   }
 
-  xobj.dict.set('Width', new PDFNumber(trueWidth));
-  xobj.dict.set('Height', new PDFNumber(trueHeight));
-  xobj.dict.set('ColorSpace', new PDFName('DeviceRGB'));
-  xobj.dict.set('BitsPerComponent', new PDFNumber(8));
-  xobj.dict.set('Filter', new PDFName('DCTDecode'));
-  xobj.dict.set('Length', new PDFNumber(imageBytes.length));
-  // Drop filters that don't apply to the new JPEG bytes
-  xobj.dict.delete('DecodeParms');
-  xobj.dict.delete('SMask');
-
-  xobj.rawBytes = imageBytes;
+  // Rebuild from the new encoding's keys; no old masks, Decode, or external filters survive.
+  for (const key of xobj.dict.keys()) xobj.dict.delete(key);
+  for (const [key, value] of replacement.dict.entries()) xobj.dict.set(key, value);
+  xobj.rawBytes = replacement.rawBytes;
   xobj.decodedBytes = null;
 }

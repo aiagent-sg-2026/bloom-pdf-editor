@@ -93,6 +93,21 @@ unreachable ← nodes \ reachable
 - Multiple revisions → GC on merged object map only; raw incremental bytes separate
 - Zero-byte streams → skipped in dedup
 
+### Editing and save invariants
+
+- Pages parsed, hydrated, restored from history, or copied between documents retain
+  ownership of empty content-reference arrays. The first content update allocates
+  an indirect stream and attaches `/Contents` to the page dictionary. Explicit
+  incremental saves include both objects; optimized saves retain the stream
+  through the new page reference.
+- Undo of an originally contentless page restores the absence of `/Contents`.
+  It must not compile an empty snapshot into a new stream.
+- Image resource entries can share one stream across names, pages, and forms.
+  Replacement uses a new image object and page-local resource membership when
+  shared, but retains the original stream/reference for a single-use image.
+  New encoding dictionaries contain only newly generated keys; opaque PNGs have
+  no soft mask, and PNGs with alpha reference a newly generated mask.
+
 ## Testing Strategy
 
 - Chain A→B→C, root A: GC keeps A,B,C

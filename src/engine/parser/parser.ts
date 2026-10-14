@@ -16,6 +16,7 @@
 import { PDFLexer, TokenType } from './lexer';
 import { buildFullXref, parseObject as parseObjectFromXref } from './xref';
 import { applyFilters } from './filters';
+import { bindPageContentRefs } from '../editor/stream-compiler';
 import {
   PDFArray,
   PDFBoolean,
@@ -705,7 +706,7 @@ function collectPages(
     const contentsObj = node.get('Contents');
     const contentRefs = extractContentRefs(contentsObj, resolve);
 
-    pages.push({
+    pages.push(bindPageContentRefs({
       index: pageIndex,
       dict: node,
       mediaBox,
@@ -714,7 +715,7 @@ function collectPages(
       ref: nodeRef,
       resources,
       contentRefs,
-    });
+    }));
   } else if (type === 'Pages') {
     // Intermediate node — recurse into Kids
     const kidsObj = node.get('Kids');
