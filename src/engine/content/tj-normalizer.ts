@@ -69,10 +69,21 @@ export function explodeTJGaps(
   let fontSize = 12;
   let hScale = 1;
   let rise = 0;
+  let leading = 0;
   const ctmStack: Matrix[] = [];
+  let dirtyLineMatrix: { absolute: Matrix; original: Matrix } | undefined;
 
   for (let i = 0; i < instructions.length; i++) {
     const inst = instructions[i];
+    // An exploded piece replaces both the text and line matrices. Keep that
+    // replacement until the original stream moves to another line; text-show
+    // operators only advance the text matrix and must not trigger restoration.
+    if (dirtyLineMatrix && LINE_MOVE_OPS.has(inst.operator)) {
+      const [tx, ty] = restoreDelta(dirtyLineMatrix.absolute, dirtyLineMatrix.original);
+      out.push({ operator: 'Td', operands: [new PDFNumber(tx), new PDFNumber(ty)], offset: inst.offset });
+      dirtyLineMatrix = undefined;
+    }
+
     if (inst.operator === 'q') ctmStack.push({ ...ctm });
     else if (inst.operator === 'Q' && ctmStack.length) ctm = ctmStack.pop()!;
     else if (inst.operator === 'cm') {
@@ -84,15 +95,24 @@ export function explodeTJGaps(
       hScale = (inst.operands[0] instanceof PDFNumber ? inst.operands[0].value : 100) / 100;
     } else if (inst.operator === 'Ts') {
       rise = inst.operands[0] instanceof PDFNumber ? inst.operands[0].value : 0;
+    } else if (inst.operator === 'TL') {
+      leading = inst.operands[0] instanceof PDFNumber ? inst.operands[0].value : leading;
     } else if (inst.operator === 'Tm') {
       const n = inst.operands.map(o => o instanceof PDFNumber ? o.value : 0);
       lineMatrix = { a: n[0], b: n[1], c: n[2], d: n[3], e: n[4], f: n[5] };
+      dirtyLineMatrix = undefined;
     } else if (inst.operator === 'Td' || inst.operator === 'TD') {
       const tx = inst.operands[0] instanceof PDFNumber ? inst.operands[0].value : 0;
       const ty = inst.operands[1] instanceof PDFNumber ? inst.operands[1].value : 0;
       lineMatrix = multiply(translation(tx, ty), lineMatrix);
+      if (inst.operator === 'TD') leading = -ty;
+    } else if (inst.operator === 'T*' || inst.operator === "'" || inst.operator === '"') {
+      lineMatrix = multiply(translation(0, -leading), lineMatrix);
     } else if (inst.operator === 'BT') {
       lineMatrix = { a: 1, b: 0, c: 0, d: 1, e: 0, f: 0 };
+      dirtyLineMatrix = undefined;
+    } else if (inst.operator === 'ET') {
+      dirtyLineMatrix = undefined;
     }
 
     if (inst.operator !== 'TJ' || !(inst.operands[0] instanceof PDFArray)) {
@@ -147,33 +167,17 @@ export function explodeTJGaps(
         out.push({ operator: 'TJ', operands: [new PDFArray(operands)], offset: inst.offset });
       }
     }
-    // The next line-moving operator is relative to the ORIGINAL line matrix, which our absolute
-    // Tm pieces replaced. Look past state-only operators (Tf, Tc, rg, ...) to find it; stop at
-    // anything that shows text or sets the text matrix itself.
-    if (nextLineMove(instructions, i + 1)) {
-      const last = run.glyphs[starts[starts.length - 1]]?.tRm;
-      if (last) {
-        const tState: Matrix = { a: fontSize * hScale, b: 0, c: 0, d: fontSize, e: 0, f: rise };
-        const lastText = multiply(multiply(inverse(tState), last), inverse(ctm));
-        const [tx, ty] = restoreDelta(lastText, lineMatrix);
-        out.push({ operator: 'Td', operands: [new PDFNumber(tx), new PDFNumber(ty)], offset: inst.offset });
-      }
+    const last = run.glyphs[starts[starts.length - 1]]?.tRm;
+    if (last) {
+      const tState: Matrix = { a: fontSize * hScale, b: 0, c: 0, d: fontSize, e: 0, f: rise };
+      const lastText = multiply(multiply(inverse(tState), last), inverse(ctm));
+      dirtyLineMatrix = { absolute: lastText, original: { ...lineMatrix } };
     }
   }
   return splitBytesEqual(out, instructions) ? contentBytes : compileInstructions(out);
 }
 
 const LINE_MOVE_OPS = new Set(['Td', 'TD', 'T*', "'", '"']);
-const TEXT_BARRIER_OPS = new Set(['Tm', 'BT', 'ET', 'Tj', 'TJ']);
-
-function nextLineMove(instructions: CSInstruction[], from: number): boolean {
-  for (let k = from; k < instructions.length; k++) {
-    const op = instructions[k].operator;
-    if (LINE_MOVE_OPS.has(op)) return true;
-    if (TEXT_BARRIER_OPS.has(op)) return false;
-  }
-  return false;
-}
 
 function splitBytesEqual(out: CSInstruction[], original: CSInstruction[]): boolean {
   return out.length === original.length && out.every((x, i) => x === original[i]);
