@@ -66,6 +66,8 @@ export interface FontData {
   ttfFont?: TTFFont | null;
   /** Raw font file bytes (for CSS FontFace registration) */
   fontBytes?: Uint8Array | null;
+  /** Binary CID -> subset GID mapping for positioned outline rendering. */
+  cidToGidMap?: Uint8Array;
   /** Font descriptor metrics */
   ascent?: number;
   descent?: number;
@@ -480,6 +482,7 @@ function loadDescendantFont(
     if (resolved instanceof PDFStream) {
       // Binary map: each 2-byte entry maps CID index to glyph ID
       const mapData = resolved.getBytes();
+      fontData.cidToGidMap = mapData;
       if (fontData.ttfFont && mapData.length >= 2) {
         for (let cid = 0; cid < mapData.length / 2; cid++) {
           const gid = (mapData[cid * 2] << 8) | mapData[cid * 2 + 1];

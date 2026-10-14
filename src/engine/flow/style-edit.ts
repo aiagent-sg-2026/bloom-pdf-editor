@@ -716,6 +716,9 @@ export function applyStyleToSelection(
   const end = Math.max(start, Math.min(selectionEnd, line.text.length));
   // Collapsed ranges are a no-op here — callers must expand to a segment/line first.
   const hits = end > start ? mapSelectionToSegments(line, start, end) : [];
+  if (hits.some(hit => hit.segment.run.actualText)) {
+    throw new Error('Per-glyph styles cannot be changed on exported shaped text; add a new text box instead.');
+  }
   if (hits.length === 0) {
     return {
       newContentBytes: contentBytes,

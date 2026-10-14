@@ -122,13 +122,15 @@ function buildName(name: string, original?: Uint8Array): Uint8Array {
   return bytes;
 }
 
-/** Static TrueType outlines only; layout tables are deliberately omitted (no shaping). */
+/** Static TrueType outlines; shaping happens before subsetting, so layout tables are omitted. */
 export function subsetTrueType(
   data: Uint8Array,
   codePoints: Iterable<number>,
   subsetName = 'ABCDEF+NotoSansSC',
   /** Reuse parsed metrics for repeated subsets of the same immutable source bytes. */
   parsedFont?: TTFFont,
+  /** Additional source GIDs produced by shaping, independent of the Unicode cmap. */
+  glyphIds: Iterable<number> = [],
 ): TrueTypeSubset {
   const source = view(data);
   if (data.length < 12 || ![0x00010000, 0x74727565].includes(source.getUint32(0))) {
@@ -169,6 +171,10 @@ export function subsetTrueType(
     const gid = font.cmapEntries.get(cp) ?? 0;
     if (!gid || gid >= font.numGlyphs) throw new Error(`Missing glyph for U+${cp.toString(16)}`);
     mapping.set(cp, gid); used.add(gid);
+  }
+  for (const gid of glyphIds) {
+    if (!Number.isInteger(gid) || gid < 0 || gid >= font.numGlyphs) throw new Error('Invalid glyph ID');
+    used.add(gid);
   }
   const components = (gid: number, visit: (gid: number, offset: number) => void) => {
     const bytes = glyphs.subarray(offsets[gid], offsets[gid + 1]);

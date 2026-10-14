@@ -1,17 +1,32 @@
 import { UnsupportedGlyphsError } from './unsupported-glyphs';
 
-export type ScriptFontId = 'sc' | 'tc' | 'jp' | 'kr' | 'latin';
-export type HanFontId = Exclude<ScriptFontId, 'latin'>;
+export type ShapingFontId = 'thai' | 'devanagari' | 'bengali' | 'tamil' | 'telugu' | 'kannada' | 'malayalam' | 'gujarati' | 'gurmukhi';
+export type HanFontId = 'sc' | 'tc' | 'jp' | 'kr';
+export type ScriptFontId = HanFontId | 'latin' | ShapingFontId;
+export const SHAPING_SCRIPTS = {
+  thai: 'Thai', devanagari: 'Deva', bengali: 'Beng', tamil: 'Taml', telugu: 'Telu',
+  kannada: 'Knda', malayalam: 'Mlym', gujarati: 'Gujr', gurmukhi: 'Guru',
+} as const;
+export function isShapingFont(id: ScriptFontId): id is ShapingFontId { return id in SHAPING_SCRIPTS; }
 export interface ScriptFontOptions { preferredHanFont?: HanFontId }
 export interface ScriptFontRun { fontId: ScriptFontId; text: string }
 
-/** Static glyf assets; no layout/shaping tables are required by this export path. */
+/** Static glyf assets; complex-script sources retain GSUB/GPOS for shaping. */
 export const SCRIPT_FONTS = {
   sc: { assetPath: '/fonts/NotoSansSC-Regular.ttf', licensePath: '/fonts/NotoSansSC-OFL.txt', baseFont: 'NotoSansSC' },
   tc: { assetPath: '/fonts/NotoSansTC-Regular.ttf', licensePath: '/fonts/NotoSansTC-OFL.txt', baseFont: 'NotoSansTC' },
   jp: { assetPath: '/fonts/NotoSansJP-Regular.ttf', licensePath: '/fonts/NotoSansJP-OFL.txt', baseFont: 'NotoSansJP' },
   kr: { assetPath: '/fonts/NotoSansKR-Regular.ttf', licensePath: '/fonts/NotoSansKR-OFL.txt', baseFont: 'NotoSansKR' },
   latin: { assetPath: '/fonts/NotoSans-Regular.ttf', licensePath: '/fonts/NotoSans-OFL.txt', baseFont: 'NotoSans' },
+  thai: { assetPath: '/fonts/NotoSansThai-Regular.ttf', licensePath: '/fonts/NotoSansThai-OFL.txt', baseFont: 'NotoSansThai' },
+  devanagari: { assetPath: '/fonts/NotoSansDevanagari-Regular.ttf', licensePath: '/fonts/NotoSansDevanagari-OFL.txt', baseFont: 'NotoSansDevanagari' },
+  bengali: { assetPath: '/fonts/NotoSansBengali-Regular.ttf', licensePath: '/fonts/NotoSansBengali-OFL.txt', baseFont: 'NotoSansBengali' },
+  tamil: { assetPath: '/fonts/NotoSansTamil-Regular.ttf', licensePath: '/fonts/NotoSansTamil-OFL.txt', baseFont: 'NotoSansTamil' },
+  telugu: { assetPath: '/fonts/NotoSansTelugu-Regular.ttf', licensePath: '/fonts/NotoSansTelugu-OFL.txt', baseFont: 'NotoSansTelugu' },
+  kannada: { assetPath: '/fonts/NotoSansKannada-Regular.ttf', licensePath: '/fonts/NotoSansKannada-OFL.txt', baseFont: 'NotoSansKannada' },
+  malayalam: { assetPath: '/fonts/NotoSansMalayalam-Regular.ttf', licensePath: '/fonts/NotoSansMalayalam-OFL.txt', baseFont: 'NotoSansMalayalam' },
+  gujarati: { assetPath: '/fonts/NotoSansGujarati-Regular.ttf', licensePath: '/fonts/NotoSansGujarati-OFL.txt', baseFont: 'NotoSansGujarati' },
+  gurmukhi: { assetPath: '/fonts/NotoSansGurmukhi-Regular.ttf', licensePath: '/fonts/NotoSansGurmukhi-OFL.txt', baseFont: 'NotoSansGurmukhi' },
 } as const;
 
 const chains: Record<ScriptFontId, readonly ScriptFontId[]> = {
@@ -20,6 +35,8 @@ const chains: Record<ScriptFontId, readonly ScriptFontId[]> = {
   jp: ['jp', 'sc', 'tc', 'kr'],
   kr: ['kr', 'sc', 'tc', 'jp'],
   latin: ['latin', 'sc', 'tc', 'jp', 'kr'],
+  thai: ['thai'], devanagari: ['devanagari'], bengali: ['bengali'], tamil: ['tamil'],
+  telugu: ['telugu'], kannada: ['kannada'], malayalam: ['malayalam'], gujarati: ['gujarati'], gurmukhi: ['gurmukhi'],
 };
 export function fontFallbackChain(id: ScriptFontId): readonly ScriptFontId[] { return chains[id]; }
 
@@ -39,7 +56,18 @@ const latin = /\p{Script=Latin}/u;
 const combining = /[\u0300-\u036f\u1ab0-\u1aff\u1dc0-\u1dff\ufe20-\ufe2f]/u;
 const neutral = /[\u0020-\u007e\p{Separator}\u0009-\u000d\u2000-\u206f\u20a0-\u20cf\u2100-\u2bff]/u;
 const pictograph = /\p{Extended_Pictographic}/u;
+const rtlControl = /[\u061c\u200e\u200f\u202a-\u202e\u2066-\u2069]/u;
 
+const blocks: readonly [number, number, ShapingFontId][] = [
+  [0x0e00, 0x0e7f, 'thai'], [0x0900, 0x097f, 'devanagari'], [0x0980, 0x09ff, 'bengali'],
+  [0x0b80, 0x0bff, 'tamil'], [0x0c00, 0x0c7f, 'telugu'], [0x0c80, 0x0cff, 'kannada'],
+  [0x0d00, 0x0d7f, 'malayalam'], [0x0a80, 0x0aff, 'gujarati'], [0x0a00, 0x0a7f, 'gurmukhi'],
+];
+const shapingCommon = /[\u200c\u200d\u25cc\u0964\u0965]/u;
+function shapingId(ch: string): ShapingFontId | undefined {
+  const cp = ch.codePointAt(0)!;
+  return blocks.find(([start, end]) => cp >= start && cp <= end)?.[2];
+}
 /** Pure script selection; an optional cmap predicate resolves coverage without loading assets. */
 export function splitScriptRuns(
   text: string,
@@ -50,7 +78,16 @@ export function splitScriptRuns(
   const absent: number[] = [];
   for (let i = 0; i < characters.length;) {
     const ch = characters[i];
-    if (kana.test(ch) || hangul.test(ch) || han.test(ch) || cjkPunctuation.test(ch)) {
+    const complex = shapingId(ch);
+    if (complex && !shapingCommon.test(ch)) {
+      selected[i++] = complex;
+    } else if (shapingCommon.test(ch)) {
+      const prior = selected[i - 1];
+      const next = characters.slice(i + 1).find(current => !shapingCommon.test(current));
+      const context = prior && isShapingFont(prior) ? prior : (next && shapingId(next)) || complex;
+      if (!context) absent.push(ch.codePointAt(0)!);
+      selected[i++] = context || 'latin';
+    } else if (kana.test(ch) || hangul.test(ch) || han.test(ch) || cjkPunctuation.test(ch)) {
       let end = i, hasKana = false, hasHangul = false;
       while (end < characters.length) {
         const current = characters[end];
@@ -60,7 +97,7 @@ export function splitScriptRuns(
       const context = hasKana ? 'jp' : hasHangul ? 'kr' : options.preferredHanFont ?? 'sc';
       for (; i < end; i++) selected[i] = kana.test(characters[i]) ? 'jp' : hangul.test(characters[i]) ? 'kr' : context;
     } else {
-      if ((!latin.test(ch) && !combining.test(ch) && !neutral.test(ch) && ch !== '\u0000') || pictograph.test(ch)) {
+      if ((!latin.test(ch) && !combining.test(ch) && !neutral.test(ch) && ch !== '\u0000') || pictograph.test(ch) || rtlControl.test(ch)) {
         absent.push(ch.codePointAt(0)!);
       }
       selected[i++] = 'latin';

@@ -336,6 +336,9 @@ export function applyLineTextEdit(
   flow?: DocumentFlow,
   options?: LineTextEditOptions,
 ): EditResult {
+  if (line.runs.some(run => run.actualText) && newText !== line.text) {
+    throw new Error('Exported shaped text cannot be edited in place; add a new text box instead.');
+  }
   const plan = buildLayoutPlan(flow, line, newText);
   const edits: TextEdit[] = [];
   const oldText = options?.oldText ?? line.text;

@@ -61,6 +61,7 @@ export function resolveRunStyleFlags(
 
 /** Median glyph baseline (PDF y coordinate). */
 export function computeBaseline(run: TextRun): number {
+  if (run.actualTextLayout) return run.actualTextLayout.y;
   if (run.glyphs.length === 0) return run.y;
   const ys = run.glyphs.map(g => g.tRm.f);
   ys.sort((a, b) => a - b);
@@ -68,17 +69,16 @@ export function computeBaseline(run: TextRun): number {
 }
 
 export function getRunBounds(run: TextRun): RunBounds {
-  if (run.glyphs.length === 0) {
+  if (run.glyphs.length === 0 || run.actualTextLayout) {
     const h = run.height || run.fontSize || 12;
+    const { x, y, width } = run.actualTextLayout ?? run;
     return {
-      x: run.x,
-      y: run.y,
-      width: run.width,
+      x, y, width,
       height: h,
-      left: run.x,
-      right: run.x + run.width,
-      top: run.y + h,
-      bottom: run.y,
+      left: x,
+      right: x + width,
+      top: y + h,
+      bottom: y,
     };
   }
 

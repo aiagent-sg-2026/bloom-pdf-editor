@@ -1666,6 +1666,10 @@ export default function EditorPage() {
 
   // ── Begin an edit session with frozen line anchor + undo snapshot ──
   const beginEditSession = useCallback((line: TextLine, caretAt?: number) => {
+    if (line.runs.some(run => run.actualText)) {
+      setGlyphWarning('Exported shaped text cannot be edited in place; add a new text box instead.');
+      return;
+    }
     initialRunTextRef.current = line.text;
     editAnchorLineRef.current = {
       ...line,

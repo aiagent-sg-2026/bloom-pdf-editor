@@ -68,7 +68,7 @@ describe('multi-script Unicode export', () => {
       expect(extractPagePlainText(reopened, 0)).toBe(text);
       const graphs = embeddedFonts(reopened);
       expect([...graphs.keys()].sort()).toEqual([...ids].sort());
-      for (const id of Object.keys(loaders) as ScriptFontId[]) {
+      for (const id of Object.keys(loaders) as (keyof typeof loaders)[]) {
         expect(loaders[id]).toHaveBeenCalledTimes(ids.includes(id) ? 1 : 0);
       }
       for (const [id, font] of graphs) {
@@ -130,7 +130,7 @@ describe('multi-script Unicode export', () => {
     });
   }
 
-  it.each(['สวัสดี', 'नमस्ते', 'العربية', '😀'])('rejects unsupported scripts with exact characters and no PDF mutations: %s', async text => {
+  it.each(['العربية', 'עברית', '😀'])('rejects unsupported scripts with exact characters and no PDF mutations: %s', async text => {
     const doc = unicodeDocument(), before = await serializeDocument(doc);
     await expect(prepareTextForExport(doc.objects, [{ text }], sources())).rejects.toMatchObject({
       name: 'UnsupportedGlyphsError', characters: [...new Set(Array.from(text))],

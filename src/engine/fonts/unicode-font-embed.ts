@@ -9,10 +9,12 @@ import { subsetTrueType } from './ttf-subsetter';
 import { UnsupportedGlyphsError } from './unsupported-glyphs';
 import { parseCMap } from './cmap-parser';
 import {
-  SCRIPT_FONTS, splitScriptRuns, fontFallbackChain,
-  type ScriptFontId, type ScriptFontOptions, type ScriptFontRun,
+  SCRIPT_FONTS, splitScriptRuns, fontFallbackChain, isShapingFont, SHAPING_SCRIPTS,
+  type ScriptFontId, type ScriptFontOptions, type ScriptFontRun, type ShapingFontId,
 } from './script-fonts';
 
+import { prepareShaping, shapeTextSync, type ShapedCluster } from './shaping';
+import type { CSInstruction } from '../content/operator-lexer';
 export type UnicodeFontSource = Uint8Array | (() => Promise<Uint8Array>);
 export type UnicodeFontSources = UnicodeFontSource | Partial<Record<ScriptFontId, UnicodeFontSource>>;
 
@@ -20,6 +22,7 @@ interface EmbeddedFont {
   source: Uint8Array;
   font: TTFFont;
   cids: Map<number, number>;
+  glyphCids?: Map<number, number>;
   name: string;
   refs: PDFRef[];
   modifiedKeys: Set<string>;
@@ -62,6 +65,8 @@ async function loadSource(id: ScriptFontId, source?: UnicodeFontSources): Promis
 }
 /** Recover the engine's compact CID graph after save/reopen, without treating its subset as the source font. */
 function findEmbeddedFont(objects: Map<string, PDFObject>, source: Uint8Array, font: TTFFont, id: ScriptFontId): EmbeddedFont | undefined {
+  // Shaped CIDs identify source GIDs, not scalars. Never reinterpret or rewrite a reopened graph.
+  if (isShapingFont(id)) return undefined;
   for (const [key, value] of objects) {
     if (!(value instanceof PDFDict) || value.getName('Subtype') !== 'Type0' ||
         value.getName('Encoding') !== 'Identity-H') continue;
@@ -98,6 +103,7 @@ function findEmbeddedFont(objects: Map<string, PDFObject>, source: Uint8Array, f
 /** Prepare all required scalars before resource/content mutations. Existing CIDs never change. */
 export async function prepareUnicodeFont(
   objects: Map<string, PDFObject>, codePoints: Iterable<number>, source?: UnicodeFontSource, id: ScriptFontId = 'sc',
+  shapedTexts: readonly string[] = [],
 ): Promise<void> {
   const requested = [...new Set(codePoints)];
   if (!requested.length) return;
@@ -111,12 +117,12 @@ export async function prepareUnicodeFont(
     if (existing && objects.get(existing.refs[3].toKey()) === existing.program &&
         objects.get(existing.refs[5].toKey()) === existing.toUnicode) {
       const { cids } = existing;
-      if (requested.every(cp => cids.has(cp))) return;
+      if (!isShapingFont(id) && requested.every(cp => cids.has(cp))) return;
     }
     try {
       const { bytes, font } = cached ? { bytes: cached.source, font: cached.font } : await loadSource(id, source);
       const absent = requested.filter(cp => !Number.isInteger(cp) || cp < 0 || cp > 0x10ffff ||
-        (cp >= 0xd800 && cp <= 0xdfff) || !(font.cmapEntries.get(cp) ?? 0));
+        (cp >= 0xd800 && cp <= 0xdfff) || (!(font.cmapEntries.get(cp) ?? 0) && !(isShapingFont(id) && (cp === 0x200c || cp === 0x200d))));
       if (absent.length) throw new UnsupportedGlyphsError(absent);
       const os2 = font.tables.get('OS/2');
       if (os2 && os2.length >= 10) {
@@ -126,9 +132,20 @@ export async function prepareUnicodeFont(
       existing ??= findEmbeddedFont(objects, bytes, font, id);
       const cids = new Map(existing?.cids);
       for (const cp of requested) if (!cids.has(cp)) cids.set(cp, cids.size + 1);
-      const unavailable = [...cids.keys()].filter(cp => !(font.cmapEntries.get(cp) ?? 0));
+      const unavailable = [...cids.keys()].filter(cp => !(font.cmapEntries.get(cp) ?? 0) &&
+        !(isShapingFont(id) && (cp === 0x200c || cp === 0x200d)));
       if (unavailable.length) throw new UnsupportedGlyphsError(unavailable);
-      if (cids.size > 0xffff) throw new Error('Identity-H CID space exhausted');
+      let glyphCids: Map<number, number> | undefined;
+      if (isShapingFont(id)) {
+        await prepareShaping();
+        glyphCids = new Map(existing?.glyphCids);
+        for (const text of shapedTexts.length ? shapedTexts : [String.fromCodePoint(...requested)]) {
+          for (const cluster of shapeTextSync(bytes, text, SHAPING_SCRIPTS[id])) {
+            for (const glyph of cluster.glyphs) if (!glyphCids.has(glyph.gid)) glyphCids.set(glyph.gid, glyphCids.size + 1);
+          }
+        }
+      }
+      if ((glyphCids?.size ?? cids.size) > 0xffff) throw new Error('Identity-H CID space exhausted');
       let name = existing?.name;
       if (!name) {
         const occupied = new Set<string>();
@@ -145,21 +162,27 @@ export async function prepareUnicodeFont(
         } while (occupied.has(tag));
         name = `${tag}+${SCRIPT_FONTS[id].baseFont}`;
       }
-      const subset = subsetTrueType(bytes, cids.keys(), name, font);
+      const subset = subsetTrueType(bytes, glyphCids ? [] : cids.keys(), name, font, glyphCids?.keys());
       if (typeof CompressionStream === 'undefined') throw new Error('Flate compression is unavailable');
       const compressed = await flateEncode(subset.data);
       const program = new PDFStream(new PDFDict([
         ['Length', new PDFNumber(compressed.length)], ['Length1', new PDFNumber(subset.data.length)],
         ['Filter', new PDFName('FlateDecode')],
       ]), compressed, subset.data);
-      const mapping = new Uint8Array((cids.size + 1) * 2), mv = new DataView(mapping.buffer);
+      const mapping = new Uint8Array(((glyphCids?.size ?? cids.size) + 1) * 2), mv = new DataView(mapping.buffer);
       const widths: PDFObject[] = [];
-      const entries = [...cids];
-      for (const [cp, cid] of entries) {
-        const gid = font.cmapEntries.get(cp)!;
+      for (const [key, cid] of glyphCids ?? cids) {
+        const gid = glyphCids ? key : font.cmapEntries.get(key)!;
         mv.setUint16(cid * 2, subset.glyphIdMap.get(gid)!);
         widths.push(new PDFNumber(font.advanceWidths[gid] * 1000 / font.unitsPerEm));
       }
+      // Only nominal 1:1 glyphs get a ToUnicode entry; shaped clusters carry ActualText.
+      const entries = glyphCids
+        ? [...cids.keys()].flatMap(cp => {
+          const cid = glyphCids.get(font.cmapEntries.get(cp)!);
+          return cid ? [[cp, cid] as const] : [];
+        }).filter((entry, index, all) => all.findIndex(other => other[1] === entry[1]) === index)
+        : [...cids];
       const lines = [
         '/CIDInit /ProcSet findresource begin', '12 dict begin', 'begincmap',
         '/CIDSystemInfo << /Registry (Adobe) /Ordering (UCS) /Supplement 0 >> def',
@@ -228,7 +251,7 @@ export async function prepareUnicodeFont(
       for (const ref of refs) modifiedKeys.add(ref.toKey());
       let states = fonts.get(objects);
       if (!states) { states = new Map(); fonts.set(objects, states); }
-      states.set(id, { source: bytes, font, cids, name, refs, modifiedKeys, program, toUnicode });
+      states.set(id, { source: bytes, font, cids, glyphCids, name, refs, modifiedKeys, program, toUnicode });
     } catch (error) {
       if (error instanceof UnsupportedGlyphsError) throw error;
       throw new UnsupportedGlyphsError(requested);
@@ -251,6 +274,7 @@ export async function prepareUnicodeText(
   const preparation = previous.catch(() => {}).then(async () => {
     const settings = { ...preferences.get(objects), ...options };
     const byFont = new Map<ScriptFontId, Set<number>>();
+    const shapeTexts = new Map<ScriptFontId, string[]>();
     const unavailable = new Set<number>();
     try {
       for (const run of runs) {
@@ -269,6 +293,10 @@ export async function prepareUnicodeText(
           parts = splitScriptRuns(context, runSettings);
         }
         for (const part of parts) {
+          if (isShapingFont(part.fontId)) {
+            const texts = shapeTexts.get(part.fontId) ?? [];
+            texts.push(part.text); shapeTexts.set(part.fontId, texts);
+          }
           for (const ch of part.text) {
             const cp = ch.codePointAt(0)!;
             if (!needed.has(cp)) continue;
@@ -276,7 +304,7 @@ export async function prepareUnicodeText(
             for (const id of fontFallbackChain(part.fontId)) {
               const cached = fonts.get(objects)?.get(id);
               const font = cached?.font ?? (await loadSource(id, source)).font;
-              if (font.cmapEntries.get(cp)) { selected = id; break; }
+              if (font.cmapEntries.get(cp) || (isShapingFont(id) && (cp === 0x200c || cp === 0x200d))) { selected = id; break; }
             }
             if (!selected) { unavailable.add(cp); continue; }
             let points = byFont.get(selected);
@@ -291,7 +319,7 @@ export async function prepareUnicodeText(
       for (const [id, points] of byFont) {
         const cached = fonts.get(objects)?.get(id);
         const bytes = cached?.source ?? (await loadSource(id, source)).bytes;
-        await prepareUnicodeFont(staged, points, bytes, id);
+        await prepareUnicodeFont(staged, points, bytes, id, shapeTexts.get(id));
       }
       const states = fonts.get(staged)!;
       for (const state of states.values()) {
@@ -330,7 +358,8 @@ export function unicodeTextRuns(
   const context = needed ? characters.map(ch => needed.has(ch.codePointAt(0)!) ||
     /[\p{Script=Han}\p{Script=Hiragana}\p{Script=Katakana}\p{Script=Hangul}]/u.test(ch) ? ch : ' ').join('') : text;
   let index = 0;
-  const settings = { preferredHanFont: originalFont !== 'latin' ? originalFont : undefined, ...preferences.get(objects) };
+  const settings = { preferredHanFont: originalFont && ['sc', 'tc', 'jp', 'kr'].includes(originalFont)
+    ? originalFont as ScriptFontOptions['preferredHanFont'] : undefined, ...preferences.get(objects) };
   return splitScriptRuns(context, settings).flatMap(run => {
     const result: ScriptFontRun[] = [];
     for (const _ of run.text) {
@@ -346,12 +375,14 @@ export function unicodeTextRuns(
 
 export function unicodeGlyphWidth(objects: Map<string, PDFObject>, cp: number, id?: ScriptFontId): number {
   id ??= unicodeTextRuns(objects, String.fromCodePoint(cp))[0]?.fontId;
+  if (id && isShapingFont(id)) throw new Error('Complex-script widths require shapedTextWidth, not scalar metrics');
   const state = id && fonts.get(objects)?.get(id);
   if (!state || !hasUnicodeGlyph(objects, cp, id)) throw new UnsupportedGlyphsError([cp]);
   return state.font.advanceWidths[state.font.cmapEntries.get(cp)!] * 1000 / state.font.unitsPerEm;
 }
 
 export function encodeUnicodeText(objects: Map<string, PDFObject>, text: string, id: ScriptFontId = 'sc'): PDFHexString {
+  if (isShapingFont(id)) throw new Error('Complex-script text requires positioned shaped glyphs, not scalar encoding');
   const state = fonts.get(objects)?.get(id);
   let hex = '';
   for (const ch of text) {
@@ -360,6 +391,45 @@ export function encodeUnicodeText(objects: Map<string, PDFObject>, text: string,
     hex += state.cids.get(cp)!.toString(16).padStart(4, '0');
   }
   return new PDFHexString(hex);
+}
+
+/** Synchronous layout/export after preparation; rejects glyphs absent from the staged subset. */
+export function preparedShapedClusters(objects: Map<string, PDFObject>, text: string, id: ShapingFontId): ShapedCluster[] {
+  const state = fonts.get(objects)?.get(id);
+  if (!state?.glyphCids || objects.get(state.refs[3].toKey()) !== state.program) {
+    throw new UnsupportedGlyphsError(Array.from(text, ch => ch.codePointAt(0)!));
+  }
+  const clusters = shapeTextSync(state.source, text, SHAPING_SCRIPTS[id]);
+  if (clusters.some(cluster => cluster.glyphs.some(glyph => !state.glyphCids!.has(glyph.gid)))) {
+    throw new UnsupportedGlyphsError(Array.from(text, ch => ch.codePointAt(0)!));
+  }
+  return clusters;
+}
+
+export function shapedTextWidth(objects: Map<string, PDFObject>, text: string, id: ShapingFontId): number {
+  const clusters = preparedShapedClusters(objects, text, id);
+  const scale = 1000 / fonts.get(objects)!.get(id)!.font.unitsPerEm;
+  return clusters.reduce((width, cluster) => width + cluster.glyphs.reduce((sum, glyph) => sum + glyph.advance, 0), 0) * scale;
+}
+
+export function emitShapedText(objects: Map<string, PDFObject>, text: string, id: ShapingFontId, fontSize: number, rise = 0): CSInstruction[] {
+  const clusters = preparedShapedClusters(objects, text, id), state = fonts.get(objects)!.get(id)!;
+  const scale = 1000 / state.font.unitsPerEm, ops: CSInstruction[] = [];
+  for (const cluster of clusters) {
+    let actual = 'feff';
+    for (let i = 0; i < cluster.text.length; i++) actual += cluster.text.charCodeAt(i).toString(16).padStart(4, '0');
+    ops.push({ operator: 'BDC', operands: [new PDFName('Span'), new PDFDict([['ActualText', new PDFHexString(actual)]])], offset: 0 });
+    for (const glyph of cluster.glyphs) {
+      const cid = state.glyphCids!.get(glyph.gid)!;
+      // TJ begins at the pen, moves to the offset, then restores the shaped advance.
+      const before = -glyph.xOffset * scale;
+      const after = (state.font.advanceWidths[glyph.gid] + glyph.xOffset - glyph.advance) * scale;
+      ops.push({ operator: 'Ts', operands: [new PDFNumber(rise + glyph.yOffset * fontSize / state.font.unitsPerEm)], offset: 0 },
+        { operator: 'TJ', operands: [new PDFArray([new PDFNumber(before), new PDFHexString(cid.toString(16).padStart(4, '0')), new PDFNumber(after)])], offset: 0 });
+    }
+    ops.push({ operator: 'Ts', operands: [new PDFNumber(rise)], offset: 0 }, { operator: 'EMC', operands: [], offset: 0 });
+  }
+  return ops;
 }
 
 /** Copy effective resources before adding membership; never change inherited/sibling dictionaries. */

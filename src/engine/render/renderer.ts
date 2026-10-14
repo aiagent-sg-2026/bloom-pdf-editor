@@ -23,7 +23,7 @@ import { interpretPage, type DisplayItem, type TextRun, type PathItem, type Imag
 import { buildDocumentFlow, buildFlowDrawIndex, type DocumentFlow, type TextLine } from '../flow';
 import type { FlowGlyphDraw } from '../flow/flow-draw';
 import { loadPageFonts, type FontData } from '../fonts/font-parser';
-import { isTrueTypeFontData } from '../fonts/truetype-parser';
+import { isTrueTypeFontData, getGlyphOutline } from '../fonts/truetype-parser';
 import { getCSSFontFamily, getStandardFont } from '../fonts/standard14';
 import { decodeImage } from './image-decoder';
 import { rgbToCSSColor } from './color-space';
@@ -652,6 +652,7 @@ function drawTextRunAtPositions(
   maskMap: Map<PDFDict, HTMLCanvasElement> = new Map(),
 ): void {
   if (positions.length === 0) return;
+  if (run.actualText) { drawTextRun(ctx, run, fonts, maskMap); return; }
 
   const bounds = { x: run.x, y: run.y, width: run.width, height: run.height };
   drawWithSoftMask(ctx, run.softMask, maskMap, bounds, () => {
@@ -810,7 +811,33 @@ function drawTextRun(
 
     const isType3 = fontData?.charProcs && fontData.charProcs.size > 0;
 
-    if (isType3) {
+    if (run.actualText && fontData?.ttfFont && fontData.cidToGidMap) {
+      // ActualText is extraction metadata, never a replacement for positioned outlines.
+      const ttf = fontData.ttfFont, mapping = fontData.cidToGidMap;
+      for (const glyph of run.glyphs) {
+        const at = glyph.charCode * 2;
+        if (at + 1 >= mapping.length) continue;
+        const gid = (mapping[at] << 8) | mapping[at + 1];
+        const outline = getGlyphOutline(ttf, gid);
+        if (!outline) continue;
+        const m = glyph.tRm, scale = 1 / ttf.unitsPerEm;
+        ctx.save();
+        ctx.transform(m.a * scale, m.b * scale, m.c * scale, m.d * scale, m.e, m.f);
+        ctx.beginPath();
+        for (const command of outline.commands) {
+          const p = command.args;
+          switch (command.type) {
+            case 'M': ctx.moveTo(p[0], p[1]); break;
+            case 'L': ctx.lineTo(p[0], p[1]); break;
+            case 'Q': ctx.quadraticCurveTo(p[0], p[1], p[2], p[3]); break;
+            case 'C': ctx.bezierCurveTo(p[0], p[1], p[2], p[3], p[4], p[5]); break;
+            case 'Z': ctx.closePath(); break;
+          }
+        }
+        ctx.fill();
+        ctx.restore();
+      }
+    } else if (isType3) {
       for (let i = 0; i < run.glyphs.length; i++) {
         const glyph = run.glyphs[i];
         const name = type3CharName(fontData!, glyph.charCode ?? glyph.unicode.charCodeAt(0));

@@ -84,16 +84,26 @@ collects scalars that the original font and Standard 14 fallbacks cannot
 encode. Commits fully covered by those fonts do not load a Unicode font.
 The editor displays the non-modal status "Loading font..." while preparation is pending.
 
-`src/engine/fonts/script-fonts.ts` registers five static TrueType assets and
-their SIL OFL-1.1 license files in `public/fonts/`:
+`src/engine/fonts/script-fonts.ts` registers static TrueType assets and their
+SIL OFL-1.1 license files in `public/fonts/`. Approximate local, uncompressed
+asset sizes (not network transfer sizes):
 
-| Font id | Asset | License |
-| --- | --- | --- |
-| `sc` | `NotoSansSC-Regular.ttf` | `NotoSansSC-OFL.txt` |
-| `tc` | `NotoSansTC-Regular.ttf` | `NotoSansTC-OFL.txt` |
-| `jp` | `NotoSansJP-Regular.ttf` | `NotoSansJP-OFL.txt` |
-| `kr` | `NotoSansKR-Regular.ttf` | `NotoSansKR-OFL.txt` |
-| `latin` | `NotoSans-Regular.ttf` | `NotoSans-OFL.txt` |
+| Font id | Asset | License | Approx. size |
+| --- | --- | --- | --- |
+| `sc` | `NotoSansSC-Regular.ttf` | `NotoSansSC-OFL.txt` | 10.1 MB |
+| `tc` | `NotoSansTC-Regular.ttf` | `NotoSansTC-OFL.txt` | 5.6 MB |
+| `jp` | `NotoSansJP-Regular.ttf` | `NotoSansJP-OFL.txt` | 4.4 MB |
+| `kr` | `NotoSansKR-Regular.ttf` | `NotoSansKR-OFL.txt` | 5.1 MB |
+| `latin` | `NotoSans-Regular.ttf` | `NotoSans-OFL.txt` | 86.4 KB |
+| `thai` | `NotoSansThai-Regular.ttf` | `NotoSansThai-OFL.txt` | 30.7 KB |
+| `devanagari` | `NotoSansDevanagari-Regular.ttf` | `NotoSansDevanagari-OFL.txt` | 190.3 KB |
+| `bengali` | `NotoSansBengali-Regular.ttf` | `NotoSansBengali-OFL.txt` | 111.5 KB |
+| `tamil` | `NotoSansTamil-Regular.ttf` | `NotoSansTamil-OFL.txt` | 52.0 KB |
+| `telugu` | `NotoSansTelugu-Regular.ttf` | `NotoSansTelugu-OFL.txt` | 155.7 KB |
+| `kannada` | `NotoSansKannada-Regular.ttf` | `NotoSansKannada-OFL.txt` | 126.7 KB |
+| `malayalam` | `NotoSansMalayalam-Regular.ttf` | `NotoSansMalayalam-OFL.txt` | 81.5 KB |
+| `gujarati` | `NotoSansGujarati-Regular.ttf` | `NotoSansGujarati-OFL.txt` | 148.8 KB |
+| `gurmukhi` | `NotoSansGurmukhi-Regular.ttf` | `NotoSansGurmukhi-OFL.txt` | 36.2 KB |
 
 The pure `splitScriptRuns(text, options?)` returns ordered `{fontId, text}`
 runs without normalizing text. Kana selects JP, Hangul selects KR, and Han
@@ -106,14 +116,20 @@ Latin, Latin Extended, Vietnamese, and combining marks select `latin` when
 they need Unicode fallback. Already-encodable text stays in its original font
 or the existing Standard 14 fallback.
 
+When added Latin is absent from a reopened Unicode subset, split-font export
+retains covered Unicode scalars in the original font and sends only missing
+Latin to the Standard 14 fallback. This needs no source-font load or CID/
+ToUnicode rewrite. Adding fallback resources copies the effective resource
+and font dictionaries so inherited resources remain unchanged.
+
 Coverage uses the selected font's actual cmap. Missing glyphs try the selected
 font first, then `sc -> tc -> jp -> kr`, skipping the selected font's duplicate.
 The pure splitter accepts a `covers(fontId, codePoint)` predicate to apply
 the same fallback without I/O. Unsupported scripts remain rejected even if
 an injected font happens to contain their outlines.
 
-Each source is lazy-loaded independently; per-font byte sizes are not measured
-here. The default loader fetches only needed fonts (including cmap fallbacks)
+Each source is lazy-loaded independently. The default loader fetches only needed
+fonts (including cmap fallbacks)
 from `${process.env.__NEXT_ROUTER_BASEPATH}/fonts/<file>` (empty basePath by
 default). Assets are not JavaScript imports. Bytes, in-flight loads, and parsed
 source metrics are cached per font; failed loads can be retried.
@@ -124,6 +140,84 @@ raw `Uint8Array` bytes or an asynchronous loader function instead of fetching;
 a single source supplies every selected id. A partial font-id record supplies
 independent sources, for example `{ sc: scBytes, tc: async () => tcBytes }`;
 unspecified ids use the default loader. Keep injected source bytes immutable.
+
+#### Complex-script shaping and wasm loading
+
+Thai (U+0E00–U+0E7F), Devanagari (U+0900–U+097F), Bengali
+(U+0980–U+09FF), Tamil (U+0B80–U+0BFF), Telugu (U+0C00–U+0C7F),
+Kannada (U+0C80–U+0CFF), Malayalam (U+0D00–U+0D7F), Gujarati
+(U+0A80–U+0AFF), and Gurmukhi (U+0A00–U+0A7F) select their own fonts.
+Adjacent joiners (ZWJ/ZWNJ), dotted circle, and danda inherit the shaping
+script; otherwise danda selects Devanagari. Latin/CJK/Vietnamese keep the
+part-1 scalar path. Arabic, Hebrew, directional controls, and emoji remain rejected,
+even if an injected font could encode them.
+
+`src/engine/fonts/shaping.ts` lazily imports the MIT `harfbuzzjs` package.
+The installed 1.6.3 package initializes its wasm asynchronously before the
+import resolves. In the browser, its
+`new URL('harfbuzz.wasm', import.meta.url)` is a webpack-emitted asset URL;
+the package fetches/instantiates that URL, with an ArrayBuffer fallback if
+streaming compilation is unavailable. No public wasm copy, CDN, or binary
+modification is needed. The configured dev/build commands use webpack;
+`next.config.ts` disables resolution of Emscripten's Node-only `module` import
+in client bundles. In Node/Vitest, the package reads its installed
+`node_modules/harfbuzzjs/dist/harfbuzz.wasm` with `fs`. Browser asset emission
+and deployment still require build/runtime verification.
+
+The shaping wasm is about 431 KB uncompressed; `harfbuzz-subset.wasm` is
+not loaded. The JS wrapper/loader adds about 112 KB before compression.
+Only a needed Thai/Indic span triggers wasm loading; Latin/CJK/Vietnamese
+do not. Immutable source byte identities cache HarfBuzz blob/face/font and
+a resettable buffer. HarfBuzz retains its own font copy in wasm memory;
+source bytes and parsed metrics also remain cached. Shaping output and
+export subsets are computed on demand, not eagerly for all nine fonts.
+
+`shapeText(bytes, text, script, 'ltr')` returns original-text clusters with
+`{gid, advance, xOffset, yOffset}` glyphs in source-font units.
+`shapeTextSync` is the synchronous counterpart after `prepareShaping`.
+Explicit ISO script tags, LTR direction, and monotone grapheme clusters
+apply GSUB conjuncts/reordering and GPOS placement without normalizing the
+input. `prepareTextForExport` always shapes complex-script spans, even if the
+original PDF font has a Unicode encoder, before publishing font graphs.
+Preflight checks shaped glyph coverage as well as scalar coverage: previously
+prepared scalars alone do not imply that a new conjunct is exportable.
+
+Complex-script CIDs identify source glyph IDs, not Unicode scalars.
+`subsetTrueType` accepts an optional fifth glyph-ID iterable, retaining the
+same composite closure/renumbering; existing scalar callers are unchanged.
+The Type0/Identity-H/CIDFontType2 graph maps those CIDs to dense subset GIDs.
+`/W` contains nominal glyph advances from hmtx in 1000/em; each `TJ` applies
+the difference to HarfBuzz's contextual advance and its horizontal offset.
+`Ts` applies vertical offsets in text-space points and is reset after each
+cluster. Saved/restored text state prevents per-glyph character spacing or
+rise from leaking into following runs.
+
+Every shaped cluster is wrapped in
+`/Span << /ActualText <FEFF...UTF-16BE...> >> BDC ... EMC`, preserving its
+original Unicode sequence, including conjuncts, reordered vowels, and joiners.
+Nominal 1:1 glyphs also receive ToUnicode entries. The interpreter handles
+nested ActualText spans and preserves the positioned glyphs separately from
+logical extraction text; baseline/reading order use the cluster's logical
+pen position rather than displaced marks. The native canvas renderer draws
+these glyphs from subset outlines through CIDToGIDMap, not by reshaping
+ActualText with a substitute font. Poppler extraction and visual rendering
+remain unverified until exercised externally.
+
+Existing ActualText runs cannot be edited in place or receive per-glyph style
+changes. UI entry, direct text edits, line edits, and style edits reject them
+before content/resource mutations with a clear message; add a new text box
+instead. A reopened shaped graph is never reconstructed as a scalar graph:
+appending new shaped text creates a separate graph and leaves the original
+CID assignments/program untouched. Subsequent preparations within the same
+live graph union used glyphs and retain existing CIDs.
+
+Floating boxes currently have fixed/minimum/user-resized DOM widths, not a
+font-dependent content-width measurement. Export's content-dependent wrapping
+and underline widths run only after async font/wasm preparation and use
+HarfBuzz advances. Oversized Thai/Indic words may overflow a width limit rather
+than splitting a conjunct at an arbitrary Unicode scalar. Preparation retains
+the existing script-neutral "Loading font..." status and warning/pending-text
+failure contract.
 
 #### TrueType subset and PDF objects
 
@@ -145,12 +239,13 @@ unspecified ids use the default loader. Keep injected source bytes immutable.
   Descriptor ascent/descent use signed `hhea` metrics (OS/2 typo metrics when
   absent), and `head` bounds are scaled to 1000/em. Cap height comes from OS/2
   when positive, italic angle from `post`, and StemV defaults to 80.
-- Compact two-byte CIDs identify Unicode scalars, not UTF-8 bytes or guessed
-  glyph IDs. `/ToUnicode` maps every used CID to UTF-16BE, including surrogate
-  pairs for supplementary scalars, in bounded bfchar blocks.
-- A document object map owns one graph per used font. Subsequent preparations
-  union each font's scalar set, retain its existing CIDs and object references,
-  and regenerate its subset, widths, CIDToGIDMap, and ToUnicode. Save/reopen
+- For part-1 fonts, compact two-byte CIDs identify Unicode scalars, not UTF-8
+  bytes or guessed glyph IDs. `/ToUnicode` maps every used CID to UTF-16BE,
+  including surrogate pairs for supplementary scalars, in bounded bfchar blocks.
+- A document object map owns one live graph per used font. Subsequent preparations
+  union each font's scalar set (shaped glyph set for complex scripts), retain
+  existing CIDs and object references, and regenerate the subset, widths,
+  CIDToGIDMap, and ToUnicode. Save/reopen
   recovers each regional compact-CID graph. Full source fonts remain available
   for new glyphs. Concurrent preparations are serialized; restored object
   graphs invalidate stale subset coverage. Multi-font preparation stages all
@@ -212,10 +307,10 @@ preparation before submitting previously unsupported text. Without preparation,
 the phase-1 warning/error contract remains unchanged. Existing WinAnsi
 punctuation substitutions and finite Symbol/Dingbats encodings are unchanged.
 
-Boundaries: static TrueType `glyf` outlines only; no shaping or vertical text.
-Thai, Indic scripts (including Devanagari), Arabic/RTL, and emoji are not
-supported yet and retain `UnsupportedGlyphsError` with the exact unavailable
-characters. Han unification cannot infer language from Han alone: default
+Boundaries: static TrueType `glyf` outlines only; shaping is LTR only, with no
+vertical text or bidirectional layout. Arabic/Hebrew/RTL and emoji retain
+`UnsupportedGlyphsError`. No per-glyph style editing after shaped export.
+Han unification cannot infer language from Han alone: default
 SC glyph shapes remain unless kana/Hangul context or `preferredHanFont` selects
 a regional face. CFF, variable-font instantiation, WOFF/WOFF2, and font
 collections are not subset by this API. Coverage is the asset's actual cmap,
@@ -225,8 +320,10 @@ Regression sources:
 `src/engine/__tests__/ttf-subsetter.test.ts`,
 `src/engine/__tests__/unicode-font-embed.test.ts`,
 `src/engine/__tests__/unicode-font-export.test.ts`,
-`src/engine/__tests__/script-fonts.test.ts`, and
-`src/engine/__tests__/multiscript-font-export.test.ts`.
+`src/engine/__tests__/script-fonts.test.ts`,
+`src/engine/__tests__/multiscript-font-export.test.ts`,
+`src/engine/__tests__/shaping.test.ts`, and
+`src/engine/__tests__/shaped-font-export.test.ts`.
 They include independent sfnt/checksum/loca/composite inspection, native font
 and CMap reparsing, quick/optimized export round trips, supplementary scalars,
 and committed-font outline comparisons. Cross-viewer visual validation remains
