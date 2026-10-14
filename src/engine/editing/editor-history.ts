@@ -19,7 +19,7 @@ import {
   type PDFDocumentData,
   type PDFObject,
 } from '../types';
-import { getPageContentBytes } from '../parser/parser';
+import { getPageContentBytes, resolvePageResources } from '../parser/parser';
 
 export interface OverlaySnapshot {
   drawnPathsJson: string;
@@ -369,7 +369,7 @@ export async function restoreDocumentStructure(
       cropBox: { ...state.cropBox },
       rotate: state.rotate,
       ref,
-      resources: dict.get('Resources') instanceof PDFDict ? dict.get('Resources') as PDFDict : new PDFDict(),
+      resources: resolvePageResources(dict, doc.objects),
       contentRefs: refs,
     };
   });

@@ -1697,7 +1697,7 @@ export function insertTableColumnRight(
 
 function cloneInstruction(inst: CSInstruction): CSInstruction {
   return {
-    operator: inst.operator,
+    ...inst,
     operands: inst.operands.map(o => o),
     offset: 0,
   };
