@@ -599,6 +599,37 @@ export function deepResolve(
   return resolved;
 }
 
+/**
+ * Resolve a page's own resources or the nearest ancestor's resources.
+ * Initial page-tree traversal supplies its inherited value to avoid rewalking parents.
+ */
+export function resolvePageResources(
+  page: PDFDict,
+  objects: Map<string, PDFObject>,
+  inherited?: PDFObject,
+): PDFDict {
+  const own = page.get('Resources');
+  if (own !== undefined || inherited !== undefined) {
+    const resources = resolveRef(own ?? inherited!, objects);
+    return resources instanceof PDFDict ? resources : new PDFDict();
+  }
+
+  const visited = new Set<PDFDict>([page]);
+  let node = page;
+  while (true) {
+    const parentObj = node.get('Parent');
+    const parent = parentObj ? resolveRef(parentObj, objects) : undefined;
+    if (!(parent instanceof PDFDict) || visited.has(parent)) return new PDFDict();
+    visited.add(parent);
+    const resourcesObj = parent.get('Resources');
+    if (resourcesObj !== undefined) {
+      const resources = resolveRef(resourcesObj, objects);
+      return resources instanceof PDFDict ? resources : new PDFDict();
+    }
+    node = parent;
+  }
+}
+
 // ─── Page tree traversal ────────────────────────────────────────────────────
 
 /**
@@ -668,10 +699,7 @@ function collectPages(
     const rotate = rotateObj instanceof PDFNumber ? rotateObj.value : 0;
 
     // Resources
-    const resourcesObj = node.get('Resources')
-      ? resolve(node.get('Resources')!)
-      : currentInherited['Resources'];
-    const resources = resourcesObj instanceof PDFDict ? resourcesObj : new PDFDict();
+    const resources = resolvePageResources(node, objects, currentInherited['Resources'] ?? PDFNull.instance);
 
     // Content streams
     const contentsObj = node.get('Contents');

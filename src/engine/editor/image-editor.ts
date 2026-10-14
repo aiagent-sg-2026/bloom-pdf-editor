@@ -1,7 +1,7 @@
 import { PDFDict, PDFName, PDFNumber, PDFStream, PDFRef } from '../types';
 import type { PDFDocumentData, PDFPageInfo, PDFObject } from '../types';
 import type { ImageItem } from '../content/interpreter';
-import { getResource } from '../parser/parser';
+import { getResource, resolvePageResources, resolveRef } from '../parser/parser';
 import { isolateBaseCtm } from './content-append';
 import { flateEncode } from '../parser/filters';
 
@@ -115,48 +115,36 @@ export async function insertImageRun(
   const objRef = new PDFRef(objNum, 0);
   objects.set(objRef.toKey(), imageStream);
 
-  // 5. Register in page Resources
-  const resourcesObj = page.dict.get('Resources');
-  let resources = resourcesObj instanceof PDFRef ? (objects.get(resourcesObj.toKey()) as PDFDict) : resourcesObj as PDFDict;
-  if (!resources || !(resources instanceof PDFDict)) {
-    resources = new PDFDict();
-    page.dict.set('Resources', resources);
-  }
-  
-  let xobjects = resources.get('XObject');
-  if (xobjects instanceof PDFRef) xobjects = objects.get(xobjects.toKey()) as PDFDict;
-  if (!xobjects || !(xobjects instanceof PDFDict)) {
-    xobjects = new PDFDict();
-    resources.set('XObject', xobjects);
-  }
-  
-  // Find a unique name
-  let imgName = 'Im1';
-  let i = 1;
-  while (xobjects.has(imgName)) {
-    i++;
-    imgName = `Im${i}`;
-  }
-  xobjects.set(imgName, objRef);
-
-  const injection = buildImageInjection(page, objects, imgName, x, y, width, height, options);
-  const enc = new TextEncoder();
-  const injectionBytes = enc.encode(injection);
-
-  const base = isolateBaseCtm(contentBytes);
-  const newContentBytes = new Uint8Array(base.length + injectionBytes.length);
-  newContentBytes.set(base);
-  newContentBytes.set(injectionBytes, base.length);
-
-  return { newContentBytes };
+  return registerImageRun(page, objects, objRef, x, y, width, height, contentBytes, options);
 }
 
 function registerImageRun(page: PDFPageInfo, objects: Map<string, PDFObject>, objRef: PDFRef, x: number, y: number, width: number, height: number, contentBytes: Uint8Array, options?: ImageRunOptions): { newContentBytes: Uint8Array } {
   const resourcesObj = page.dict.get('Resources');
-  let resources = resourcesObj instanceof PDFRef ? objects.get(resourcesObj.toKey()) as PDFDict : resourcesObj as PDFDict;
-  if (!(resources instanceof PDFDict)) { resources = new PDFDict(); page.dict.set('Resources', resources); }
-  let xobjects = resources.get('XObject'); if (xobjects instanceof PDFRef) xobjects = objects.get(xobjects.toKey()) as PDFDict;
-  if (!(xobjects instanceof PDFDict)) { xobjects = new PDFDict(); resources.set('XObject', xobjects); }
+  let resources = resourcesObj === undefined ? undefined : resolveRef(resourcesObj, objects);
+  if (!(resources instanceof PDFDict)) {
+    const inherited = resourcesObj === undefined ? resolvePageResources(page.dict, objects) : new PDFDict();
+    resources = new PDFDict();
+    for (const [key, value] of inherited.entries()) {
+      // Copy category dictionaries, including indirect ones, before adding entries.
+      // Resource definitions remain shared; sibling category membership does not.
+      const category = resolveRef(value, objects);
+      if (category instanceof PDFDict) {
+        const copy = new PDFDict();
+        for (const [name, resource] of category.entries()) copy.set(name, resource);
+        resources.set(key, copy);
+      } else {
+        resources.set(key, value);
+      }
+    }
+    page.dict.set('Resources', resources);
+  }
+  page.resources = resources;
+  const xobjectsObj = resources.get('XObject');
+  let xobjects = xobjectsObj === undefined ? undefined : resolveRef(xobjectsObj, objects);
+  if (!(xobjects instanceof PDFDict)) {
+    xobjects = new PDFDict();
+    resources.set('XObject', xobjects);
+  }
   let imgName = 'Im1'; let i = 1; while (xobjects.has(imgName)) imgName = `Im${++i}`;
   xobjects.set(imgName, objRef);
   const injection = buildImageInjection(page, objects, imgName, x, y, width, height, options);

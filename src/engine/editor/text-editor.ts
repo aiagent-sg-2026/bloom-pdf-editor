@@ -18,6 +18,7 @@
 
 import { ctmBefore, deltaThroughInverse, invertMatrix } from './matrix';
 import { parseContentStream, type CSInstruction } from '../content/operator-lexer';
+import { serializeInstructions } from '../content/instruction-serializer';
 import { interpretPage, type TextRun } from '../content/interpreter';
 import {
   PDFArray,
@@ -1296,7 +1297,17 @@ function applySpecialFallbackShowing(
     }
   }
 
+  const original = instructions[textIndex];
   const ops: CSInstruction[] = [];
+  if (original.operator === '"') {
+    ops.push(
+      { operator: 'Tw', operands: [original.operands[0]], offset: original.offset },
+      { operator: 'Tc', operands: [original.operands[1]], offset: original.offset },
+    );
+  }
+  if (original.operator === "'" || original.operator === '"') {
+    ops.push({ operator: 'T*', operands: [], offset: original.offset });
+  }
   let normal = '';
   const flushNormal = () => {
     if (!normal) return;
@@ -1469,6 +1480,8 @@ function applyGroupedTextEdit(
     if (!inst || !isTextShowingOperator(inst.operator)) continue;
     if (inst.operator === 'TJ') {
       inst.operands = [new PDFArray([empty])];
+    } else if (inst.operator === '"') {
+      inst.operands = [...inst.operands.slice(0, 2), empty];
     } else {
       inst.operands = [empty];
     }
@@ -1667,6 +1680,13 @@ function applyEncodedShowingOperands(
   fontData: FontData | null,
   useWinAnsi: boolean,
 ): void {
+  // Quote operators carry line movement and, for ", persistent text spacing.
+  // A string-only edit needs no TJ conversion, even when the text has spaces.
+  if (inst.operator === "'" || inst.operator === '"') {
+    const stringIndex = inst.operator === '"' ? 2 : 0;
+    inst.operands = [...inst.operands.slice(0, stringIndex), encoded.pdfString];
+    return;
+  }
   if (/ /.test(text)) {
     inst.operator = 'TJ';
     inst.operands = [buildTJWithSpaceAdvances(text, fontData, useWinAnsi)];
@@ -1780,28 +1800,7 @@ function buildSmartTJArray(
  * Compile an array of CSInstructions back into content stream bytes.
  */
 export function compileInstructions(instructions: CSInstruction[]): Uint8Array {
-  const parts: string[] = [];
-
-  for (let i = 0; i < instructions.length; i++) {
-    const inst = instructions[i];
-
-    // Write operands
-    for (const op of inst.operands) {
-      parts.push(serializeToString(op));
-      parts.push(' ');
-    }
-
-    // Write operator
-    parts.push(inst.operator);
-    parts.push('\n');
-  }
-
-  const text = parts.join('');
-  const bytes = new Uint8Array(text.length);
-  for (let i = 0; i < text.length; i++) {
-    bytes[i] = text.charCodeAt(i) & 0xff;
-  }
-  return bytes;
+  return serializeInstructions(instructions, serializeToString);
 }
 
 // ─── Font helpers ───────────────────────────────────────────────────────────

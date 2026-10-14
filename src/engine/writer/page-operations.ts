@@ -51,11 +51,8 @@ export function deletePage(doc: PDFDocumentData, pageIndex: number): void {
   // outline tree remains valid and must survive page operations.
   removeDeletedPageDestinations(doc, page.ref);
 
-  // Remove from parent's Kids array
+  // Remove the leaf and update every affected page-tree node.
   removePageFromTree(page.ref, doc.catalog, doc.objects);
-
-  // Update page count
-  updatePageCount(doc.catalog, doc.objects, -1);
 
   // Remove from our pages array
   doc.pages.splice(pageIndex, 1);
@@ -850,16 +847,36 @@ function removePageFromTree(
   const pagesObj = resolveRef(pagesRef, objects);
   if (!(pagesObj instanceof PDFDict)) return;
 
-  const kids = pagesObj.get('Kids');
-  if (!(kids instanceof PDFArray)) return;
+  const visited = new Set<PDFDict>();
+  function removeFromNode(node: PDFDict): boolean {
+    if (visited.has(node)) return false;
+    visited.add(node);
+    const kidsObj = node.get('Kids');
+    const kids = kidsObj ? resolveRef(kidsObj, objects) : undefined;
+    if (!(kids instanceof PDFArray)) return false;
 
-  // Filter out the page ref
-  const newItems = kids.items.filter((item) => {
-    if (item instanceof PDFRef) return !item.equals(pageRef);
-    return true;
-  });
+    for (let i = 0; i < kids.items.length; i++) {
+      const kid = kids.items[i];
+      if (kid instanceof PDFRef && kid.equals(pageRef)) {
+        kids.items.splice(i, 1);
+      } else {
+        const child = resolveRef(kid, objects);
+        if (!(child instanceof PDFDict) || child.getName('Type') !== 'Pages' || !removeFromNode(child)) {
+          continue;
+        }
+        const childKidsObj = child.get('Kids');
+        const childKids = childKidsObj ? resolveRef(childKidsObj, objects) : undefined;
+        if (childKids instanceof PDFArray && childKids.items.length === 0) {
+          kids.items.splice(i, 1);
+        }
+      }
+      node.set('Count', new PDFNumber((node.getNumber('Count') ?? 0) - 1));
+      return true;
+    }
+    return false;
+  }
 
-  pagesObj.set('Kids', new PDFArray(newItems));
+  removeFromNode(pagesObj);
 }
 
 function rebuildKidsArray(doc: PDFDocumentData): void {
@@ -874,17 +891,3 @@ function rebuildKidsArray(doc: PDFDocumentData): void {
   pagesObj.set('Count', new PDFNumber(doc.pages.length));
 }
 
-function updatePageCount(
-  catalog: PDFDict,
-  objects: Map<string, PDFObject>,
-  delta: number,
-): void {
-  const pagesRef = catalog.getRef('Pages');
-  if (!pagesRef) return;
-
-  const pagesObj = resolveRef(pagesRef, objects);
-  if (!(pagesObj instanceof PDFDict)) return;
-
-  const count = pagesObj.getNumber('Count') ?? 0;
-  pagesObj.set('Count', new PDFNumber(count + delta));
-}
