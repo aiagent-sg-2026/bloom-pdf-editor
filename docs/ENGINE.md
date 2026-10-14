@@ -20,6 +20,10 @@ The engine remains browser-native. Native content-stream editing, annotations, f
 
 The editor exports PNG, JPEG, SVG, and plain text in the browser. PDF save and optimization remain native writer operations.
 
+Image compression derives candidates from the current document, including committed edits, even when serialization is larger than the upload. `compressDocumentImages` accepts `originalIsCurrent: true` only when the caller can prove the upload still represents the current document; this permits the smaller upload as the baseline and caps the result at its size. The option defaults to false.
+
+The editor permits this fallback only for an unrecovered, unencrypted upload with unchanged exportable objects, no recorded or pending edits, and unchanged upload bytes. Saving does not reset its edit provenance. Uncertain state or a failed object comparison disables the fallback.
+
 ## Development
 
 ```bash

@@ -491,6 +491,10 @@ export default function EditorPage() {
   const [textOpacity, setTextOpacity] = useState(100);
   const [saveMode, setSaveMode] = useState<'quick' | 'optimized'>('optimized');
   const [isDirty, setIsDirty] = useState(false);
+  // Saving clears unsaved state, not the fact that the upload has been edited.
+  const hasEditedRef = useRef(true);
+  const uploadBytesRef = useRef<Uint8Array | null>(null);
+  if (isDirty || renderKey !== 0 || thumbnailKey !== 0) hasEditedRef.current = true;
 
   // Keep an existing Add Text Box synchronized with the active formatting
   // controls, so later colour/font/style changes are exported too.
@@ -535,6 +539,25 @@ export default function EditorPage() {
   const [managedSignatures, setManagedSignatures] = useState<ManagedSignature[]>([]);
   const [revisionEntries, setRevisionEntries] = useState<RevisionViewEntry[]>([]);
   signaturesRef.current = signatures;
+  const originalIsCurrentRef = useRef(false);
+  originalIsCurrentRef.current =
+    !isDirty && !hasEditedRef.current && !isLoading &&
+    renderKey === 0 && thumbnailKey === 0 &&
+    !historyRef.current.canUndo() && !historyRef.current.canRedo() &&
+    historyRef.current.peek()?.label === 'initial' &&
+    drawnPaths.length === 0 && floatingTexts.length === 0 &&
+    floatingImages.length === 0 && signatures.length === 0 &&
+    !isDrawing && currentDrawPath.current.length === 0 &&
+    !shapeStartRef.current && !shapeEndRef.current && !eraseChangedRef.current &&
+    !editingLineRef.current && !editingBlockIdRef.current &&
+    !editAnchorLineRef.current && !undoSnapshotRef.current &&
+    pendingStylesRef.current.length === 0 && editStyleOverrides.length === 0 &&
+    !floatingTextEditStartRef.current && !dragInfo.current &&
+    !selectedFormField && !formFieldDraft &&
+    !linkPopoverMode && !linkCreatePending &&
+    !replacingImageIdRef.current && !replacingEmbeddedImageRef.current &&
+    !signatureCreateOpen && !cryptoSignBusy && !searchBusy &&
+    uploadBytesRef.current !== null && doc?.rawBytes === uploadBytesRef.current;
 
   const refreshSignatureLibrary = useCallback(() => {
     setSignatureLibraryEntries(orderLibraryByRecent(getSignatureLibrary().list()));
@@ -879,6 +902,7 @@ export default function EditorPage() {
           signatures: VisualSignature[];
         };
         dirty?: boolean;
+        originalUpload?: boolean;
       },
     ) {
       const pageIndex = Math.max(0, Math.min(opts?.pageIndex ?? 0, parsed.pages.length - 1));
@@ -888,6 +912,10 @@ export default function EditorPage() {
         floatingImages: [],
         signatures: [],
       };
+      // Recovered sessions and decrypted documents are not pristine uploads.
+      uploadBytesRef.current = opts?.originalUpload === true && !opts.dirty
+        ? parsed.rawBytes : null;
+      hasEditedRef.current = uploadBytesRef.current === null;
       setDoc(parsed);
       setTotalPages(parsed.pages.length);
       setCurrentPage(pageIndex);
@@ -975,7 +1003,7 @@ export default function EditorPage() {
           }
         }
 
-        await finishLoad(parsed, engine);
+        await finishLoad(parsed, engine, { originalUpload: true });
       } catch (e) {
         if (cancelled) return;
         console.error('[Editor] Init failed:', e);
@@ -4439,17 +4467,37 @@ export default function EditorPage() {
     try {
       setIsSaving(true);
       setError(null);
+      // Capture pending overlays before committing them; compare exportable
+      // objects too, since not every mutation enters history or marks dirty.
+      const pristineBeforeCommit = originalIsCurrentRef.current;
       await commitDrawingsToPdf();
       const engine = engineRef.current;
       const originalLen = doc.rawBytes?.length ?? 0;
+      let originalIsCurrent = false;
+      if (pristineBeforeCommit && !hasEditedRef.current &&
+          doc.rawBytes === uploadBytesRef.current) {
+        try {
+          originalIsCurrent = !(await engine.hasDocumentEdits(doc)) &&
+            originalIsCurrentRef.current && !hasEditedRef.current &&
+            !historyRef.current.canUndo() && !historyRef.current.canRedo() &&
+            drawnPathsRef.current.length === 0 &&
+            floatingTextsRef.current.length === 0 &&
+            floatingImagesRef.current.length === 0 &&
+            signaturesRef.current.length === 0 &&
+            !editingLineRef.current && doc.rawBytes === uploadBytesRef.current;
+        } catch {
+          // An unprovable comparison must never permit stale upload bytes.
+        }
+      }
 
       const result = await engine.compressDocumentImages(doc, {
         quality: opts.quality,
         dpi: opts.dpi,
         targetBytes: opts.targetBytes,
+        originalIsCurrent,
       });
 
-      // The engine's result preserves current edits, even if it exceeds the upload size.
+      // Upload fallback is allowed only by the engine's explicit pristine-state option.
       const outBytes = result.bytes;
       const outLen = result.compressedBytes;
       const note = result.message;
