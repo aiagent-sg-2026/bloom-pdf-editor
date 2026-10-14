@@ -3,6 +3,7 @@
  */
 
 import { describe, it, expect } from 'vitest';
+import { BRAND_NAME } from '../../../lib/brand';
 import {
   PDFArray,
   PDFDict,
@@ -194,7 +195,7 @@ describe('Phase 6 — incremental updates', () => {
 
 describe('Phase 7 — hash engine + CMS + ByteRange helpers', () => {
   it('hashes with sha256/384/512', async () => {
-    const data = latin1('Bloom PDF hash test');
+    const data = latin1(`${BRAND_NAME} hash test`);
     for (const algo of HASH_ALGORITHMS) {
       const d = await hashBytes(data, algo);
       expect(d.length).toBe(algo === 'sha256' ? 32 : algo === 'sha384' ? 48 : 64);

@@ -1,6 +1,6 @@
-# Contributing to Bloom PDF Editor
+# Contributing to Paperloom PDF
 
-Thank you for considering contributing to Bloom. Contributions are welcome for the browser editor, PDF engine, documentation, tests, and accessibility.
+Thank you for considering contributing to Paperloom PDF. Contributions are welcome for the browser editor, PDF engine, documentation, tests, and accessibility.
 
 ## Getting Started
 

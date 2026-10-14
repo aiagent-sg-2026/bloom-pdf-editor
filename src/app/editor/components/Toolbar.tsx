@@ -6,6 +6,7 @@ import type { DrawnPath } from '../types';
 import type { PDFDocumentData } from '@/engine/browser-core';
 import { DownloadDropdown } from './DownloadDropdown';
 import { useTheme } from '@/app/theme/ThemeProvider';
+import { BRAND_NAME } from '@/lib/brand';
 
 interface ToolbarProps {
   fileName: string;
@@ -79,14 +80,14 @@ export function Toolbar({
         <Link href="/" className="flex items-center gap-2 mr-1.5 group">
           <Image
             src="/logo.png"
-            alt="BloomPDF Logo"
+            alt={`${BRAND_NAME} Logo`}
             width={32}
             height={32}
             className="w-6 h-6 md:w-7 md:h-7 object-contain shrink-0"
             priority
           />
           <span className="hidden sm:inline font-bold text-sm tracking-tight text-app group-hover:text-[#E8607A] transition-colors">
-            Bloom<span className="text-[#E8607A]">PDF</span>
+            {BRAND_NAME}
           </span>
         </Link>
         <div className="w-[1px] h-4 bg-[var(--border)] hidden md:block" />

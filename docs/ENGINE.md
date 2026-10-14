@@ -1,6 +1,6 @@
-# Bloom PDF Engine
+# Paperloom PDF Engine
 
-Bloom's PDF engine is a browser-native TypeScript implementation. It parses PDF objects and content streams, renders pages to Canvas, applies edits and annotations, manages forms and page operations, and writes edited PDFs through the native writer.
+Paperloom PDF's engine is a browser-native TypeScript implementation. It parses PDF objects and content streams, renders pages to Canvas, applies edits and annotations, manages forms and page operations, and writes edited PDFs through the native writer.
 
 ## Core areas
 

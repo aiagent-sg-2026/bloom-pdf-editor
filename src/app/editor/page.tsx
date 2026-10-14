@@ -10,6 +10,7 @@ import {
   clearEditorSession,
 } from '@/lib/pdfStorage';
 import { X, Loader2, ChevronLeft, Image, Type } from 'lucide-react';
+import { BRAND_NAME } from '@/lib/brand';
 
 // We import types only — the engine modules are loaded dynamically
 // because they require browser APIs (canvas, DecompressionStream)
@@ -425,7 +426,7 @@ export default function EditorPage() {
   const [watermarkType, setWatermarkType] = useState<'text' | 'image' | 'shape'>('text');
   const [watermarkShapeType, setWatermarkShapeType] = useState<'rectangle' | 'circle' | 'pill'>('circle');
   const [watermarkShapeColor, setWatermarkShapeColor] = useState('#000000');
-  const [watermarkText, setWatermarkText] = useState('Bloom PDF');
+  const [watermarkText, setWatermarkText] = useState<string>(BRAND_NAME);
   const [watermarkFontName, setWatermarkFontName] = useState('Arial');
   const [watermarkOpacity, setWatermarkOpacity] = useState(50);
   const [watermarkRotation, setWatermarkRotation] = useState(45);
