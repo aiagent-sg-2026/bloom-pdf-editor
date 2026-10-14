@@ -79,22 +79,51 @@ The editor permits this fallback only for an unrecovered, unencrypted upload wit
 ### Unsupported glyphs and on-demand Unicode font embedding
 
 Floating text and existing-run edits have an asynchronous preparation stage
-before content compilation. `prepareTextForExport(objects, runs, source?)`
+before content compilation. `prepareTextForExport(objects, runs, source?, options?)`
 collects scalars that the original font and Standard 14 fallbacks cannot
-encode. Latin-only commits do not load a Unicode font. The editor displays the
-non-modal status "Loading CJK font..." while preparation is pending.
+encode. Commits fully covered by those fonts do not load a Unicode font.
+The editor displays the non-modal status "Loading font..." while preparation is pending.
 
-The default loader fetches the static TrueType asset
-`public/fonts/NotoSansSC-Regular.ttf` from
-`${process.env.__NEXT_ROUTER_BASEPATH}/fonts/NotoSansSC-Regular.ttf` (empty
-basePath by default). `next.config.ts` currently has no basePath. The font is a
-public asset, not a JavaScript import; the approximately 10.5 MB source is
-fetched lazily; its bytes and parsed source metrics are cached for later edits.
+`src/engine/fonts/script-fonts.ts` registers five static TrueType assets and
+their SIL OFL-1.1 license files in `public/fonts/`:
+
+| Font id | Asset | License |
+| --- | --- | --- |
+| `sc` | `NotoSansSC-Regular.ttf` | `NotoSansSC-OFL.txt` |
+| `tc` | `NotoSansTC-Regular.ttf` | `NotoSansTC-OFL.txt` |
+| `jp` | `NotoSansJP-Regular.ttf` | `NotoSansJP-OFL.txt` |
+| `kr` | `NotoSansKR-Regular.ttf` | `NotoSansKR-OFL.txt` |
+| `latin` | `NotoSans-Regular.ttf` | `NotoSans-OFL.txt` |
+
+The pure `splitScriptRuns(text, options?)` returns ordered `{fontId, text}`
+runs without normalizing text. Kana selects JP, Hangul selects KR, and Han
+within the same contiguous CJK token follows kana (JP) or Hangul (KR) context.
+Whitespace and Latin separate those tokens. Otherwise Han selects SC, or the
+`preferredHanFont: 'sc' | 'tc' | 'jp' | 'kr'` preparation option. The setting
+persists for subsequent preparations in that document; reopened embedded runs
+also provide their original regional font as the default for new Han glyphs.
+Latin, Latin Extended, Vietnamese, and combining marks select `latin` when
+they need Unicode fallback. Already-encodable text stays in its original font
+or the existing Standard 14 fallback.
+
+Coverage uses the selected font's actual cmap. Missing glyphs try the selected
+font first, then `sc -> tc -> jp -> kr`, skipping the selected font's duplicate.
+The pure splitter accepts a `covers(fontId, codePoint)` predicate to apply
+the same fallback without I/O. Unsupported scripts remain rejected even if
+an injected font happens to contain their outlines.
+
+Each source is lazy-loaded independently; per-font byte sizes are not measured
+here. The default loader fetches only needed fonts (including cmap fallbacks)
+from `${process.env.__NEXT_ROUTER_BASEPATH}/fonts/<file>` (empty basePath by
+default). Assets are not JavaScript imports. Bytes, in-flight loads, and parsed
+source metrics are cached per font; failed loads can be retried.
 The legacy public `pdf.worker.min.mjs` is not referenced by current product
 code; the native PDF worker is emitted with
 `new URL('./pdf.worker.ts', import.meta.url)`. Tests and other consumers can pass
-raw `Uint8Array` bytes or an asynchronous loader function instead of fetching.
-Keep injected source bytes immutable while the document uses them.
+raw `Uint8Array` bytes or an asynchronous loader function instead of fetching;
+a single source supplies every selected id. A partial font-id record supplies
+independent sources, for example `{ sc: scBytes, tc: async () => tcBytes }`;
+unspecified ids use the default loader. Keep injected source bytes immutable.
 
 #### TrueType subset and PDF objects
 
@@ -111,19 +140,21 @@ Keep injected source bytes immutable while the document uses them.
   with a CIDFontType2 descendant, a binary `/CIDToGIDMap`, `/W` advances scaled
   from hmtx to 1000/em, and a symbolic FontDescriptor (Flags 4). `/FontFile2`
   contains the Flate-compressed subset and an uncompressed `/Length1`.
-  Six-letter subset tags prefix `NotoSansSC`.
+  Six-letter subset tags prefix the registry's `NotoSansSC`, `NotoSansTC`,
+  `NotoSansJP`, `NotoSansKR`, or `NotoSans` name.
   Descriptor ascent/descent use signed `hhea` metrics (OS/2 typo metrics when
   absent), and `head` bounds are scaled to 1000/em. Cap height comes from OS/2
   when positive, italic angle from `post`, and StemV defaults to 80.
 - Compact two-byte CIDs identify Unicode scalars, not UTF-8 bytes or guessed
   glyph IDs. `/ToUnicode` maps every used CID to UTF-16BE, including surrogate
   pairs for supplementary scalars, in bounded bfchar blocks.
-- A document object map owns one font graph. Subsequent preparations union
-  the scalar sets, retain existing CIDs and object references, and regenerate
-  the subset, widths, CIDToGIDMap, and ToUnicode. Save/reopen recovers the same
-  compact-CID graph. The full source font remains available for new glyphs.
-  Concurrent preparations are serialized; restored object graphs invalidate
-  stale subset coverage.
+- A document object map owns one graph per used font. Subsequent preparations
+  union each font's scalar set, retain its existing CIDs and object references,
+  and regenerate its subset, widths, CIDToGIDMap, and ToUnicode. Save/reopen
+  recovers each regional compact-CID graph. Full source fonts remain available
+  for new glyphs. Concurrent preparations are serialized; restored object
+  graphs invalidate stale subset coverage. Multi-font preparation stages all
+  graphs before publishing any of them to the document.
 - Newly added Standard 14 page, annotation, signature, and AcroForm resource
   fonts are indirect objects. Their references remain resolvable across full
   and explicitly incremental saves, including the worker bridge.
@@ -132,8 +163,8 @@ Only used outlines, composite dependencies, retained metrics/hinting/metadata,
 and the PDF font graph increase exported PDF size—not the entire source font.
 Exact subset size depends on glyphs and retained hinting tables. Source font
 embedding permissions are checked before publishing the graph.
-The asset is distributed under SIL OFL-1.1; its copyright and license are in
-`public/fonts/NotoSansSC-OFL.txt`. Exported documents are not themselves subject
+The assets are distributed under SIL OFL-1.1; their copyright and license paths
+are listed in the registry above. Exported documents are not themselves subject
 to the OFL font-software license.
 
 #### Commit, layout, and save behavior
@@ -152,8 +183,10 @@ resources/content intact; no lossy download is attempted.
 
 Mixed edits emit adjacent text-show runs: encodable characters stay in their
 original font, otherwise Latin/Symbol/Dingbats use the existing Standard 14
-fallbacks, and remaining covered scalars use the embedded font with hex
-Identity-H operands. Quote operators retain their spacing and line movement;
+fallbacks, and remaining covered scalars use their selected embedded fonts with
+hex Identity-H operands. Font switches share one text object and use each font's
+own advances; resource names avoid existing fonts and one another.
+Quote operators retain their spacing and line movement;
 grouped operands do not repeat the replacement. The prior font is restored for
 following text. New floating text wraps using the selected advances, including
 CJK token splitting, and line-edit layout uses embedded widths rather than a
@@ -179,15 +212,21 @@ preparation before submitting previously unsupported text. Without preparation,
 the phase-1 warning/error contract remains unchanged. Existing WinAnsi
 punctuation substitutions and finite Symbol/Dingbats encodings are unchanged.
 
-Boundaries: static TrueType `glyf` outlines only; no shaping, vertical text, or
-Unicode fallback chain beyond this one regular Noto font. CFF, variable-font
-instantiation, WOFF/WOFF2, and font collections are not subset by this API.
-Coverage is the asset's actual cmap, not its family name.
+Boundaries: static TrueType `glyf` outlines only; no shaping or vertical text.
+Thai, Indic scripts (including Devanagari), Arabic/RTL, and emoji are not
+supported yet and retain `UnsupportedGlyphsError` with the exact unavailable
+characters. Han unification cannot infer language from Han alone: default
+SC glyph shapes remain unless kana/Hangul context or `preferredHanFont` selects
+a regional face. CFF, variable-font instantiation, WOFF/WOFF2, and font
+collections are not subset by this API. Coverage is the asset's actual cmap,
+not its family name.
 
 Regression sources:
 `src/engine/__tests__/ttf-subsetter.test.ts`,
-`src/engine/__tests__/unicode-font-embed.test.ts`, and
-`src/engine/__tests__/unicode-font-export.test.ts`.
+`src/engine/__tests__/unicode-font-embed.test.ts`,
+`src/engine/__tests__/unicode-font-export.test.ts`,
+`src/engine/__tests__/script-fonts.test.ts`, and
+`src/engine/__tests__/multiscript-font-export.test.ts`.
 They include independent sfnt/checksum/loca/composite inspection, native font
 and CMap reparsing, quick/optimized export round trips, supplementary scalars,
 and committed-font outline comparisons. Cross-viewer visual validation remains
