@@ -51,3 +51,24 @@ npm test
 npm run lint
 npm run build
 ```
+
+### No-edit integrity guards
+
+`npx vitest run src/engine/__tests__/no-edit-integrity.test.ts src/engine/__tests__/golden/golden-smoke.test.ts`
+
+The integrity suite compares glyph codes, characters, and page-space origins
+before and after the browser-facing `explodeTJGaps` entry point, with a
+`1e-3` coordinate tolerance. It defines 240 independently seeded synthetic
+streams, plus cairo, Chrome/Skia, and Word operator shapes. Failure diagnostics
+include the seed and replay stream; a hand-reduced consecutive-TJ stream is
+included when it independently reproduces the mismatch.
+
+Synthetic three-page documents exercise quick saves with empty modified keys,
+optimized saves, and the editor's normalize-on-open content update followed by
+export and reopen. Unchanged streams must retain their exact text; normalized
+streams must retain the original glyph sequence and positions. Finalized
+signature markers must retain every original byte. These markers test save
+policy, not cryptographic signature validity.
+
+Pull requests run TypeScript checking, the complete Vitest suite, and Next build
+in `.github/workflows/ci.yml`.
