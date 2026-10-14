@@ -16,6 +16,12 @@ Bloom's PDF engine is a browser-native TypeScript implementation. It parses PDF 
 
 The engine remains browser-native. Native content-stream editing, annotations, forms, page operations, rendering, PDF save behavior, and IndexedDB persistence must remain independent of any server conversion product surface.
 
+## Image soft masks
+
+`src/engine/render/image-decoder.ts` applies image `/SMask` alpha to decoded RGBA, including browser-decoded JPEG base images. DeviceGray masks support 1-, 2-, 4-, 8-, and 16-bit samples with byte-padded rows, `/Decode` mapping, and nearest-neighbour resizing to the decoded base image dimensions. Images without a mask retain their existing opacity. `/Matte` unpremultiplication is not implemented.
+
+Synthetic public-decoder regressions: `npm test -- src/engine/__tests__/image-decoder.test.ts`.
+
 ## Export
 
 The editor exports PNG, JPEG, SVG, and plain text in the browser. PDF save and optimization remain native writer operations.

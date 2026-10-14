@@ -52,14 +52,15 @@ export async function decodeImage(
   if (filters.includes('DCTDecode') || filters.includes('DCT')) {
     // Use getBytes() because if there was FlateDecode+DCTDecode,
     // our parser already applied Flate — getBytes() gives us the JPEG data
-    return decodeJPEG(imageStream.getBytes(), width, height);
+    const image = await decodeJPEG(imageStream.getBytes(), width, height);
+    return applySoftMask(image, dict, objects);
   }
 
   // Get decoded stream bytes
   const imageBytes = imageStream.getBytes();
 
   if (isImageMask) {
-    return decodeImageMask(imageBytes, width, height, bpc);
+    return applySoftMask(decodeImageMask(imageBytes, width, height, bpc), dict, objects);
   }
 
   // Parse color space
@@ -75,35 +76,78 @@ export async function decodeImage(
   const decodeArr = dict.getArray('Decode') ?? dict.getArray('D');
   const decode = decodeArr ? decodeArr.asNumbers() : getDefaultDecode(colorSpace.numComponents, bpc);
 
-  // Handle soft mask
-  let smaskData: Uint8Array | null = null;
-  const smaskRef = dict.get('SMask');
-  if (smaskRef) {
-    const smask = resolveRef(smaskRef, objects);
-    if (smask instanceof PDFStream) {
-      smaskData = smask.getBytes();
-    }
-  }
-
   // Decode pixels
   const rgba = new Uint8ClampedArray(width * height * 4);
   const numComponents = colorSpace.numComponents;
 
   if (bpc === 8 && numComponents === 3 && colorSpace.name === 'DeviceRGB') {
     // Fast path: 8-bit RGB
-    decodeRGB8(imageBytes, rgba, width, height, decode, smaskData);
+    decodeRGB8(imageBytes, rgba, width, height, decode);
   } else if (bpc === 8 && numComponents === 1 && colorSpace.name === 'DeviceGray') {
     // Fast path: 8-bit Grayscale
-    decodeGray8(imageBytes, rgba, width, height, decode, smaskData);
+    decodeGray8(imageBytes, rgba, width, height, decode);
   } else if (bpc === 8 && numComponents === 4 && colorSpace.name === 'DeviceCMYK') {
     // Fast path: 8-bit CMYK
-    decodeCMYK8(imageBytes, rgba, width, height, decode, smaskData);
+    decodeCMYK8(imageBytes, rgba, width, height, decode);
   } else {
     // Generic path: handles all BPC/color space combinations
-    decodeGeneric(imageBytes, rgba, width, height, bpc, numComponents, colorSpace, decode, smaskData);
+    decodeGeneric(imageBytes, rgba, width, height, bpc, numComponents, colorSpace, decode);
   }
 
-  return { data: rgba, width, height };
+  return applySoftMask({ data: rgba, width, height }, dict, objects);
+}
+
+// ─── Soft masks ─────────────────────────────────────────────────────────────
+
+function applySoftMask(
+  image: DecodedImage | null,
+  dict: PDFDict,
+  objects: Map<string, PDFObject>,
+): DecodedImage | null {
+  if (!image) return null;
+  const smaskRef = dict.get('SMask');
+  if (!smaskRef) return image;
+  const smask = resolveRef(smaskRef, objects);
+  if (!(smask instanceof PDFStream)) return image;
+
+  const maskWidth = smask.dict.getNumber('Width') ?? smask.dict.getNumber('W') ?? 0;
+  const maskHeight = smask.dict.getNumber('Height') ?? smask.dict.getNumber('H') ?? 0;
+  const bpc = smask.dict.getNumber('BitsPerComponent') ?? smask.dict.getNumber('BPC') ?? 8;
+  if (maskWidth <= 0 || maskHeight <= 0) return image;
+  if (bpc !== 1 && bpc !== 2 && bpc !== 4 && bpc !== 8 && bpc !== 16) return image;
+
+  const decode = smask.dict.getArray('Decode') ?? smask.dict.getArray('D');
+  const decodeMin = decode?.get(0);
+  const decodeMax = decode?.get(1);
+  const dMin = decodeMin instanceof PDFNumber ? decodeMin.value : 0;
+  const dMax = decodeMax instanceof PDFNumber ? decodeMax.value : 1;
+  const maxSample = (1 << bpc) - 1;
+  const alphaScale = (dMax - dMin) * 255 / maxSample;
+  const alphaOffset = dMin * 255;
+  const rowBytes = Math.ceil(maskWidth * bpc / 8);
+  const src = smask.getBytes();
+  const scaleX = maskWidth / image.width;
+  const scaleY = maskHeight / image.height;
+
+  // Sample directly into RGBA: no intermediate unpacked or resized mask buffer.
+  for (let y = 0, k = 3; y < image.height; y++) {
+    const rowOffset = Math.floor(y * scaleY) * rowBytes;
+    for (let x = 0; x < image.width; x++, k += 4) {
+      const bitOffset = Math.floor(x * scaleX) * bpc;
+      const byteOffset = rowOffset + (bitOffset >> 3);
+      // Preserve the existing opaque fallback for truncated mask streams.
+      if (byteOffset + (bpc === 16 ? 1 : 0) >= src.length) {
+        image.data[k] = 255;
+        continue;
+      }
+      const sample = bpc === 16
+        ? src[byteOffset] * 256 + src[byteOffset + 1]
+        : (src[byteOffset] >> (8 - bpc - (bitOffset & 7))) & maxSample;
+      image.data[k] = Math.round(alphaOffset + sample * alphaScale);
+    }
+  }
+
+  return image;
 }
 
 // ─── Fast path decoders ─────────────────────────────────────────────────────
@@ -111,7 +155,6 @@ export async function decodeImage(
 function decodeRGB8(
   src: Uint8Array, dst: Uint8ClampedArray,
   w: number, h: number, decode: number[],
-  smask: Uint8Array | null,
 ): void {
   const [dMin0, dMax0, dMin1, dMax1, dMin2, dMax2] = decode;
   const needsDecode = dMin0 !== 0 || dMax0 !== 1 || dMin1 !== 0 || dMax1 !== 1 || dMin2 !== 0 || dMax2 !== 1;
@@ -130,14 +173,13 @@ function decodeRGB8(
     dst[k] = r;
     dst[k + 1] = g;
     dst[k + 2] = b;
-    dst[k + 3] = smask ? (smask[i] ?? 255) : 255;
+    dst[k + 3] = 255;
   }
 }
 
 function decodeGray8(
   src: Uint8Array, dst: Uint8ClampedArray,
   w: number, h: number, decode: number[],
-  smask: Uint8Array | null,
 ): void {
   const [dMin, dMax] = decode;
 
@@ -149,14 +191,13 @@ function decodeGray8(
     dst[k] = gray;
     dst[k + 1] = gray;
     dst[k + 2] = gray;
-    dst[k + 3] = smask ? (smask[i] ?? 255) : 255;
+    dst[k + 3] = 255;
   }
 }
 
 function decodeCMYK8(
   src: Uint8Array, dst: Uint8ClampedArray,
   w: number, h: number, decode: number[],
-  smask: Uint8Array | null,
 ): void {
   for (let i = 0, j = 0, k = 0; i < w * h; i++, j += 4, k += 4) {
     let c = (src[j] ?? 0) / 255;
@@ -178,7 +219,7 @@ function decodeCMYK8(
     dst[k] = Math.round(r * 255);
     dst[k + 1] = Math.round(g * 255);
     dst[k + 2] = Math.round(b * 255);
-    dst[k + 3] = smask ? (smask[i] ?? 255) : 255;
+    dst[k + 3] = 255;
   }
 }
 
@@ -188,7 +229,7 @@ function decodeGeneric(
   src: Uint8Array, dst: Uint8ClampedArray,
   w: number, h: number, bpc: number,
   numComponents: number, colorSpace: ColorSpace,
-  decode: number[], smask: Uint8Array | null,
+  decode: number[],
 ): void {
   const maxVal = (1 << bpc) - 1;
   const reader = new BitReader(src);
@@ -209,7 +250,7 @@ function decodeGeneric(
     dst[k] = Math.round(rgb[0] * 255);
     dst[k + 1] = Math.round(rgb[1] * 255);
     dst[k + 2] = Math.round(rgb[2] * 255);
-    dst[k + 3] = smask ? (smask[i] ?? 255) : 255;
+    dst[k + 3] = 255;
   }
 }
 
