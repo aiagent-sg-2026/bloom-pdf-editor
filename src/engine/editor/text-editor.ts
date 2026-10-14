@@ -139,22 +139,24 @@ export function applyTextEdits(
     }
 
     const rawIndices = edit.targetRun.sourceInstructionIndices ?? [];
-
-    // Cover original run ink before rewrite (grow or shrink). Prevents ghost
-    // glyphs when sibling fragments / subset fonts leave paint behind.
-    if (edit.newText !== edit.targetRun.text && rawIndices.length > 0) {
-      const inserted = insertEraseRectForRun(
-        instructions,
-        edit.targetRun,
-        edit.newText,
-        Math.min(...rawIndices) + indexOffset,
-      );
-      indexOffset += inserted;
-    }
-
-    const sourceInstructionIndices = rawIndices.map(i => i + indexOffset);
+    let sourceInstructionIndices = rawIndices.map(i => i + indexOffset);
 
     if (sourceInstructionIndices.length > 1) {
+      const fullyMatched = sourceInstructionIndices.every(idx => {
+        const inst = instructions[idx];
+        return inst && isTextShowingOperator(inst.operator);
+      });
+      if (!fullyMatched) {
+        // Unmatched source indices can leave original glyphs in the stream.
+        // Keep the white erase only for this incomplete-rewrite fallback.
+        const inserted = insertEraseRectForRun(
+          instructions,
+          edit.targetRun,
+          Math.min(...sourceInstructionIndices),
+        );
+        indexOffset += inserted;
+        sourceInstructionIndices = sourceInstructionIndices.map(i => i + inserted);
+      }
       const wrote = applyGroupedTextEdit(
         instructions,
         sourceInstructionIndices,
@@ -194,9 +196,22 @@ export function applyTextEdits(
         page,
         objects,
       );
+      if (matched) {
+        // Earlier edits may have inserted operators before this fuzzy match.
+        matched.index = instructions.indexOf(matched.instruction);
+        if (matched.index < 0) matched = null;
+      }
     }
 
     if (!matched) {
+      if (sourceInstructionIndices.length === 1) {
+        // Only a placement hint remains: the original showing op was not found.
+        indexOffset += insertEraseRectForRun(
+          instructions,
+          edit.targetRun,
+          sourceInstructionIndices[0],
+        );
+      }
       console.warn('[TextEditor] Could not match text run to instruction');
       continue;
     }
@@ -1353,20 +1368,17 @@ function isTextShowingOperator(op: string): boolean {
 }
 
 /**
- * Paint a white rectangle over the text run's bounding box before replacing text.
- * Prevents longer edits from visually overlapping adjacent content.
+ * Retain the legacy white erase only when original text operators cannot all
+ * be rewritten. Complete rewrites remove old glyph operands without painting.
  */
 function insertEraseRectForRun(
   instructions: CSInstruction[],
   run: TextRun,
-  newText: string,
   hintIndex: number,
 ): number {
   if (hintIndex < 0 || hintIndex >= instructions.length) return 0;
 
-  // Always cover the ORIGINAL run bounds before rewriting. Growing still needs
-  // this when subset-font glyphs / sibling fragments would otherwise ghost under
-  // the replacement. Never expand the erase past the original run width.
+  // Limit this incomplete-rewrite fallback to the original run bounds.
   let btIndex = hintIndex;
   for (let i = hintIndex; i >= 0; i--) {
     if (instructions[i].operator === 'BT') {
