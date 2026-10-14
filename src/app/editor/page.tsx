@@ -306,7 +306,7 @@ export default function EditorPage() {
   const [isRendering, setIsRendering] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [glyphWarning, setGlyphWarning] = useState<string | null>(null);
-  const [loadingCjkFont, setLoadingCjkFont] = useState(false);
+  const [loadingFont, setLoadingFont] = useState(false);
   const showUnsupportedGlyphWarning = useCallback((cause: unknown): boolean => {
     if (!(cause instanceof UnsupportedGlyphsError)) return false;
     setGlyphWarning(cause.message);
@@ -1744,15 +1744,10 @@ export default function EditorPage() {
     const page = doc.pages[currentPage];
     const runs = (fontNames?.length ? fontNames.map(name => engine.loadFontForName(name, page, doc.objects)) : [null])
       .map(fontData => ({ text, fontData }));
-    try {
-      for (const run of runs) engine.assertTextEncodable(run.text, run.fontData, true, doc.objects);
-      return;
-    } catch (cause) {
-      if (!(cause instanceof UnsupportedGlyphsError)) throw cause;
-    }
-    setLoadingCjkFont(true);
+    // Coverage in another subset does not imply the contextual font has that CID.
+    setLoadingFont(true);
     try { await engine.prepareTextForExport(doc.objects, runs); }
-    finally { setLoadingCjkFont(false); }
+    finally { setLoadingFont(false); }
   }, [doc, currentPage]);
 
   // ── Text edit submit — surgical in-place line edit (preserve positions) ──
@@ -6232,9 +6227,9 @@ export default function EditorPage() {
         />
       </div>
 
-      {loadingCjkFont && (
+      {loadingFont && (
         <div role="status" aria-live="polite" className="fixed bottom-10 left-1/2 -translate-x-1/2 bg-zinc-900 border border-app text-app-muted px-4 py-3 rounded-xl text-sm shadow-xl z-[100]">
-          Loading CJK font...
+          Loading font...
         </div>
       )}
 

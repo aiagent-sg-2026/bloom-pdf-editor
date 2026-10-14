@@ -38,9 +38,10 @@ import { ensureFallbackFont, registerFontObject } from '../fonts/font-augmentati
 import { ensureBuiltInFallbackFont, getBuiltInFallbackGlyph } from '../fonts/symbol-fallback';
 import { UnsupportedGlyphsError } from '../fonts/unsupported-glyphs';
 import {
-  prepareUnicodeFont, hasUnicodeGlyph, ensureUnicodeFont, encodeUnicodeText, unicodeGlyphWidth,
-  type UnicodeFontSource,
+  prepareUnicodeText, unicodeTextRuns, hasUnicodeGlyph, ensureUnicodeFont, encodeUnicodeText, unicodeGlyphWidth,
+  type UnicodeFontSources,
 } from '../fonts/unicode-font-embed';
+import { type ScriptFontId, type ScriptFontOptions, scriptFontId } from '../fonts/script-fonts';
 import { getStandardFontCharWidth } from '../fonts/standard14';
 import { resolveRunStyleFlags } from '../flow/metrics';
 import { serializeToString } from './stream-compiler';
@@ -654,7 +655,6 @@ export function insertTextRun(
 ): Uint8Array {
   assertTextEncodable(text, null, true, objects);
   const usesUnicode = unsupportedFallbackCodePoints(text, null, encodeTextWinAnsi(text)).length > 0;
-  if (usesUnicode) ensureUnicodeFont(page, objects);
   // Copy membership dictionaries, including inherited/indirect resources.
   const effective = resolvePageResources(page.dict, objects);
   const resources = new PDFDict([...effective.entries()]);
@@ -694,11 +694,13 @@ export function insertTextRun(
   const underlineSegments: string[] = [];
   const measure = (t: string): number => {
     let w = 0;
-    for (const ch of t) {
+    const needed = new Set(unsupportedFallbackCodePoints(t, null, encodeTextWinAnsi(t)));
+    const selected = needed.size ? unicodeTextRuns(objects, t, needed) : [{ fontId: 'latin' as const, text: t }];
+    for (const { fontId, text: part } of selected) for (const ch of part) {
       const cp = ch.codePointAt(0)!;
       const special = getBuiltInFallbackGlyph(ch);
       w += hasUnicodeGlyph(objects, cp) && unsupportedFallbackCodePoints(ch, null, encodeTextWinAnsi(ch)).length
-        ? unicodeGlyphWidth(objects, cp)
+        ? unicodeGlyphWidth(objects, cp, fontId)
         : special ? getStandardFontCharWidth(special.fontKind, special.code)
         : getStandardFontCharWidth(fontName, encodeTextWinAnsi(ch).pdfString.toBytes()[0] ?? 32);
     }
@@ -1223,11 +1225,17 @@ export function assertTextEncodable(
 export async function prepareTextForExport(
   objects: Map<string, PDFObject>,
   runs: readonly { text: string; fontData?: FontData | null }[],
-  source?: UnicodeFontSource,
+  source?: UnicodeFontSources,
+  options?: ScriptFontOptions,
 ): Promise<void> {
-  const missing = runs.flatMap(({ text, fontData }) =>
-    unsupportedFallbackCodePoints(text, fontData ?? null, encodeTextForFont(text, fontData ?? null)));
-  await prepareUnicodeFont(objects, missing, source);
+  const missing = runs.map(({ text, fontData }) => {
+    const id = fontData && scriptFontId(fontData.baseFont);
+    return {
+      text, codePoints: unsupportedFallbackCodePoints(text, fontData ?? null, encodeTextForFont(text, fontData ?? null)),
+      preferredHanFont: id && id !== 'latin' ? id : undefined,
+    };
+  });
+  await prepareUnicodeText(objects, missing, source, options);
 }
 
 /** Exact font advances for lines using the prepared Unicode fallback; other lines retain their estimator. */
@@ -1238,14 +1246,17 @@ export function measureUnicodeExportText(
   const unicodeCharacters = Array.from(text).filter(ch => ch.codePointAt(0)! > 255);
   if (!unicodeCharacters.length) return undefined;
   const font = loadFontForName(run.fontName, page, objects);
-  if (!font?.baseFont.endsWith('+NotoSansSC') &&
+  if (!scriptFontId(font?.baseFont ?? '') &&
       !unicodeCharacters.some(ch => hasUnicodeGlyph(objects, ch.codePointAt(0)!))) return undefined;
   const flags = resolveRunStyleFlags(run.fontName, font);
   const fallbackName = flags.bold && flags.italic ? 'Helvetica-BoldOblique'
     : flags.bold ? 'Helvetica-Bold' : flags.italic ? 'Helvetica-Oblique' : 'Helvetica';
   const visualSize = runFontSize(run);
   let width = 0, position = lineStart;
-  for (const ch of text) {
+  const needed = new Set(unsupportedFallbackCodePoints(text, font, encodeTextForFont(text, font)));
+  const selected = needed.size ? unicodeTextRuns(objects, text, needed, scriptFontId(font?.baseFont ?? ''))
+    : [{ fontId: 'latin' as const, text }];
+  for (const { fontId, text: part } of selected) for (const ch of part) {
     const cp = ch.codePointAt(0)!, encoded = encodeTextForFont(ch, font);
     let advance: number;
     if (!isEncodingLossy(ch, encoded, font)) {
@@ -1253,7 +1264,7 @@ export function measureUnicodeExportText(
       const code = font?.isComposite ? (bytes[0] << 8) | bytes[1] : bytes[0];
       advance = font?.widths.get(code) ?? font?.defaultWidth ?? getStandardFontCharWidth('Helvetica', code);
     } else if (unsupportedFallbackCodePoints(ch, font, encoded).length) {
-      advance = unicodeGlyphWidth(objects, cp);
+      advance = unicodeGlyphWidth(objects, cp, fontId);
     } else {
       const special = getBuiltInFallbackGlyph(ch);
       advance = special ? getStandardFontCharWidth(special.fontKind, special.code)
@@ -1270,9 +1281,13 @@ function splitExportRuns(
   text: string, originalFont: string, fontData: FontData | null,
   page: PDFPageInfo, objects: Map<string, PDFObject>,
 ): { fontKey: string; operand: PDFObject }[] {
-  if (Array.from(text).some(ch => unsupportedFallbackCodePoints(ch, fontData, encodeTextForFont(ch, fontData)).length)) {
-    ensureUnicodeFont(page, objects);
-  } else if (fontData) {
+  const needed = new Set(unsupportedFallbackCodePoints(text, fontData, encodeTextForFont(text, fontData)));
+  const selected = needed.size ? unicodeTextRuns(objects, text, needed, scriptFontId(fontData?.baseFont ?? ''))
+    : [{ fontId: 'latin' as const, text }];
+  for (const part of selected) {
+    if (Array.from(part.text).some(ch => needed.has(ch.codePointAt(0)!))) ensureUnicodeFont(page, objects, part.fontId);
+  }
+  if (!needed.size && fontData) {
     // A reopened Unicode font can already cover the non-Latin run. Preserve its
     // inherited resources when adding a Standard 14 font for the Latin run.
     const effective = resolvePageResources(page.dict, objects);
@@ -1282,13 +1297,13 @@ function splitExportRuns(
     resources.set('Font', new PDFDict(resolved instanceof PDFDict ? [...resolved.entries()] : []));
     page.dict.set('Resources', resources); page.resources = resources;
   }
-  const groups: { fontKey: string; text: string; kind: 'original' | 'latin' | 'unicode' | 'symbol' }[] = [];
-  for (const ch of text) {
+  const groups: { fontKey: string; text: string; fontId: ScriptFontId; kind: 'original' | 'latin' | 'unicode' | 'symbol' }[] = [];
+  for (const { fontId, text: part } of selected) for (const ch of part) {
     const encoded = encodeTextForFont(ch, fontData);
     let fontKey = originalFont, kind: 'original' | 'latin' | 'unicode' | 'symbol' = 'original', value = ch;
     if (isEncodingLossy(ch, encoded, fontData)) {
       if (unsupportedFallbackCodePoints(ch, fontData, encoded).length) {
-        fontKey = ensureUnicodeFont(page, objects); kind = 'unicode';
+        fontKey = ensureUnicodeFont(page, objects, fontId); kind = 'unicode';
       } else {
         const special = getBuiltInFallbackGlyph(ch);
         if (special) {
@@ -1301,11 +1316,11 @@ function splitExportRuns(
     }
     const previous = groups[groups.length - 1];
     if (previous?.fontKey === fontKey && previous.kind === kind) previous.text += value;
-    else groups.push({ fontKey, kind, text: value });
+    else groups.push({ fontKey, kind, text: value, fontId });
   }
   return groups.map(group => ({
     fontKey: group.fontKey,
-    operand: group.kind === 'unicode' ? encodeUnicodeText(objects, group.text)
+    operand: group.kind === 'unicode' ? encodeUnicodeText(objects, group.text, group.fontId)
       : group.kind === 'symbol' ? new PDFString(group.text)
       : group.kind === 'latin' ? encodeTextWinAnsi(group.text).pdfString
       : encodeTextForFont(group.text, fontData).pdfString,

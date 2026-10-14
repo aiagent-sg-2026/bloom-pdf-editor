@@ -8,8 +8,13 @@ import { parseTTF, type TTFFont } from './truetype-parser';
 import { subsetTrueType } from './ttf-subsetter';
 import { UnsupportedGlyphsError } from './unsupported-glyphs';
 import { parseCMap } from './cmap-parser';
+import {
+  SCRIPT_FONTS, splitScriptRuns, fontFallbackChain,
+  type ScriptFontId, type ScriptFontOptions, type ScriptFontRun,
+} from './script-fonts';
 
 export type UnicodeFontSource = Uint8Array | (() => Promise<Uint8Array>);
+export type UnicodeFontSources = UnicodeFontSource | Partial<Record<ScriptFontId, UnicodeFontSource>>;
 
 interface EmbeddedFont {
   source: Uint8Array;
@@ -21,30 +26,47 @@ interface EmbeddedFont {
   program: PDFStream;
   toUnicode: PDFStream;
 }
-const fonts = new WeakMap<Map<string, PDFObject>, EmbeddedFont>();
+const fonts = new WeakMap<Map<string, PDFObject>, Map<ScriptFontId, EmbeddedFont>>();
+const preferences = new WeakMap<Map<string, PDFObject>, ScriptFontOptions>();
 const preparations = new WeakMap<Map<string, PDFObject>, Promise<void>>();
 const parsedSources = new WeakMap<Uint8Array, TTFFont>();
-let bundledFont: Promise<Uint8Array> | undefined;
+const loadedSources = new WeakMap<() => Promise<Uint8Array>, Promise<Uint8Array>>();
+const bundledFonts: Partial<Record<ScriptFontId, Promise<Uint8Array>>> = {};
 let nextSubset = 0;
 
-async function loadBundledFont(): Promise<Uint8Array> {
-  if (!bundledFont) {
-    // Next replaces this constant with the configured basePath, including static exports.
-    const basePath = process.env.__NEXT_ROUTER_BASEPATH ?? '';
-    bundledFont = fetch(`${basePath}/fonts/NotoSansSC-Regular.ttf`).then(async response => {
-      if (!response.ok) throw new Error(`Font download failed (${response.status})`);
-      return new Uint8Array(await response.arrayBuffer());
-    }).catch(error => { bundledFont = undefined; throw error; });
+async function loadSource(id: ScriptFontId, source?: UnicodeFontSources): Promise<{ bytes: Uint8Array; font: TTFFont }> {
+  const selected = source instanceof Uint8Array || typeof source === 'function' ? source : source?.[id];
+  let bytes: Uint8Array;
+  if (selected instanceof Uint8Array) bytes = selected;
+  else if (selected) {
+    let pending = loadedSources.get(selected);
+    if (!pending) {
+      pending = selected().catch(error => { loadedSources.delete(selected); throw error; });
+      loadedSources.set(selected, pending);
+    }
+    bytes = await pending;
+  } else {
+    if (!bundledFonts[id]) {
+      // Next replaces this constant with the configured basePath, including static exports.
+      const basePath = process.env.__NEXT_ROUTER_BASEPATH ?? '';
+      bundledFonts[id] = fetch(`${basePath}${SCRIPT_FONTS[id].assetPath}`).then(async response => {
+        if (!response.ok) throw new Error(`Font download failed (${response.status})`);
+        return new Uint8Array(await response.arrayBuffer());
+      }).catch(error => { delete bundledFonts[id]; throw error; });
+    }
+    bytes = await bundledFonts[id]!;
   }
-  return bundledFont;
+  const font = parsedSources.get(bytes) ?? parseTTF(bytes);
+  parsedSources.set(bytes, font);
+  return { bytes, font };
 }
 /** Recover the engine's compact CID graph after save/reopen, without treating its subset as the source font. */
-function findEmbeddedFont(objects: Map<string, PDFObject>, source: Uint8Array, font: TTFFont): EmbeddedFont | undefined {
+function findEmbeddedFont(objects: Map<string, PDFObject>, source: Uint8Array, font: TTFFont, id: ScriptFontId): EmbeddedFont | undefined {
   for (const [key, value] of objects) {
     if (!(value instanceof PDFDict) || value.getName('Subtype') !== 'Type0' ||
         value.getName('Encoding') !== 'Identity-H') continue;
     const name = value.getName('BaseFont');
-    if (!name || !/^[A-Z]{6}\+NotoSansSC$/.test(name)) continue;
+    if (!name || !/^[A-Z]{6}\+/.test(name) || name.slice(7) !== SCRIPT_FONTS[id].baseFont) continue;
     const descendants = value.get('DescendantFonts');
     const descendantRef = descendants instanceof PDFArray ? descendants.get(0) : undefined;
     const unicodeRef = value.get('ToUnicode');
@@ -75,13 +97,13 @@ function findEmbeddedFont(objects: Map<string, PDFObject>, source: Uint8Array, f
 
 /** Prepare all required scalars before resource/content mutations. Existing CIDs never change. */
 export async function prepareUnicodeFont(
-  objects: Map<string, PDFObject>, codePoints: Iterable<number>, source?: UnicodeFontSource,
+  objects: Map<string, PDFObject>, codePoints: Iterable<number>, source?: UnicodeFontSource, id: ScriptFontId = 'sc',
 ): Promise<void> {
   const requested = [...new Set(codePoints)];
   if (!requested.length) return;
   const previous = preparations.get(objects) ?? Promise.resolve();
   const preparation = previous.catch(() => {}).then(async () => {
-    const cached = fonts.get(objects);
+    const cached = fonts.get(objects)?.get(id);
     // History restoration can remove the graph. Preserve source bytes but rebuild that graph.
     const root = cached && objects.get(cached.refs[0].toKey());
     let existing = cached && root instanceof PDFDict && root.getName('BaseFont') === cached.name &&
@@ -92,9 +114,7 @@ export async function prepareUnicodeFont(
       if (requested.every(cp => cids.has(cp))) return;
     }
     try {
-      const bytes = cached?.source ?? (source instanceof Uint8Array ? source : await (source ?? loadBundledFont)());
-      const font = cached?.font ?? parsedSources.get(bytes) ?? parseTTF(bytes);
-      parsedSources.set(bytes, font);
+      const { bytes, font } = cached ? { bytes: cached.source, font: cached.font } : await loadSource(id, source);
       const absent = requested.filter(cp => !Number.isInteger(cp) || cp < 0 || cp > 0x10ffff ||
         (cp >= 0xd800 && cp <= 0xdfff) || !(font.cmapEntries.get(cp) ?? 0));
       if (absent.length) throw new UnsupportedGlyphsError(absent);
@@ -103,7 +123,7 @@ export async function prepareUnicodeFont(
         const permissions = new DataView(bytes.buffer, bytes.byteOffset + os2.offset, os2.length).getUint16(8);
         if (permissions & (0x0002 | 0x0100 | 0x0200)) throw new Error('Font license forbids outline subsetting/embedding');
       }
-      existing ??= findEmbeddedFont(objects, bytes, font);
+      existing ??= findEmbeddedFont(objects, bytes, font, id);
       const cids = new Map(existing?.cids);
       for (const cp of requested) if (!cids.has(cp)) cids.set(cp, cids.size + 1);
       const unavailable = [...cids.keys()].filter(cp => !(font.cmapEntries.get(cp) ?? 0));
@@ -123,7 +143,7 @@ export async function prepareUnicodeFont(
           tag = '';
           for (let i = 0; i < 6; i++) { tag = String.fromCharCode(65 + sequence % 26) + tag; sequence = Math.floor(sequence / 26); }
         } while (occupied.has(tag));
-        name = `${tag}+NotoSansSC`;
+        name = `${tag}+${SCRIPT_FONTS[id].baseFont}`;
       }
       const subset = subsetTrueType(bytes, cids.keys(), name, font);
       if (typeof CompressionStream === 'undefined') throw new Error('Flate compression is unavailable');
@@ -206,7 +226,9 @@ export async function prepareUnicodeFont(
       refs.forEach((ref, i) => objects.set(ref.toKey(), graph[i]));
       const modifiedKeys = new Set(existing?.modifiedKeys);
       for (const ref of refs) modifiedKeys.add(ref.toKey());
-      fonts.set(objects, { source: bytes, font, cids, name, refs, modifiedKeys, program, toUnicode });
+      let states = fonts.get(objects);
+      if (!states) { states = new Map(); fonts.set(objects, states); }
+      states.set(id, { source: bytes, font, cids, name, refs, modifiedKeys, program, toUnicode });
     } catch (error) {
       if (error instanceof UnsupportedGlyphsError) throw error;
       throw new UnsupportedGlyphsError(requested);
@@ -217,32 +239,132 @@ export async function prepareUnicodeFont(
   finally { if (preparations.get(objects) === preparation) preparations.delete(objects); }
 }
 
-export function hasUnicodeGlyph(objects: Map<string, PDFObject>, cp: number): boolean {
-  const font = fonts.get(objects);
-  return !!font && objects.get(font.refs[3].toKey()) === font.program &&
-    objects.get(font.refs[5].toKey()) === font.toUnicode && font.cids.has(cp);
+/** Resolve cmap coverage lazily, then publish all font graphs together or none. */
+export async function prepareUnicodeText(
+  objects: Map<string, PDFObject>,
+  runs: readonly { text: string; codePoints: readonly number[]; preferredHanFont?: ScriptFontOptions['preferredHanFont'] }[],
+  source?: UnicodeFontSources, options: ScriptFontOptions = {},
+): Promise<void> {
+  const requested = [...new Set(runs.flatMap(run => run.codePoints))];
+  if (!requested.length) return;
+  const previous = preparations.get(objects) ?? Promise.resolve();
+  const preparation = previous.catch(() => {}).then(async () => {
+    const settings = { ...preferences.get(objects), ...options };
+    const byFont = new Map<ScriptFontId, Set<number>>();
+    const unavailable = new Set<number>();
+    try {
+      for (const run of runs) {
+        const needed = new Set(run.codePoints);
+        // Keep CJK neighbours for contextual Han selection, without validating
+        // characters already encodable by the original or Standard 14 fonts.
+        let context = Array.from(run.text, ch => needed.has(ch.codePointAt(0)!) ||
+          /[\p{Script=Han}\p{Script=Hiragana}\p{Script=Katakana}\p{Script=Hangul}]/u.test(ch) ? ch : ' ').join('');
+        const runSettings = { preferredHanFont: run.preferredHanFont, ...settings };
+        let parts: ScriptFontRun[];
+        try { parts = splitScriptRuns(context, runSettings); }
+        catch (error) {
+          if (!(error instanceof UnsupportedGlyphsError)) throw error;
+          for (const cp of error.codePoints) unavailable.add(cp);
+          context = Array.from(context, ch => unavailable.has(ch.codePointAt(0)!) ? ' ' : ch).join('');
+          parts = splitScriptRuns(context, runSettings);
+        }
+        for (const part of parts) {
+          for (const ch of part.text) {
+            const cp = ch.codePointAt(0)!;
+            if (!needed.has(cp)) continue;
+            let selected: ScriptFontId | undefined;
+            for (const id of fontFallbackChain(part.fontId)) {
+              const cached = fonts.get(objects)?.get(id);
+              const font = cached?.font ?? (await loadSource(id, source)).font;
+              if (font.cmapEntries.get(cp)) { selected = id; break; }
+            }
+            if (!selected) { unavailable.add(cp); continue; }
+            let points = byFont.get(selected);
+            if (!points) { points = new Set(); byFont.set(selected, points); }
+            points.add(cp);
+          }
+        }
+      }
+      if (unavailable.size) throw new UnsupportedGlyphsError(requested.filter(cp => unavailable.has(cp)));
+      const staged = new Map(objects);
+      fonts.set(staged, new Map(fonts.get(objects)));
+      for (const [id, points] of byFont) {
+        const cached = fonts.get(objects)?.get(id);
+        const bytes = cached?.source ?? (await loadSource(id, source)).bytes;
+        await prepareUnicodeFont(staged, points, bytes, id);
+      }
+      const states = fonts.get(staged)!;
+      for (const state of states.values()) {
+        for (const ref of state.refs) {
+          const object = staged.get(ref.toKey());
+          if (object) objects.set(ref.toKey(), object);
+        }
+      }
+      fonts.set(objects, states);
+      preferences.set(objects, settings);
+    } catch (error) {
+      if (error instanceof UnsupportedGlyphsError) throw error;
+      throw new UnsupportedGlyphsError(requested);
+    }
+  });
+  preparations.set(objects, preparation);
+  try { await preparation; }
+  finally { if (preparations.get(objects) === preparation) preparations.delete(objects); }
 }
 
-export function unicodeGlyphWidth(objects: Map<string, PDFObject>, cp: number): number {
-  const state = fonts.get(objects);
-  if (!state || !hasUnicodeGlyph(objects, cp)) throw new UnsupportedGlyphsError([cp]);
+export function hasUnicodeGlyph(objects: Map<string, PDFObject>, cp: number, id?: ScriptFontId): boolean {
+  const states = fonts.get(objects);
+  const candidates = id ? [states?.get(id)] : states?.values() ?? [];
+  for (const state of candidates) {
+    if (state && objects.get(state.refs[3].toKey()) === state.program &&
+        objects.get(state.refs[5].toKey()) === state.toUnicode && state.cids.has(cp)) return true;
+  }
+  return false;
+}
+
+/** Resolve context first, then only already-prepared cmap fallbacks; never performs I/O. */
+export function unicodeTextRuns(
+  objects: Map<string, PDFObject>, text: string, needed?: ReadonlySet<number>, originalFont?: ScriptFontId,
+): ScriptFontRun[] {
+  const characters = Array.from(text);
+  const context = needed ? characters.map(ch => needed.has(ch.codePointAt(0)!) ||
+    /[\p{Script=Han}\p{Script=Hiragana}\p{Script=Katakana}\p{Script=Hangul}]/u.test(ch) ? ch : ' ').join('') : text;
+  let index = 0;
+  const settings = { preferredHanFont: originalFont !== 'latin' ? originalFont : undefined, ...preferences.get(objects) };
+  return splitScriptRuns(context, settings).flatMap(run => {
+    const result: ScriptFontRun[] = [];
+    for (const _ of run.text) {
+      const ch = characters[index++], cp = ch.codePointAt(0)!;
+      const fontId = fontFallbackChain(run.fontId).find(id => hasUnicodeGlyph(objects, cp, id)) ?? run.fontId;
+      const previous = result[result.length - 1];
+      if (previous?.fontId === fontId) previous.text += ch;
+      else result.push({ fontId, text: ch });
+    }
+    return result;
+  });
+}
+
+export function unicodeGlyphWidth(objects: Map<string, PDFObject>, cp: number, id?: ScriptFontId): number {
+  id ??= unicodeTextRuns(objects, String.fromCodePoint(cp))[0]?.fontId;
+  const state = id && fonts.get(objects)?.get(id);
+  if (!state || !hasUnicodeGlyph(objects, cp, id)) throw new UnsupportedGlyphsError([cp]);
   return state.font.advanceWidths[state.font.cmapEntries.get(cp)!] * 1000 / state.font.unitsPerEm;
 }
 
-export function encodeUnicodeText(objects: Map<string, PDFObject>, text: string): PDFHexString {
-  const state = fonts.get(objects);
+export function encodeUnicodeText(objects: Map<string, PDFObject>, text: string, id: ScriptFontId = 'sc'): PDFHexString {
+  const state = fonts.get(objects)?.get(id);
   let hex = '';
   for (const ch of text) {
     const cp = ch.codePointAt(0)!;
-    if (!state || !hasUnicodeGlyph(objects, cp)) throw new UnsupportedGlyphsError([cp]);
+    if (!state || !hasUnicodeGlyph(objects, cp, id)) throw new UnsupportedGlyphsError([cp]);
     hex += state.cids.get(cp)!.toString(16).padStart(4, '0');
   }
   return new PDFHexString(hex);
 }
 
 /** Copy effective resources before adding membership; never change inherited/sibling dictionaries. */
-export function ensureUnicodeFont(page: PDFPageInfo, objects: Map<string, PDFObject>): string {
-  const state = fonts.get(objects);
+export function ensureUnicodeFont(page: PDFPageInfo, objects: Map<string, PDFObject>, id: ScriptFontId = 'sc'): string {
+  const state = fonts.get(objects)?.get(id);
   if (!state || !objects.has(state.refs[0].toKey())) throw new Error('Unicode font was not prepared');
   state.modifiedKeys.add(page.ref.toKey());
   for (const ref of page.contentRefs) state.modifiedKeys.add(ref.toKey());
@@ -265,5 +387,7 @@ export function ensureUnicodeFont(page: PDFPageInfo, objects: Map<string, PDFObj
 
 /** Font graph/resource changes must join explicitly incremental quick saves. */
 export function unicodeFontModifiedKeys(objects: Map<string, PDFObject>): ReadonlySet<string> {
-  return fonts.get(objects)?.modifiedKeys ?? new Set<string>();
+  const keys = new Set<string>();
+  for (const state of fonts.get(objects)?.values() ?? []) for (const key of state.modifiedKeys) keys.add(key);
+  return keys;
 }
