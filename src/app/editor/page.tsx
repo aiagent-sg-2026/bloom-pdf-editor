@@ -305,6 +305,7 @@ export default function EditorPage() {
   const [isRendering, setIsRendering] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [glyphWarning, setGlyphWarning] = useState<string | null>(null);
+  const [loadingCjkFont, setLoadingCjkFont] = useState(false);
   const showUnsupportedGlyphWarning = useCallback((cause: unknown): boolean => {
     if (!(cause instanceof UnsupportedGlyphsError)) return false;
     setGlyphWarning(cause.message);
@@ -1735,6 +1736,23 @@ export default function EditorPage() {
     }
   }, [doc, currentPage, setEditingLine, renderResult, strokePaths, detectedTables]);
 
+  const prepareExportText = useCallback(async (text: string, fontNames?: string[]) => {
+    const engine = engineRef.current;
+    if (!doc || !engine) return;
+    const page = doc.pages[currentPage];
+    const runs = (fontNames?.length ? fontNames.map(name => engine.loadFontForName(name, page, doc.objects)) : [null])
+      .map(fontData => ({ text, fontData }));
+    try {
+      for (const run of runs) engine.assertTextEncodable(run.text, run.fontData, true, doc.objects);
+      return;
+    } catch (cause) {
+      if (!(cause instanceof UnsupportedGlyphsError)) throw cause;
+    }
+    setLoadingCjkFont(true);
+    try { await engine.prepareTextForExport(doc.objects, runs); }
+    finally { setLoadingCjkFont(false); }
+  }, [doc, currentPage]);
+
   // ── Text edit submit — surgical in-place line edit (preserve positions) ──
   const handleEditSubmit = useCallback(async (closeEdit: boolean = true): Promise<boolean> => {
     if (!editingLine || !doc || !engineRef.current) return true;
@@ -1787,6 +1805,7 @@ export default function EditorPage() {
       if (textChanged) {
         let commitText = editTextRef.current || editText;
         let caretAfter = editSelRef.current.end;
+        await prepareExportText(commitText, targetLine.runs.map(run => run.fontName));
         // Do NOT collapse multi-spaces on commit — live overlay gaps were real
         // inserts, and smashing them made spaces vanish on click-away.
         const editResult = engine.applyLineTextEdit(
@@ -2005,7 +2024,7 @@ export default function EditorPage() {
     } finally {
       setIsSaving(false);
     }
-  }, [editingLine, editText, editOffsetCss, scale, doc, currentPage, setEditingLine, renderResult, pushEditorHistory, applyStyle, showUnsupportedGlyphWarning]);
+  }, [editingLine, editText, editOffsetCss, scale, doc, currentPage, setEditingLine, renderResult, pushEditorHistory, applyStyle, showUnsupportedGlyphWarning, prepareExportText]);
 
   // ── Edit cancel — discard overlay only; PDF untouched until commit ──
   const handleEditCancel = useCallback(async () => {
@@ -3049,7 +3068,7 @@ export default function EditorPage() {
     const engine = engineRef.current;
     const page = doc.pages[currentPage];
     // Check every floating box before drawings, fonts, images, or overlay cleanup can mutate state.
-    engine.assertTextEncodable(fTexts.map(ft => ft.text).join('\n'));
+    await prepareExportText(fTexts.map(ft => ft.text).join('\n'));
     let currentObjNum = engine.getNextObjNum(doc);
 
     const pageHeight = renderResult?.pageHeight || page.mediaBox.height;
@@ -3220,7 +3239,7 @@ export default function EditorPage() {
       },
     );
 
-  }, [doc, currentPage, drawnPaths, floatingTexts, floatingImages, scale, renderResult, pushEditorHistory]);
+  }, [doc, currentPage, drawnPaths, floatingTexts, floatingImages, scale, renderResult, pushEditorHistory, prepareExportText]);
 
   const strokeShapePreview = useCallback((
     ctx: CanvasRenderingContext2D,
@@ -4113,7 +4132,7 @@ export default function EditorPage() {
   // ── Navigation handlers ──
   const goToPrev = useCallback(async () => {
     try {
-      engineRef.current?.assertTextEncodable(floatingTextsRef.current.map(ft => ft.text).join('\n'));
+      await prepareExportText(floatingTextsRef.current.map(ft => ft.text).join('\n'));
       if (editingLineRef.current && !await handleEditSubmit()) return;
       await commitDrawingsToPdf();
     } catch (e) {
@@ -4125,11 +4144,11 @@ export default function EditorPage() {
     closeLinkPopover();
     setLinkCreatePending(false);
     setCurrentPage(p => Math.max(0, p - 1));
-  }, [commitDrawingsToPdf, closeLinkPopover, handleEditSubmit, showUnsupportedGlyphWarning]);
+  }, [commitDrawingsToPdf, closeLinkPopover, handleEditSubmit, showUnsupportedGlyphWarning, prepareExportText]);
 
   const goToNext = useCallback(async () => {
     try {
-      engineRef.current?.assertTextEncodable(floatingTextsRef.current.map(ft => ft.text).join('\n'));
+      await prepareExportText(floatingTextsRef.current.map(ft => ft.text).join('\n'));
       if (editingLineRef.current && !await handleEditSubmit()) return;
       await commitDrawingsToPdf();
     } catch (e) {
@@ -4141,7 +4160,7 @@ export default function EditorPage() {
     closeLinkPopover();
     setLinkCreatePending(false);
     setCurrentPage(p => Math.min(totalPages - 1, p + 1));
-  }, [totalPages, commitDrawingsToPdf, closeLinkPopover, handleEditSubmit, showUnsupportedGlyphWarning]);
+  }, [totalPages, commitDrawingsToPdf, closeLinkPopover, handleEditSubmit, showUnsupportedGlyphWarning, prepareExportText]);
 
   const zoomIn = useCallback(() => {
     setScale(s => Math.min(4, Math.round((s + 0.25) * 100) / 100));
@@ -4462,7 +4481,7 @@ export default function EditorPage() {
     try {
       setIsSaving(true);
       setGlyphWarning(null);
-      engineRef.current.assertTextEncodable(floatingTextsRef.current.map(ft => ft.text).join('\n'));
+      await prepareExportText(floatingTextsRef.current.map(ft => ft.text).join('\n'));
       if (editingLineRef.current && !await handleEditSubmit()) return;
       await commitDrawingsToPdf();
       const engine = engineRef.current;
@@ -4485,7 +4504,7 @@ export default function EditorPage() {
     } finally {
       setIsSaving(false);
     }
-  }, [doc, fileName, saveMode, commitDrawingsToPdf, handleEditSubmit, showUnsupportedGlyphWarning]);
+  }, [doc, fileName, saveMode, commitDrawingsToPdf, handleEditSubmit, showUnsupportedGlyphWarning, prepareExportText]);
 
   // ── Compressed Download ──
   const handleCompressedDownload = useCallback(async (opts: {
@@ -4498,7 +4517,7 @@ export default function EditorPage() {
       setIsSaving(true);
       setError(null);
       setGlyphWarning(null);
-      engineRef.current.assertTextEncodable(floatingTextsRef.current.map(ft => ft.text).join('\n'));
+      await prepareExportText(floatingTextsRef.current.map(ft => ft.text).join('\n'));
       if (editingLineRef.current && !await handleEditSubmit()) return;
       // Capture pending overlays before committing them; compare exportable
       // objects too, since not every mutation enters history or marks dirty.
@@ -4567,7 +4586,7 @@ export default function EditorPage() {
     } finally {
       setIsSaving(false);
     }
-  }, [doc, fileName, commitDrawingsToPdf, handleEditSubmit, showUnsupportedGlyphWarning]);
+  }, [doc, fileName, commitDrawingsToPdf, handleEditSubmit, showUnsupportedGlyphWarning, prepareExportText]);
 
   const handleClose = useCallback(async () => {
     await clearEditorSession();
@@ -6119,7 +6138,7 @@ export default function EditorPage() {
             isGeneratingThumbnails={isGeneratingThumbnails}
             onPageSelect={async (i) => {
               try {
-                engineRef.current?.assertTextEncodable(floatingTextsRef.current.map(ft => ft.text).join('\n'));
+                await prepareExportText(floatingTextsRef.current.map(ft => ft.text).join('\n'));
                 if (editingLineRef.current && !await handleEditSubmit()) return;
                 await commitDrawingsToPdf();
               } catch (e) {
@@ -6165,7 +6184,7 @@ export default function EditorPage() {
             isGeneratingThumbnails={isGeneratingThumbnails}
             onPageSelect={async (i) => {
               try {
-                engineRef.current?.assertTextEncodable(floatingTextsRef.current.map(ft => ft.text).join('\n'));
+                await prepareExportText(floatingTextsRef.current.map(ft => ft.text).join('\n'));
                 if (editingLineRef.current && !await handleEditSubmit()) return;
                 await commitDrawingsToPdf();
               } catch (e) {
@@ -6204,6 +6223,12 @@ export default function EditorPage() {
           totalPages={totalPages}
         />
       </div>
+
+      {loadingCjkFont && (
+        <div role="status" aria-live="polite" className="fixed bottom-10 left-1/2 -translate-x-1/2 bg-zinc-900 border border-app text-app-muted px-4 py-3 rounded-xl text-sm shadow-xl z-[100]">
+          Loading CJK font...
+        </div>
+      )}
 
       {glyphWarning && (
         <div role="status" aria-live="polite" className="fixed bottom-10 left-1/2 -translate-x-1/2 max-w-[90vw] bg-zinc-900 border border-amber-500/40 text-amber-200 px-4 py-3 rounded-xl text-sm flex items-center gap-4 shadow-xl z-[100]">

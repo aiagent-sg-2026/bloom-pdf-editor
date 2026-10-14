@@ -11,6 +11,7 @@ import { parsePDF } from '../parser/parser';
 import { serializeToString } from '../editor/stream-compiler';
 import { decryptDocumentObjects } from '../security/encryption/decrypt-pipeline';
 import { parseFileId } from '../security/encryption/encrypt-dict';
+import { unicodeFontModifiedKeys } from '../fonts/unicode-font-embed';
 
 export class SignedDocumentEditError extends Error {
   constructor() {
@@ -102,7 +103,10 @@ export async function saveQuick(
     return serializeDocument(doc);
   }
 
-  const mods = modifiedKeys ?? new Set<string>();
+  const mods = new Set(modifiedKeys);
+  if (modifiedKeys?.size || newObjects?.size) {
+    for (const key of unicodeFontModifiedKeys(doc.objects)) mods.add(key);
+  }
   if (mods.size === 0 && (!newObjects || newObjects.size === 0)) {
     return serializeDocument(doc);
   }

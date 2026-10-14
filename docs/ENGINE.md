@@ -76,142 +76,113 @@ Image compression derives candidates from the current document, including commit
 
 The editor permits this fallback only for an unrecovered, unencrypted upload with unchanged exportable objects, no recorded or pending edits, and unchanged upload bytes. Saving does not reset its edit provenance. Uncertain state or a failed object comparison disables the fallback.
 
-### Unsupported glyphs and on-demand CJK font embedding
+### Unsupported glyphs and on-demand Unicode font embedding
 
-Current safety behavior: new floating text and existing-run edits are preflighted
-before resource/content changes. `UnsupportedGlyphsError` exposes deduplicated
-`characters` and `codePoints` in first-seen order. A failed download shows the
-dismissible message "These characters need an embedded font: ..." and retains
-the pending text, overlays, and edit session; it does not download a lossy PDF.
-Supported text retains its current encoding and fallback behavior.
+Floating text and existing-run edits have an asynchronous preparation stage
+before content compilation. `prepareTextForExport(objects, runs, source?)`
+collects scalars that the original font and Standard 14 fallbacks cannot
+encode. Latin-only commits do not load a Unicode font. The editor displays the
+non-modal status "Loading CJK font..." while preparation is pending.
 
-The existing "Unicode fallback" is not a Unicode font. It installs non-embedded
-Standard 14 Type1 Helvetica with WinAnsiEncoding, plus Symbol/ZapfDingbats for
-characters in their finite reverse encoding tables
-(`src/engine/fonts/font-augmentation.ts:29-73`,
-`src/engine/fonts/symbol-fallback.ts:8-25,43-60`). The normal fallback encoder
-passes code points up to 255 as bytes (Latin-1-ish, not a full Unicode-to-WinAnsi
-reverse map), preserves selected bullets, and uses the finite Symbol/Dingbats
-tables for Greek/math symbols and dingbats; CJK is not supported. The current encoder
-also retains legacy ASCII substitutions for typographic quotes, dashes, and
-ellipsis. `augmentFontsForMissingGlyphs` merely adds Helvetica and builds a
-single-byte CMap for characters below 256; it embeds no font program and does
-not attach that CMap to the fallback font
-(`src/engine/fonts/font-augmentation.ts:121-143`).
+The default loader fetches the static TrueType asset
+`public/fonts/NotoSansSC-Regular.ttf` from
+`${process.env.__NEXT_ROUTER_BASEPATH}/fonts/NotoSansSC-Regular.ttf` (empty
+basePath by default). `next.config.ts` currently has no basePath. The font is a
+public asset, not a JavaScript import; the approximately 10.5 MB source is
+fetched lazily; its bytes and parsed source metrics are cached for later edits.
+The legacy public `pdf.worker.min.mjs` is not referenced by current product
+code; the native PDF worker is emitted with
+`new URL('./pdf.worker.ts', import.meta.url)`. Tests and other consumers can pass
+raw `Uint8Array` bytes or an asynchronous loader function instead of fetching.
+Keep injected source bytes immutable while the document uses them.
 
-#### Existing font APIs and exact format boundaries
+#### TrueType subset and PDF objects
 
-- `loadFont(name: string, dict: PDFDict, objects: Map<string, PDFObject>): FontData`
-  and `loadPageFonts(resources: PDFDict, objects: Map<string, PDFObject>)` load
-  **PDF font dictionaries**, not fetched font files
-  (`src/engine/fonts/font-parser.ts:92-124`). They handle simple fonts, Type0
-  descendants, ToUnicode, widths, descriptors, and Type3 CharProcs
-  (`src/engine/fonts/font-parser.ts:154-213,452-507`).
-- For **raw font bytes**, `parseTTF(data: Uint8Array): TTFFont` reads an sfnt
-  table directory and metrics, `cmap`, names, and OS/2
-  (`src/engine/fonts/truetype-parser.ts:172-218`). The supported container
-  signatures are `0x00010000` (TrueType .ttf), `true` (legacy TrueType sfnt),
-  and `OTTO` (OpenType .otf)
-  (`src/engine/fonts/truetype-parser.ts:159-167`). `cmap` formats 0, 4, 6, and 12
-  are parsed (`src/engine/fonts/truetype-parser.ts:294-356`).
-  `charCodeToGlyphId(font, codePoint)`, `getGlyphWidth(font, glyphId)`, and
-  `fontUnitsToTextSpace(value, unitsPerEm)` provide coverage and width lookup
-  (`src/engine/fonts/truetype-parser.ts:805-824`).
-- Native outline extraction via `getGlyphOutline` requires TrueType `glyf` and
-  `loca`; detecting `OTTO` does **not** implement CFF outline parsing
-  (`src/engine/fonts/truetype-parser.ts:534-541`). The PDF loader reads
-  FontFile/FontFile2/FontFile3 and wraps standalone CFF 1 data into OTTO for
-  browser font loading (`src/engine/fonts/font-parser.ts:406-445`,
-  `src/engine/fonts/cff-wrapper.ts:20-27,174-284`). This is not native CFF
-  subsetting. Type1 PFA/PFB programs, WOFF/WOFF2, TTC/OTC collections, and CFF2
-  have no decoding/collection-selection path here. Variable-font sfnt detection
-  is not variation instantiation; require a static font instance.
-- `subsetFonts(doc: PDFDocumentData): Promise<FontSubsetResult>` operates on
-  **already embedded document fonts**, scanning page content for used glyphs
-  (`src/engine/optimize/font-subsetter.ts:56-99,745-798`). Its private
-  `expandCompositeGlyphs` retains components, while `buildSubsetFont` removes
-  unused `glyf` outlines but preserves GIDs, glyph count, and other tables
-  (`src/engine/optimize/font-subsetter.ts:456-513,540-643`). There is no public
-  raw-font-plus-used-glyph-set subsetting API or dense GID renumbering API.
-- Type0 width and CIDToGIDMap loading already exist
-  (`src/engine/fonts/font-parser.ts:325-384,476-507`), and `parseCMap` reads
-  bfchar/bfrange, codespaces, and CID mappings
-  (`src/engine/fonts/cmap-parser.ts:37-70`). These are readers, not an embedding
-  or two-byte ToUnicode writer.
+- `src/engine/fonts/ttf-subsetter.ts` exposes `subsetTrueType`. It reads static
+  sfnt TrueType `head`, `hhea`, `hmtx`, `maxp`, Unicode `cmap` (including formats
+  4 and 12), `loca`, and `glyf`. It retains `.notdef` and the transitive closure
+  of composite components, assigns dense GIDs, and rewrites component IDs,
+  metrics, and the used-character cmap. The output uses legal short or long
+  loca offsets, aligned tables, directory checksums, and head checksum
+  adjustment. Hinting tables `cvt `, `fpgm`, and `prep` are preserved when present;
+  `post` is written as format 3. Subset names replace original family names
+  while retaining source copyright, attribution, and license name records.
+- `src/engine/fonts/unicode-font-embed.ts` prepares a Type0 `/Identity-H` font
+  with a CIDFontType2 descendant, a binary `/CIDToGIDMap`, `/W` advances scaled
+  from hmtx to 1000/em, and a symbolic FontDescriptor (Flags 4). `/FontFile2`
+  contains the Flate-compressed subset and an uncompressed `/Length1`.
+  Six-letter subset tags prefix `NotoSansSC`.
+- Compact two-byte CIDs identify Unicode scalars, not UTF-8 bytes or guessed
+  glyph IDs. `/ToUnicode` maps every used CID to UTF-16BE, including surrogate
+  pairs for supplementary scalars, in bounded bfchar blocks.
+- A document object map owns one font graph. Subsequent preparations union
+  the scalar sets, retain existing CIDs and object references, and regenerate
+  the subset, widths, CIDToGIDMap, and ToUnicode. Save/reopen recovers the same
+  compact-CID graph. The full source font remains available for new glyphs.
+  Concurrent preparations are serialized; restored object graphs invalidate
+  stale subset coverage.
 
-#### Proposed embedding pipeline (design only)
+Only used outlines, composite dependencies, retained metrics/hinting/metadata,
+and the PDF font graph increase exported PDF size—not the entire source font.
+Exact subset size depends on glyphs and retained hinting tables. Source font
+embedding permissions are checked before publishing the graph.
+The asset is distributed under SIL OFL-1.1; its copyright and license are in
+`public/fonts/NotoSansSC-OFL.txt`. Exported documents are not themselves subject
+to the OFL font-software license.
 
-1. **Acquire lazily.** Ship an OFL-licensed, static TrueType-outline font such
-   as `public/fonts/NotoSansSC-Regular.ttf`, with its OFL license and provenance.
-   A build-time SC coverage subset is acceptable, but its actual `cmap` defines
-   coverage, not the family name. Fetch same-origin only when a text commit
-   needs characters absent from its original font and Standard 14 fallbacks.
-   Cache the fetch/parsed font, not mutable document objects. Do not use a CSS
-   system font, WOFF2 webfont, variable font, or CFF-flavored OTF as a substitute
-   for this TrueType program. No font asset or fetcher is included in this phase.
-2. **Plan without mutation.** Collect used Unicode scalars and glyph IDs for
-   all pending insertions/edits, including mixed Latin/CJK runs and whitespace.
-   Use `parseTTF`/`charCodeToGlyphId` to verify every required glyph is nonzero;
-   unsupported scalars still raise `UnsupportedGlyphsError`. Retain the cached
-   source font for future edits: a previously embedded subset cannot supply new
-   characters merely because an untouched cmap entry still exists.
-3. **Subset TrueType.** Add a raw-font subsetting API using the existing
-   composite-glyph closure, always retaining GID 0. A conservative first
-   implementation can preserve original GIDs and remove unused outlines.
-   A compact subset additionally renumbers GIDs and rewrites composite
-   references, `glyf`, `loca`, `hmtx`, `maxp`, `cmap`, and affected layout tables.
-   Preserve required hinting tables or remove hinting coherently; rebuild
-   checksums, `head.checkSumAdjustment`, alignment, and a legal subset name.
-   Never claim CFF or variable-font subsetting from the existing sfnt detector.
-4. **Build the PDF font graph.** Allocate reachable indirect objects only after
-   coverage and subsetting succeed:
-   - Type0 `/BaseFont /ABCDEF+NotoSansSC-Regular`, `/Encoding /Identity-H`,
-     `/DescendantFonts [cidFontRef]`, and `/ToUnicode toUnicodeRef`.
-   - CIDFontType2 with matching BaseFont, `/CIDSystemInfo` using Registry
-     `Adobe`, Ordering `Identity`, Supplement 0, and `/FontDescriptor`.
-   - Assign compact two-byte CIDs to used characters/glyphs; reserve CID 0.
-     Write `/CIDToGIDMap` as a binary big-endian uint16 stream mapping each
-     CID to the actual subset GID. Use `/Identity` only if CID really equals GID.
-   - Write `/W` with widths per CID from hmtx, scaled to 1000/em, and a consistent
-     `/DW`. Emit text-show operands as hexadecimal two-byte CIDs, not UTF-8
-     literal strings or Unicode values guessed to equal GIDs.
-   - Write a two-byte ToUnicode codespace `<0000> <FFFF>` and bfchar/bfrange
-     mappings from emitted CIDs back to original UTF-16BE strings, with surrogate
-     pairs for supplementary characters. Keep mapping blocks bounded. Glyph
-     appearance comes from the embedded program; ToUnicode alone cannot fix it.
-   - FontDescriptor contains matching FontName, FontBBox, Ascent, Descent,
-     CapHeight, ItalicAngle, StemV, and `/FontFile2` with uncompressed `/Length1`.
-     Derive metrics and embedding permission from the selected asset. For a
-     regular proportional sans CJK font with glyphs outside the standard Latin
-     set, set Symbolic (bit 3, value 4), not Nonsymbolic (bit 6, value 32);
-     never set both. Add FixedPitch, Serif, Italic, or ForceBold only when
-     justified by the actual program/style, not as a missing-glyph workaround.
-5. **Integrate before content compilation.** Add an asynchronous preparation
-   stage shared by floating-text commits and existing-text edits. It must finish
-   before `insertTextRun`/`applyTextEdits`, `updatePageContent`, annotation/image
-   mutations, and overlay cleanup. The editor currently commits overlays before
-   calling saveQuick/saveOptimized; loading a font inside final serialization is
-   too late to recover characters already replaced in a stream. Pass the
-   prepared font resource/encoding plan into run emission, split mixed text as
-   needed, then commit font objects, resources, and content atomically.
-   Materialize inherited page resources without modifying siblings.
-6. **Save the prepared graph.** Both quick and optimized paths must include
-   new font objects and modified resources/content. Register changed/new object
-   keys for incremental saves and keep the font graph reachable for optimized
-   garbage collection (`src/engine/writer/save-pipeline.ts:84-114,121-145`,
-   `src/engine/writer/serializer.ts:43-88`). Do not depend on optimization:
-   `saveOptimized` currently does GC/dedup, not font subsetting. Fetch, coverage,
-   or subset failure leaves the PDF and all pending edits intact, releases the
-   saving state, and shows the same non-modal warning without downloading.
+#### Commit, layout, and save behavior
 
-Missing implementation: a licensed static font asset, lazy asset loader and
-coverage selection, a public raw-font subsetting API, Type0/CIDFontType2 object
-builders and CID/ToUnicode writers, font-aware insertion/fallback emission,
-atomic asynchronous commit integration, and real-font cross-viewer validation.
-Acceptance for that phase requires export/reparse of pure and mixed CJK with
-Identity-H and correct ToUnicode **and** visible glyphs in Chrome and another
-independent PDF viewer; synthetic mappings alone cannot prove font appearance.
+Preparation validates coverage, builds the subset, and compresses it before
+publishing PDF objects. Load, parse, subset, or compression failures become
+`UnsupportedGlyphsError`; missing scalars retain deduplicated `characters` and
+`codePoints` in first-seen order. The dismissible warning
+"These characters need an embedded font: ..." remains for unavailable glyphs.
+Failed preparation leaves pending text, overlays, edit sessions, and PDF
+resources/content intact; no lossy download is attempted.
 
+Mixed edits emit adjacent text-show runs: encodable characters stay in their
+original font, otherwise Latin/Symbol/Dingbats use the existing Standard 14
+fallbacks, and remaining covered scalars use the embedded font with hex
+Identity-H operands. Quote operators retain their spacing and line movement;
+grouped operands do not repeat the replacement. The prior font is restored for
+following text. New floating text wraps using the selected advances, including
+CJK token splitting, and line-edit layout uses embedded widths rather than a
+Latin average. Identity-H CIDs do not receive single-byte code-32 word spacing.
+
+Adjacent same-font shows on the same baseline can form one editable run;
+replacing that run replaces all its source operands, so `newText` must include
+any suffix to retain. To replace only one show inside a merged run, target that
+show's source instruction index and corresponding text/glyph span instead of
+all merged indices. Other shows remain in place and use the restored font;
+their text may merge with the final replacement run when interpreted again.
+
+Inherited font resource dictionaries are copied before adding membership.
+
+Both quick and optimized saves include the reachable font graph. Explicit
+incremental quick saves also register changed font objects, page resources,
+and content references, including the browser worker path. Browser FontFace
+registration distinguishes font byte identities so an extended subset cannot
+reuse the preceding subset's loaded face.
+
+Synchronous `insertTextRun`/`applyTextEdits` still preflight: callers must await
+preparation before submitting previously unsupported text. Without preparation,
+the phase-1 warning/error contract remains unchanged. Existing WinAnsi
+punctuation substitutions and finite Symbol/Dingbats encodings are unchanged.
+
+Boundaries: static TrueType `glyf` outlines only; no shaping, vertical text, or
+Unicode fallback chain beyond this one regular Noto font. CFF, variable-font
+instantiation, WOFF/WOFF2, and font collections are not subset by this API.
+Coverage is the asset's actual cmap, not its family name.
+
+Regression sources:
+`src/engine/__tests__/ttf-subsetter.test.ts`,
+`src/engine/__tests__/unicode-font-embed.test.ts`, and
+`src/engine/__tests__/unicode-font-export.test.ts`.
+They include independent sfnt/checksum/loca/composite inspection, native font
+and CMap reparsing, quick/optimized export round trips, supplementary scalars,
+and committed-font outline comparisons. Cross-viewer visual validation remains
+a separate check; these tests do not prove appearance in Chrome or another PDF
+viewer.
 
 ## Development
 

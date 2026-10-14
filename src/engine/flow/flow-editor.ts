@@ -11,6 +11,7 @@ import {
   applyRunPositionShifts,
   assertTextEncodable,
   loadFontForName,
+  measureUnicodeExportText,
   type EditResult,
   type TextEdit,
   type RunPositionShift,
@@ -159,7 +160,8 @@ function correctResidualRunGaps(
       // Preserve negative gaps (kerning / overlapping Type3 per-glyph runs).
       gap = nb.left - ob.right;
     }
-    const estW = estimateTextWidth(segmentEdits[i]?.newText ?? fresh[i].text, fresh[i]);
+    const text = segmentEdits[i]?.newText ?? fresh[i].text;
+    const estW = measureUnicodeExportText(text, fresh[i], page, objects) ?? estimateTextWidth(text, fresh[i]);
     const w = Math.max(bounds.width, estW);
     cursor += w + gap;
   }
@@ -362,7 +364,7 @@ export function applyLineTextEdit(
   // Position shifts can reindex the live runs. Reject unsupported text before that mutation.
   for (const edit of edits) {
     if (edit.newText !== edit.targetRun.text) {
-      assertTextEncodable(edit.newText, loadFontForName(edit.targetRun.fontName, page, objects));
+      assertTextEncodable(edit.newText, loadFontForName(edit.targetRun.fontName, page, objects), true, objects);
     }
   }
 
@@ -373,6 +375,7 @@ export function applyLineTextEdit(
       primaryLine,
       primarySegmentEdits,
       options?.fontSizeOverrides,
+      (text, run, lineStart) => measureUnicodeExportText(text, run, page, objects, options?.fontSizeOverrides, lineStart),
     )
     : plan.shifts;
 
@@ -380,8 +383,12 @@ export function applyLineTextEdit(
   const segmentGrowthDx = horizShifts.reduce((m, s) => Math.max(m, s.dx), 0);
   // Multi-segment: trust segment chain. Single-segment: estimate line growth for
   // right-column peers. Never inflate the whole line by a pending fontSize.
+  const primaryRun = primaryLine.segments[0]?.run ?? primaryLine.runs[0];
+  const exactLineWidth = primaryRun && measureUnicodeExportText(newText, primaryRun, page, objects, options?.fontSizeOverrides);
   const lineGrowthDx = primaryLine.segments.length <= 1
-    ? estimateLineGrowthDx(primaryLine, oldText, newText, options?.fontSizeOverrides)
+    ? exactLineWidth !== undefined
+      ? Math.max(0, exactLineWidth - primaryLine.width)
+      : estimateLineGrowthDx(primaryLine, oldText, newText, options?.fontSizeOverrides)
     : 0;
   const growthDx = Math.max(segmentGrowthDx, lineGrowthDx);
   const dSpaces = (newText.match(/\s/g) || []).length - (oldText.match(/\s/g) || []).length;
