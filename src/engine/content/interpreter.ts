@@ -1283,8 +1283,8 @@ function showTextString(
 
     // Advance text position
     let advance = (glyphWidth1000 / 1000) * fontSize + gs.charSpacing;
-    // PDF spec: word spacing applies to character code 32 only
-    if (charCode === 32) advance += gs.wordSpacing;
+    // Word spacing applies only to single-byte code 32, not an Identity-H CID.
+    if (charCode === 32 && !isComposite) advance += gs.wordSpacing;
     advance *= hScale;
 
     totalWidth += advance;

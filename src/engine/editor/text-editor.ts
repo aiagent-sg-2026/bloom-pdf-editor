@@ -32,11 +32,15 @@ import {
   PDFString,
   type PDFPageInfo,
 } from '../types';
-import { resolveRef } from '../parser/parser';
+import { resolveRef, resolvePageResources } from '../parser/parser';
 import { loadFont, type FontData, charCodeToUnicode } from '../fonts/font-parser';
 import { ensureFallbackFont } from '../fonts/font-augmentation';
 import { ensureBuiltInFallbackFont, getBuiltInFallbackGlyph } from '../fonts/symbol-fallback';
 import { UnsupportedGlyphsError } from '../fonts/unsupported-glyphs';
+import {
+  prepareUnicodeFont, hasUnicodeGlyph, ensureUnicodeFont, encodeUnicodeText, unicodeGlyphWidth,
+  type UnicodeFontSource,
+} from '../fonts/unicode-font-embed';
 import { getStandardFontCharWidth } from '../fonts/standard14';
 import { resolveRunStyleFlags } from '../flow/metrics';
 import { serializeToString } from './stream-compiler';
@@ -101,7 +105,8 @@ export function applyTextEdits(
   });
   const unsupported = prepared.flatMap(({ edit, fontData, encoded }) =>
     unsupportedFallbackCodePoints(edit.newText, fontData, encoded));
-  if (unsupported.length > 0) throw new UnsupportedGlyphsError(unsupported);
+  const unavailable = unsupported.filter(cp => !hasUnicodeGlyph(objects, cp));
+  if (unavailable.length > 0) throw new UnsupportedGlyphsError(unavailable);
 
   // Parse the content stream into instructions
   const instructions = parseContentStream(contentBytes);
@@ -116,11 +121,13 @@ export function applyTextEdits(
   // Apply each edit
   for (const { edit, fontData, encoded: initialEncoding } of prepared) {
     let encoded = initialEncoding;
+    const usesUnicode = isEncodingLossy(edit.newText, initialEncoding, fontData) &&
+      Array.from(edit.newText).some(ch => unsupportedFallbackCodePoints(ch, null, encodeTextWinAnsi(ch)).length > 0);
     let useFallbackFont: string | null = null;
     const specialChars = Array.from(edit.newText).some(ch => getBuiltInFallbackGlyph(ch) !== null);
     const lossy = isEncodingLossy(edit.newText, encoded, fontData);
 
-    if (lossy) {
+    if (lossy && !usesUnicode) {
       // Keep bold/italic of the source run — HelvAug (regular) was stripping
       // weight from mid-line edits on subset/CID bold faces (F2, etc.).
       const flags = resolveRunStyleFlags(edit.targetRun.fontName, fontData);
@@ -135,7 +142,7 @@ export function applyTextEdits(
           if (glyph) ensureBuiltInFallbackFont(page, objects, glyph.fontKind);
         }
       }
-    } else if (encoded.missing.length > 0) {
+    } else if (!usesUnicode && encoded.missing.length > 0) {
       needsFontAugmentation = true;
       missingCharCodes.push(...encoded.missing);
     }
@@ -167,6 +174,7 @@ export function applyTextEdits(
         useFallbackFont,
         edit.targetRun,
         fontData,
+        usesUnicode ? { page, objects } : undefined,
       );
       indexOffset += wrote;
       continue;
@@ -218,6 +226,11 @@ export function applyTextEdits(
       continue;
     }
 
+    if (usesUnicode) {
+      indexOffset += applyUnicodeShowing(instructions, matched.index, edit.newText,
+        edit.targetRun.fontName, fontData, page, objects, edit.targetRun.fontSize);
+      continue;
+    }
     // Spaces: subset fonts often have ~0 space advance (live CSS shows gaps,
     // PDF does not). Emit TJ with explicit advances instead of a bare string.
     if (specialChars && useFallbackFont) {
@@ -639,22 +652,18 @@ export function insertTextRun(
     width?: number;
   } = {},
 ): Uint8Array {
-  assertTextEncodable(text);
-
-  // Ensure the page has the Helv font in its resources
-  const resourcesObj = page.dict.get('Resources');
-  let resources = resourcesObj instanceof PDFRef ? resolveRef(resourcesObj, objects) : resourcesObj;
-  if (!(resources instanceof PDFDict)) {
-    resources = new PDFDict();
-    page.dict.set('Resources', resources);
-  }
-  
-  const fontObj = resources.get('Font');
-  let fontDict = fontObj instanceof PDFRef ? resolveRef(fontObj, objects) : fontObj;
-  if (!(fontDict instanceof PDFDict)) {
-    fontDict = new PDFDict();
-    resources.set('Font', fontDict);
-  }
+  assertTextEncodable(text, null, true, objects);
+  const usesUnicode = unsupportedFallbackCodePoints(text, null, encodeTextWinAnsi(text)).length > 0;
+  if (usesUnicode) ensureUnicodeFont(page, objects);
+  // Copy membership dictionaries, including inherited/indirect resources.
+  const effective = resolvePageResources(page.dict, objects);
+  const resources = new PDFDict([...effective.entries()]);
+  const fontObj = effective.get('Font');
+  const oldFonts = fontObj ? resolveRef(fontObj, objects) : undefined;
+  const fontDict = new PDFDict(oldFonts instanceof PDFDict ? [...oldFonts.entries()] : []);
+  resources.set('Font', fontDict);
+  page.dict.set('Resources', resources);
+  page.resources = resources;
   
   const family = (options.fontFamily || 'Helvetica').toLowerCase();
   const baseFamily = family.includes('times') ? 'Times' : family.includes('courier') ? 'Courier' : 'Helvetica';
@@ -685,7 +694,14 @@ export function insertTextRun(
   const underlineSegments: string[] = [];
   const measure = (t: string): number => {
     let w = 0;
-    for (const ch of t) { const cp = ch.codePointAt(0) ?? 0; w += cp < 256 ? getStandardFontCharWidth(fontName, cp) : 600; }
+    for (const ch of t) {
+      const cp = ch.codePointAt(0)!;
+      const special = getBuiltInFallbackGlyph(ch);
+      w += hasUnicodeGlyph(objects, cp) && unsupportedFallbackCodePoints(ch, null, encodeTextWinAnsi(ch)).length
+        ? unicodeGlyphWidth(objects, cp)
+        : special ? getStandardFontCharWidth(special.fontKind, special.code)
+        : getStandardFontCharWidth(fontName, encodeTextWinAnsi(ch).pdfString.toBytes()[0] ?? 32);
+    }
     return (w / 1000) * fontSize;
   };
   const opacity = options.opacity == null ? 1 : Math.max(0, Math.min(1, options.opacity));
@@ -702,30 +718,44 @@ export function insertTextRun(
   }
   commands.push('BT');
   const widthLimit = Number.isFinite(options.width) && (options.width || 0) > 0 ? options.width! : Infinity;
-  lines.forEach((line, lineIndex) => {
+  let visualLine = 0;
+  lines.forEach(line => {
     const chunks: string[] = [];
     let current = '';
     for (const word of line.split(/(\s+)/)) {
+      if (usesUnicode && measure(word) > widthLimit) {
+        for (const ch of word) {
+          if (current && measure(current + ch) > widthLimit) { chunks.push(current); current = ''; }
+          current += ch;
+        }
+        continue;
+      }
       if (current && measure(current + word) > widthLimit) {
         chunks.push(current); current = '';
       }
       current += word;
     }
     chunks.push(current);
-    chunks.forEach((chunk, chunkIndex) => {
-      const dy = (lineIndex + chunkIndex) * leading;
+    chunks.forEach(chunk => {
+      const dy = visualLine++ * leading;
       commands.push(`1 0 0 1 ${x} ${y - dy} Tm`);
-      let run = '';
-      const flush = () => { if (run) { commands.push(`/${resourceName} ${fontSize} Tf`); commands.push(`${serializeToString(encodeTextWinAnsi(run).pdfString)} Tj`); run = ''; } };
-      for (const ch of chunk) {
-        const glyph = getBuiltInFallbackGlyph(ch);
-        if (glyph) {
-          flush();
-          const fallbackName = ensureBuiltInFallbackFont(page, objects, glyph.fontKind);
-          commands.push(`/${fallbackName} ${fontSize} Tf ${serializeToString(new PDFString(String.fromCharCode(glyph.code)))} Tj`);
-        } else run += ch;
+      if (usesUnicode) {
+        for (const run of splitExportRuns(chunk, resourceName, null, page, objects)) {
+          commands.push(`/${run.fontKey} ${fontSize} Tf ${serializeToString(run.operand)} Tj`);
+        }
+      } else {
+        let run = '';
+        const flush = () => { if (run) { commands.push(`/${resourceName} ${fontSize} Tf`); commands.push(`${serializeToString(encodeTextWinAnsi(run).pdfString)} Tj`); run = ''; } };
+        for (const ch of chunk) {
+          const glyph = getBuiltInFallbackGlyph(ch);
+          if (glyph) {
+            flush();
+            const fallbackName = ensureBuiltInFallbackFont(page, objects, glyph.fontKind);
+            commands.push(`/${fallbackName} ${fontSize} Tf ${serializeToString(new PDFString(String.fromCharCode(glyph.code)))} Tj`);
+          } else run += ch;
+        }
+        flush();
       }
-      flush();
       if (options.underline && chunk.trim().length) {
         const uy = Math.round((y - dy - fontSize * 0.12) * 100) / 100;
         underlineSegments.push(`${x} ${uy} m ${Math.round((x + measure(chunk.replace(/\s+$/, ''))) * 100) / 100} ${uy} l S`);
@@ -1046,7 +1076,7 @@ function extractStringText(
 // ─── Text encoding ──────────────────────────────────────────────────────────
 
 export interface EncodedText {
-  pdfString: PDFObject;
+  pdfString: PDFString | PDFHexString;
   /** Unicode characters that couldn't be encoded */
   missing: number[];
 }
@@ -1163,9 +1193,13 @@ function unsupportedFallbackCodePoints(
   allowBuiltInFallback = true,
 ): number[] {
   if (!isEncodingLossy(text, encoded, fontData)) return [];
-  return encodeTextWinAnsi(text).missing.filter(cp =>
-    WIN_ANSI_SUBSTITUTIONS[cp] === undefined &&
-    (!allowBuiltInFallback || getBuiltInFallbackGlyph(String.fromCodePoint(cp)) === null));
+  return Array.from(text).flatMap(ch => {
+    const encoding = encodeTextForFont(ch, fontData);
+    if (!isEncodingLossy(ch, encoding, fontData)) return [];
+    return encodeTextWinAnsi(ch).missing.filter(cp =>
+      WIN_ANSI_SUBSTITUTIONS[cp] === undefined &&
+      (!allowBuiltInFallback || getBuiltInFallbackGlyph(ch) === null));
+  });
 }
 
 /**
@@ -1176,11 +1210,135 @@ export function assertTextEncodable(
   text: string,
   fontData: FontData | null = null,
   allowBuiltInFallback = true,
+  objects?: Map<string, PDFObject>,
 ): void {
   const unsupported = unsupportedFallbackCodePoints(
     text, fontData, encodeTextForFont(text, fontData), allowBuiltInFallback,
   );
-  if (unsupported.length > 0) throw new UnsupportedGlyphsError(unsupported);
+  const unavailable = objects ? unsupported.filter(cp => !hasUnicodeGlyph(objects, cp)) : unsupported;
+  if (unavailable.length > 0) throw new UnsupportedGlyphsError(unavailable);
+}
+
+/** Async coverage/subset stage shared by floating boxes and existing-run commits. */
+export async function prepareTextForExport(
+  objects: Map<string, PDFObject>,
+  runs: readonly { text: string; fontData?: FontData | null }[],
+  source?: UnicodeFontSource,
+): Promise<void> {
+  const missing = runs.flatMap(({ text, fontData }) =>
+    unsupportedFallbackCodePoints(text, fontData ?? null, encodeTextForFont(text, fontData ?? null)));
+  await prepareUnicodeFont(objects, missing, source);
+}
+
+/** Exact font advances for lines using the prepared Unicode fallback; other lines retain their estimator. */
+export function measureUnicodeExportText(
+  text: string, run: TextRun, page: PDFPageInfo, objects: Map<string, PDFObject>,
+  overrides?: readonly { start: number; end: number; fontSize: number }[], lineStart = 0,
+): number | undefined {
+  const unicodeCharacters = Array.from(text).filter(ch => ch.codePointAt(0)! > 255);
+  if (!unicodeCharacters.length) return undefined;
+  const font = loadFontForName(run.fontName, page, objects);
+  if (!font?.baseFont.endsWith('+NotoSansSC') &&
+      !unicodeCharacters.some(ch => hasUnicodeGlyph(objects, ch.codePointAt(0)!))) return undefined;
+  const flags = resolveRunStyleFlags(run.fontName, font);
+  const fallbackName = flags.bold && flags.italic ? 'Helvetica-BoldOblique'
+    : flags.bold ? 'Helvetica-Bold' : flags.italic ? 'Helvetica-Oblique' : 'Helvetica';
+  const visualSize = runFontSize(run);
+  let width = 0, position = lineStart;
+  for (const ch of text) {
+    const cp = ch.codePointAt(0)!, encoded = encodeTextForFont(ch, font);
+    let advance: number;
+    if (!isEncodingLossy(ch, encoded, font)) {
+      const bytes = encoded.pdfString.toBytes();
+      const code = font?.isComposite ? (bytes[0] << 8) | bytes[1] : bytes[0];
+      advance = font?.widths.get(code) ?? font?.defaultWidth ?? getStandardFontCharWidth('Helvetica', code);
+    } else if (unsupportedFallbackCodePoints(ch, font, encoded).length) {
+      advance = unicodeGlyphWidth(objects, cp);
+    } else {
+      const special = getBuiltInFallbackGlyph(ch);
+      advance = special ? getStandardFontCharWidth(special.fontKind, special.code)
+        : getStandardFontCharWidth(fallbackName, encodeTextWinAnsi(ch).pdfString.toBytes()[0]);
+    }
+    const size = overrides?.find(range => position >= range.start && position < range.end)?.fontSize ?? visualSize;
+    width += advance * size / 1000;
+    position += ch.length;
+  }
+  return width;
+}
+
+function splitExportRuns(
+  text: string, originalFont: string, fontData: FontData | null,
+  page: PDFPageInfo, objects: Map<string, PDFObject>,
+): { fontKey: string; operand: PDFObject }[] {
+  if (Array.from(text).some(ch => unsupportedFallbackCodePoints(ch, fontData, encodeTextForFont(ch, fontData)).length)) {
+    ensureUnicodeFont(page, objects);
+  } else if (fontData) {
+    // A reopened Unicode font can already cover the non-Latin run. Preserve its
+    // inherited resources when adding a Standard 14 font for the Latin run.
+    const effective = resolvePageResources(page.dict, objects);
+    const resources = new PDFDict([...effective.entries()]);
+    const fonts = effective.get('Font');
+    const resolved = fonts ? resolveRef(fonts, objects) : undefined;
+    resources.set('Font', new PDFDict(resolved instanceof PDFDict ? [...resolved.entries()] : []));
+    page.dict.set('Resources', resources); page.resources = resources;
+  }
+  const groups: { fontKey: string; text: string; kind: 'original' | 'latin' | 'unicode' | 'symbol' }[] = [];
+  for (const ch of text) {
+    const encoded = encodeTextForFont(ch, fontData);
+    let fontKey = originalFont, kind: 'original' | 'latin' | 'unicode' | 'symbol' = 'original', value = ch;
+    if (isEncodingLossy(ch, encoded, fontData)) {
+      if (unsupportedFallbackCodePoints(ch, fontData, encoded).length) {
+        fontKey = ensureUnicodeFont(page, objects); kind = 'unicode';
+      } else {
+        const special = getBuiltInFallbackGlyph(ch);
+        if (special) {
+          fontKey = ensureBuiltInFallbackFont(page, objects, special.fontKind);
+          value = String.fromCharCode(special.code); kind = 'symbol';
+        } else {
+          fontKey = ensureFallbackFont(page, objects, resolveRunStyleFlags(originalFont, fontData)); kind = 'latin';
+        }
+      }
+    }
+    const previous = groups[groups.length - 1];
+    if (previous?.fontKey === fontKey && previous.kind === kind) previous.text += value;
+    else groups.push({ fontKey, kind, text: value });
+  }
+  return groups.map(group => ({
+    fontKey: group.fontKey,
+    operand: group.kind === 'unicode' ? encodeUnicodeText(objects, group.text)
+      : group.kind === 'symbol' ? new PDFString(group.text)
+      : group.kind === 'latin' ? encodeTextWinAnsi(group.text).pdfString
+      : encodeTextForFont(group.text, fontData).pdfString,
+  }));
+}
+
+function applyUnicodeShowing(
+  instructions: CSInstruction[], textIndex: number, text: string, originalFont: string,
+  fontData: FontData | null, page: PDFPageInfo, objects: Map<string, PDFObject>, fontSize: number,
+): number {
+  let previousFont = originalFont.replace(/^\//, ''), size = fontSize;
+  for (let i = textIndex - 1; i >= 0; i--) {
+    const inst = instructions[i];
+    if (inst.operator === 'BT') break;
+    if (inst.operator === 'Tf') {
+      if (inst.operands[0] instanceof PDFName) previousFont = inst.operands[0].name;
+      if (inst.operands[1] instanceof PDFNumber) size = inst.operands[1].value;
+      break;
+    }
+  }
+  const original = instructions[textIndex], ops: CSInstruction[] = [];
+  if (original.operator === '"') {
+    ops.push({ operator: 'Tw', operands: [original.operands[0]], offset: original.offset },
+      { operator: 'Tc', operands: [original.operands[1]], offset: original.offset });
+  }
+  if (original.operator === "'" || original.operator === '"') ops.push({ operator: 'T*', operands: [], offset: original.offset });
+  for (const run of splitExportRuns(text, originalFont, fontData, page, objects)) {
+    ops.push({ operator: 'Tf', operands: [new PDFName(run.fontKey), new PDFNumber(size)], offset: 0 },
+      { operator: 'Tj', operands: [run.operand], offset: 0 });
+  }
+  ops.push({ operator: 'Tf', operands: [new PDFName(previousFont), new PDFNumber(size)], offset: 0 });
+  instructions.splice(textIndex, 1, ...ops);
+  return ops.length - 1;
 }
 
 /** True when encoding dropped/replaced glyphs the user typed (causes missing text / `?`). */
@@ -1485,6 +1643,7 @@ function applyGroupedTextEdit(
   fallbackFont: string | null,
   run: TextRun,
   fontData: FontData | null,
+  unicode?: { page: PDFPageInfo; objects: Map<string, PDFObject> },
 ): number {
   const sortedIndices = Array.from(new Set(sourceIndices)).sort((a, b) => a - b);
   let primaryIdx = -1;
@@ -1513,6 +1672,10 @@ function applyGroupedTextEdit(
     } else {
       inst.operands = [empty];
     }
+  }
+  if (unicode) {
+    return applyUnicodeShowing(instructions, primaryIdx, newText, run.fontName,
+      fontData, unicode.page, unicode.objects, run.fontSize);
   }
 
   if (fallbackFont && Array.from(newText).some(ch => getBuiltInFallbackGlyph(ch) !== null)) {

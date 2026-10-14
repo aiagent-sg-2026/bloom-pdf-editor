@@ -1156,15 +1156,13 @@ function getCanvasFontProperties(
         fallback = '"Times New Roman", Times, serif';
       }
       const rawStripped = stripFontSubsetPrefix(fontData.baseFont);
-      family = `"${stripped}", "${rawStripped}", "${fontData.baseFont}", ${fallback}`;
+      const embeddedFamily = embeddedFontFamily(fontData.fontBytes);
+      family = `"${embeddedFamily}", "${stripped}", "${rawStripped}", "${fontData.baseFont}", ${fallback}`;
 
       // Only drop CSS weight/style when WE successfully registered this face.
       // document.fonts.check() alone is a false positive (system font with a
       // similar name) and caused certificate bold text to render regular.
-      const faceReady =
-        loadedFontFaces.has(stripped) ||
-        loadedFontFaces.has(rawStripped) ||
-        loadedFontFaces.has(fontData.baseFont);
+      const faceReady = loadedFontFaces.has(embeddedFamily);
       if (faceReady) {
         weight = 'normal';
         style = 'normal';
@@ -1296,6 +1294,18 @@ export async function renderAllPages(
 const loadedFontFaces = new Set<string>();
 /** Family names that failed to load (avoid retrying on every frame). */
 const failedFontFaces = new Set<string>();
+const embeddedFontFamilies = new WeakMap<Uint8Array, string>();
+let nextEmbeddedFontFamily = 0;
+
+/** Byte identity distinguishes growing subsets and independent documents with the same BaseFont. */
+function embeddedFontFamily(bytes: Uint8Array): string {
+  let family = embeddedFontFamilies.get(bytes);
+  if (!family) {
+    family = `PaperloomEmbedded${++nextEmbeddedFontFamily}`;
+    embeddedFontFamilies.set(bytes, family);
+  }
+  return family;
+}
 
 async function registerEmbeddedFonts(fonts: Map<string, FontData>): Promise<void> {
   const promises: Promise<void>[] = [];
@@ -1307,45 +1317,27 @@ async function registerEmbeddedFonts(fonts: Map<string, FontData>): Promise<void
     // Symbol/ZapfDingbats: canvas uses system symbol fonts + remapped Unicode
     if (isDingbatOrSymbolFamily(fontData.baseFont)) continue;
 
-    const names = new Set<string>();
-    names.add(fontData.baseFont);
-    const stripped = stripFontSubsetPrefix(fontData.baseFont);
-    if (stripped) names.add(stripped);
-    const cssName = cssFontFamilyName(fontData.baseFont);
-    if (cssName) names.add(cssName);
+    const familyName = embeddedFontFamily(fontData.fontBytes);
+    if (registered.has(familyName) || loadedFontFaces.has(familyName) || failedFontFaces.has(familyName)) continue;
+    registered.add(familyName);
 
-    for (const familyName of names) {
-      if (
-        registered.has(familyName) ||
-        loadedFontFaces.has(familyName) ||
-        failedFontFaces.has(familyName)
-      ) {
-        continue;
-      }
-
-      registered.add(familyName);
-
-      // Always register embedded bytes. document.fonts.check() is a false
-      // positive for names like "Times New Roman" / "Calibri" and would skip
-      // loading the PDF's bold subset, then mark the face "ready" at weight
-      // normal — certificate labels render regular.
-      try {
-        const fontFace = new FontFace(familyName, fontData.fontBytes.buffer.slice(
-          fontData.fontBytes.byteOffset,
-          fontData.fontBytes.byteOffset + fontData.fontBytes.byteLength,
-        ) as ArrayBuffer);
-        const p = fontFace.load().then((loadedFace) => {
-          document.fonts.add(loadedFace);
-          loadedFontFaces.add(familyName);
-        }).catch((e) => {
-          failedFontFaces.add(familyName);
-          console.debug?.(`[Renderer] Embedded font face not loaded for "${familyName}", using system fallback:`, e);
-        });
-        promises.push(p);
-      } catch (e) {
+    // Always register bytes: document.fonts.check() can match an unrelated system font.
+    try {
+      const fontFace = new FontFace(familyName, fontData.fontBytes.buffer.slice(
+        fontData.fontBytes.byteOffset,
+        fontData.fontBytes.byteOffset + fontData.fontBytes.byteLength,
+      ) as ArrayBuffer);
+      const p = fontFace.load().then((loadedFace) => {
+        document.fonts.add(loadedFace);
+        loadedFontFaces.add(familyName);
+      }).catch((e) => {
         failedFontFaces.add(familyName);
-        console.debug?.(`[Renderer] Failed to construct font face for "${familyName}":`, e);
-      }
+        console.debug?.(`[Renderer] Embedded font face not loaded for "${familyName}", using system fallback:`, e);
+      });
+      promises.push(p);
+    } catch (e) {
+      failedFontFaces.add(familyName);
+      console.debug?.(`[Renderer] Failed to construct font face for "${familyName}":`, e);
     }
   }
 

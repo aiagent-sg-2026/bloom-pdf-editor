@@ -100,6 +100,7 @@ export function computeHorizontalShiftsFromEdits(
    * leaves trailers short and the enlarged glyphs pile onto neighbors.
    */
   fontSizeOverrides?: FontSizeOverrideRange[],
+  measureWidth?: (text: string, run: TextRun, lineStart: number) => number | undefined,
 ): RunShift[] {
   if (line.segments.length <= 1) return [];
 
@@ -121,6 +122,7 @@ export function computeHorizontalShiftsFromEdits(
     const estimated = hasFsOverrides
       ? estimateTextWidthWithOverrides(newText, run, newLinePos, fontSizeOverrides)
       : estimateTextWidth(newText, run);
+    const exactWidth = measureWidth?.(newText, run, newLinePos);
     const fs = visualFontSize(run);
     const growing = newText.length > seg.text.length;
     const deltaChars = newText.length - seg.text.length;
@@ -164,7 +166,9 @@ export function computeHorizontalShiftsFromEdits(
     // Pending larger fontSize: trust the override estimate (includes size ratio).
     const scaled = oldW * (newText.length / Math.max(1, seg.text.length));
     let newW: number;
-    if (hasFsOverrides && growing) {
+    if (exactWidth !== undefined) {
+      newW = exactWidth;
+    } else if (hasFsOverrides && growing) {
       newW = Math.max(estimated, oldW);
     } else if (hasNewSpaces) {
       const spaceFloor =
