@@ -24,6 +24,7 @@ import {
 } from './utils';
 import { buildDisplayListIndex, hitTestDisplayList, isSelectableDisplayItem, EditorHistory, captureHistoryEntry, restoreAnnotSnapshot, restoreDocumentStructure, parseOverlaySnapshot, deleteObject, visualFontSize, resolveRunStyleFlags, transformObject, applyObjectTransform, distributeTextChangeToSegments, segmentAtIndex, createVisualSignature, hitTestSignature, moveSignature, resizeSignature, rotateSignature, setSignatureOpacity, setSignatureLocked, deleteSignature, updateSignature, visualSignatureToImagePlacement, getSignatureLibrary, DEFAULT_SIGNATURE_SIZE, detectSignatureFieldsOnPage, hitTestSignatureField, createSignatureFieldAtPoint, applySignatureFieldAppearanceAsync, getCertificateManager, signDocumentCryptographic, validateDocumentSignatures, enableLongTermValidation, getLtvStatus, listManagedSignatures, buildRevisionViewer, lockSignaturesAfterSigning, pushRecentSignatureId, orderLibraryByRecent, SIGNATURE_SHORTCUTS } from '@/engine/browser-core';
 import type { QuadTree, SelectableItem, EditableObject } from '@/engine/browser-core';
+import { UnsupportedGlyphsError } from '@/engine/browser-core';
 import { findMatchingFlowLine } from './flowLineMatch';
 import { commitThenCleanup } from './commit-after-success';
 
@@ -302,6 +303,12 @@ export default function EditorPage() {
   const [isLoading, setIsLoading] = useState(true);
   const [isRendering, setIsRendering] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [glyphWarning, setGlyphWarning] = useState<string | null>(null);
+  const showUnsupportedGlyphWarning = useCallback((cause: unknown): boolean => {
+    if (!(cause instanceof UnsupportedGlyphsError)) return false;
+    setGlyphWarning(cause.message);
+    return true;
+  }, []);
   const [needsPassword, setNeedsPassword] = useState(false);
   const [passwordError, setPasswordError] = useState<string | null>(null);
   const [isVerifyingPassword, setIsVerifyingPassword] = useState(false);
@@ -1728,8 +1735,8 @@ export default function EditorPage() {
   }, [doc, currentPage, setEditingLine, renderResult, strokePaths, detectedTables]);
 
   // ── Text edit submit — surgical in-place line edit (preserve positions) ──
-  const handleEditSubmit = useCallback(async (closeEdit: boolean = true) => {
-    if (!editingLine || !doc || !engineRef.current) return;
+  const handleEditSubmit = useCallback(async (closeEdit: boolean = true): Promise<boolean> => {
+    if (!editingLine || !doc || !engineRef.current) return true;
     if (blurTimeoutRef.current) {
       clearTimeout(blurTimeoutRef.current);
       blurTimeoutRef.current = null;
@@ -1755,7 +1762,7 @@ export default function EditorPage() {
         setEditingLine(null);
         setSelectedLine(null);
       }
-      return;
+      return true;
     }
 
     try {
@@ -1986,13 +1993,18 @@ export default function EditorPage() {
         setSelectedLine(null);
       }
       setRenderKey(k => k + 1);
+      setGlyphWarning(null);
+      return true;
     } catch (e) {
-      console.error('[Editor] Edit failed:', e);
-      setError(`Edit failed: ${e instanceof Error ? e.message : String(e)}`);
+      if (!showUnsupportedGlyphWarning(e)) {
+        console.error('[Editor] Edit failed:', e);
+        setError(`Edit failed: ${e instanceof Error ? e.message : String(e)}`);
+      }
+      return false;
     } finally {
       setIsSaving(false);
     }
-  }, [editingLine, editText, editOffsetCss, scale, doc, currentPage, setEditingLine, renderResult, pushEditorHistory, applyStyle]);
+  }, [editingLine, editText, editOffsetCss, scale, doc, currentPage, setEditingLine, renderResult, pushEditorHistory, applyStyle, showUnsupportedGlyphWarning]);
 
   // ── Edit cancel — discard overlay only; PDF untouched until commit ──
   const handleEditCancel = useCallback(async () => {
@@ -2471,7 +2483,7 @@ export default function EditorPage() {
     const line = editAnchorLineRef.current ?? selectedLine ?? editingLine;
     if (!doc || !engineRef.current || !line) return;
     try {
-      if (editingLine) await handleEditSubmit(false);
+      if (editingLine && !await handleEditSubmit(false)) return;
       setIsSaving(true);
       const engine = engineRef.current;
       const page = doc.pages[currentPage];
@@ -2509,7 +2521,7 @@ export default function EditorPage() {
   const handleAddTableRow = useCallback(async () => {
     if (!doc || !engineRef.current || !selectedTableCell) return;
     try {
-      if (editingLine) await handleEditSubmit(false);
+      if (editingLine && !await handleEditSubmit(false)) return;
       setIsSaving(true);
       const { table, cell } = selectedTableCell;
       const rowLines = engineRef.current.getTableRowLines(table, cell.row);
@@ -2531,7 +2543,7 @@ export default function EditorPage() {
   const handleAddTableColumn = useCallback(async () => {
     if (!doc || !engineRef.current || !selectedTableCell) return;
     try {
-      if (editingLine) await handleEditSubmit(false);
+      if (editingLine && !await handleEditSubmit(false)) return;
       setIsSaving(true);
       const { table } = selectedTableCell;
       const rows: TextLine[][] = [];
@@ -2588,7 +2600,7 @@ export default function EditorPage() {
   }, [renderResult]);
 
   // ── Canvas click handler — caret-based, no boxes ──
-  const handleCanvasClick = useCallback((e: React.MouseEvent) => {
+  const handleCanvasClick = useCallback(async (e: React.MouseEvent) => {
     if (!renderResult || !doc) return;
     const wrapper = canvasContainerRef.current;
     if (!wrapper) return;
@@ -2613,7 +2625,7 @@ export default function EditorPage() {
       {
         const sigHit = hitTestSignature(signaturesRef.current, currentPage, pdfX, pdfY);
         if (sigHit) {
-          if (editingLine) void handleEditSubmit(false);
+          if (editingLine && !await handleEditSubmit(false)) return;
           setSelectedSignatureId(sigHit.id);
           setSelectedDisplayItem(null);
           setSelectedLine(null);
@@ -2626,7 +2638,7 @@ export default function EditorPage() {
       if (formFields.length > 0 && engineRef.current) {
         const formHit = engineRef.current.hitTestFormField(formFields, pdfX, pdfY);
         if (formHit) {
-          if (editingLine) void handleEditSubmit(false);
+          if (editingLine && !await handleEditSubmit(false)) return;
           handleFormFieldSelect(formHit);
           return;
         }
@@ -2645,7 +2657,7 @@ export default function EditorPage() {
       if (linksHighlighted && engineRef.current) {
         const linkHit = engineRef.current.hitTestPageLink(doc, currentPage, pdfX, pdfY);
         if (linkHit) {
-          if (editingLine) void handleEditSubmit(false);
+          if (editingLine && !await handleEditSubmit(false)) return;
           setSelectedLine(null);
           setSelectedDisplayItem(null);
           setLinkCreatePending(false);
@@ -2691,7 +2703,7 @@ export default function EditorPage() {
           }, 0);
         };
         if (editingLine) {
-          void handleEditSubmit(false).then(startNew);
+          void handleEditSubmit(false).then(committed => { if (committed) startNew(); });
         } else {
           startNew();
         }
@@ -2717,7 +2729,7 @@ export default function EditorPage() {
           ? spatialHit.data as ImageItem | PathItem
           : null;
         if (itemHit) {
-          if (editingLine) handleEditSubmit();
+          if (editingLine && !await handleEditSubmit()) return;
           setSelectedDisplayItem(itemHit);
           setSelectedLine(null);
           setEditingLine(null);
@@ -2726,7 +2738,7 @@ export default function EditorPage() {
         }
         setSelectedDisplayItem(null);
         if (editingLine) {
-          handleEditSubmit();
+          if (!await handleEditSubmit()) return;
         } else {
           setEditingLine(null);
           setSelectedLine(null);
@@ -2845,7 +2857,9 @@ export default function EditorPage() {
       const flowLine = findMatchingFlowLine(hit, renderResult.textLines) ?? hit;
       const newCaret = caretIndexFromLineX(pdfX, flowLine);
       if (editingLine && editingLine.id !== flowLine.id) {
-        void handleEditSubmit(false).then(() => beginEditSession(flowLine, newCaret));
+        void handleEditSubmit(false).then(committed => {
+          if (committed) beginEditSession(flowLine, newCaret);
+        });
         return;
       }
       beginEditSession(flowLine, newCaret);
@@ -3024,7 +3038,7 @@ export default function EditorPage() {
   // ── Commit drawings, texts, and images to PDF ──
   const commitDrawingsToPdf = useCallback(async (pathsToCommit?: DrawnPath[], textsToCommit?: FloatingText[], imagesToCommit?: FloatingImage[]) => {
     const paths = pathsToCommit || drawnPaths;
-    const fTexts = textsToCommit || floatingTexts;
+    const fTexts = textsToCommit ?? floatingTextsRef.current;
     const fImages = imagesToCommit || floatingImages;
     const signaturePlacements = signaturesRef.current
       .filter((signature) => signature.pageIndex === currentPage)
@@ -3033,6 +3047,8 @@ export default function EditorPage() {
     if (!doc || !engineRef.current || (paths.length === 0 && fTexts.length === 0 && fImages.length === 0 && signaturePlacements.length === 0)) return;
     const engine = engineRef.current;
     const page = doc.pages[currentPage];
+    // Check every floating box before drawings, fonts, images, or overlay cleanup can mutate state.
+    engine.assertTextEncodable(fTexts.map(ft => ft.text).join('\n'));
     let currentObjNum = engine.getNextObjNum(doc);
 
     const pageHeight = renderResult?.pageHeight || page.mediaBox.height;
@@ -4096,27 +4112,35 @@ export default function EditorPage() {
   // ── Navigation handlers ──
   const goToPrev = useCallback(async () => {
     try {
+      engineRef.current?.assertTextEncodable(floatingTextsRef.current.map(ft => ft.text).join('\n'));
+      if (editingLineRef.current && !await handleEditSubmit()) return;
       await commitDrawingsToPdf();
     } catch (e) {
-      setError(`Failed to commit page overlays: ${e instanceof Error ? e.message : String(e)}`);
+      if (!showUnsupportedGlyphWarning(e)) {
+        setError(`Failed to commit page overlays: ${e instanceof Error ? e.message : String(e)}`);
+      }
       return;
     }
     closeLinkPopover();
     setLinkCreatePending(false);
     setCurrentPage(p => Math.max(0, p - 1));
-  }, [commitDrawingsToPdf, closeLinkPopover]);
+  }, [commitDrawingsToPdf, closeLinkPopover, handleEditSubmit, showUnsupportedGlyphWarning]);
 
   const goToNext = useCallback(async () => {
     try {
+      engineRef.current?.assertTextEncodable(floatingTextsRef.current.map(ft => ft.text).join('\n'));
+      if (editingLineRef.current && !await handleEditSubmit()) return;
       await commitDrawingsToPdf();
     } catch (e) {
-      setError(`Failed to commit page overlays: ${e instanceof Error ? e.message : String(e)}`);
+      if (!showUnsupportedGlyphWarning(e)) {
+        setError(`Failed to commit page overlays: ${e instanceof Error ? e.message : String(e)}`);
+      }
       return;
     }
     closeLinkPopover();
     setLinkCreatePending(false);
     setCurrentPage(p => Math.min(totalPages - 1, p + 1));
-  }, [totalPages, commitDrawingsToPdf, closeLinkPopover]);
+  }, [totalPages, commitDrawingsToPdf, closeLinkPopover, handleEditSubmit, showUnsupportedGlyphWarning]);
 
   const zoomIn = useCallback(() => {
     setScale(s => Math.min(4, Math.round((s + 0.25) * 100) / 100));
@@ -4436,6 +4460,9 @@ export default function EditorPage() {
     if (!doc || !engineRef.current) return;
     try {
       setIsSaving(true);
+      setGlyphWarning(null);
+      engineRef.current.assertTextEncodable(floatingTextsRef.current.map(ft => ft.text).join('\n'));
+      if (editingLineRef.current && !await handleEditSubmit()) return;
       await commitDrawingsToPdf();
       const engine = engineRef.current;
       const bytes = saveMode === 'quick'
@@ -4450,12 +4477,14 @@ export default function EditorPage() {
       URL.revokeObjectURL(url);
       setIsDirty(false);
     } catch (e) {
-      console.error('[Editor] Download failed:', e);
-      setError(`Download failed: ${e instanceof Error ? e.message : String(e)}`);
+      if (!showUnsupportedGlyphWarning(e)) {
+        console.error('[Editor] Download failed:', e);
+        setError(`Download failed: ${e instanceof Error ? e.message : String(e)}`);
+      }
     } finally {
       setIsSaving(false);
     }
-  }, [doc, fileName, saveMode, commitDrawingsToPdf]);
+  }, [doc, fileName, saveMode, commitDrawingsToPdf, handleEditSubmit, showUnsupportedGlyphWarning]);
 
   // ── Compressed Download ──
   const handleCompressedDownload = useCallback(async (opts: {
@@ -4467,6 +4496,9 @@ export default function EditorPage() {
     try {
       setIsSaving(true);
       setError(null);
+      setGlyphWarning(null);
+      engineRef.current.assertTextEncodable(floatingTextsRef.current.map(ft => ft.text).join('\n'));
+      if (editingLineRef.current && !await handleEditSubmit()) return;
       // Capture pending overlays before committing them; compare exportable
       // objects too, since not every mutation enters history or marks dirty.
       const pristineBeforeCommit = originalIsCurrentRef.current;
@@ -4527,12 +4559,14 @@ export default function EditorPage() {
       }
       setIsDirty(false);
     } catch (e) {
-      console.error('[Editor] Compressed download failed:', e);
-      setError(`Compression failed: ${e instanceof Error ? e.message : String(e)}`);
+      if (!showUnsupportedGlyphWarning(e)) {
+        console.error('[Editor] Compressed download failed:', e);
+        setError(`Compression failed: ${e instanceof Error ? e.message : String(e)}`);
+      }
     } finally {
       setIsSaving(false);
     }
-  }, [doc, fileName, commitDrawingsToPdf]);
+  }, [doc, fileName, commitDrawingsToPdf, handleEditSubmit, showUnsupportedGlyphWarning]);
 
   const handleClose = useCallback(async () => {
     await clearEditorSession();
@@ -6084,9 +6118,13 @@ export default function EditorPage() {
             isGeneratingThumbnails={isGeneratingThumbnails}
             onPageSelect={async (i) => {
               try {
+                engineRef.current?.assertTextEncodable(floatingTextsRef.current.map(ft => ft.text).join('\n'));
+                if (editingLineRef.current && !await handleEditSubmit()) return;
                 await commitDrawingsToPdf();
               } catch (e) {
-                setError(`Failed to commit page overlays: ${e instanceof Error ? e.message : String(e)}`);
+                if (!showUnsupportedGlyphWarning(e)) {
+                  setError(`Failed to commit page overlays: ${e instanceof Error ? e.message : String(e)}`);
+                }
                 return;
               }
               closeLinkPopover();
@@ -6126,9 +6164,13 @@ export default function EditorPage() {
             isGeneratingThumbnails={isGeneratingThumbnails}
             onPageSelect={async (i) => {
               try {
+                engineRef.current?.assertTextEncodable(floatingTextsRef.current.map(ft => ft.text).join('\n'));
+                if (editingLineRef.current && !await handleEditSubmit()) return;
                 await commitDrawingsToPdf();
               } catch (e) {
-                setError(`Failed to commit page overlays: ${e instanceof Error ? e.message : String(e)}`);
+                if (!showUnsupportedGlyphWarning(e)) {
+                  setError(`Failed to commit page overlays: ${e instanceof Error ? e.message : String(e)}`);
+                }
                 return;
               }
               closeLinkPopover();
@@ -6161,6 +6203,15 @@ export default function EditorPage() {
           totalPages={totalPages}
         />
       </div>
+
+      {glyphWarning && (
+        <div role="status" aria-live="polite" className="fixed bottom-10 left-1/2 -translate-x-1/2 max-w-[90vw] bg-zinc-900 border border-amber-500/40 text-amber-200 px-4 py-3 rounded-xl text-sm flex items-center gap-4 shadow-xl z-[100]">
+          <span>{glyphWarning}</span>
+          <button onClick={() => setGlyphWarning(null)} aria-label="Dismiss font warning" className="shrink-0">
+            <X size={16} />
+          </button>
+        </div>
+      )}
 
       {/* Error toast */}
       {error && (
