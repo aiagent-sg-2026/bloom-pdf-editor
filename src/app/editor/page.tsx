@@ -3139,6 +3139,7 @@ export default function EditorPage() {
             currentObjNum++;
             return num;
           },
+          { rotationDegrees: signature.rotation, opacity: signature.opacity },
         );
         newContentBytes = b;
       }
