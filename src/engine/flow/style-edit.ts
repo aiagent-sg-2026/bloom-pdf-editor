@@ -30,6 +30,7 @@ import {
   compileInstructions,
   encodeTextForFont,
   encodeTextWinAnsi,
+  assertTextEncodable,
   loadFontForName,
   type EditResult,
   type EncodedText,
@@ -737,6 +738,18 @@ export function applyStyleToSelection(
       prev.localEnd = Math.max(prev.localEnd, h.localEnd);
     }
   }
+  // Reject lossy face changes and split fallbacks before shifting runs or adding resources.
+  for (const [run, range] of byRun) {
+    const changesFace = !!style.fontFamily || style.bold != null || style.italic != null;
+    if (!changesFace && style.fontSize == null) continue;
+    const fontData = loadFontForName(run.fontName, page, objects);
+    if (changesFace && fontData?.isComposite) {
+      assertTextEncodable(run.text, null, false);
+    } else if ((changesFace || style.fontSize != null) &&
+        (range.localStart > 0 || range.localEnd < run.text.length)) {
+      assertTextEncodable(run.text, fontData, false);
+    }
+  }
 
   let bytes = contentBytes;
   let addedUnderline = false;
@@ -1068,6 +1081,7 @@ function patchRunStyle(
     const wantItalic = style.italic ?? currentFlags.italic;
 
     if (style.fontFamily) {
+      if (fontDataForFlags?.isComposite) assertTextEncodable(run.text, null, false);
       const desired = mapUIFamilyToStandard14(style.fontFamily, wantBold, wantItalic);
       fontKey = ensureStandard14Font(page, objects, desired);
     } else if (style.bold != null || style.italic != null) {
@@ -1076,6 +1090,7 @@ function patchRunStyle(
 
       // 2) Fall back to Standard14 face we can inject
       if (!fontKey) {
+        if (fontDataForFlags?.isComposite) assertTextEncodable(run.text, null, false);
         // run.fontName is an opaque resource key (F2…): use the real BaseFont.
         const realName = (fontDataForFlags?.baseFont || fontDataForFlags?.name || run.fontName).replace(/^.*\+/, '');
         let desired = resolveStyledFontName(realName, wantBold, wantItalic);
@@ -1196,6 +1211,7 @@ function applyWholeRunFontPatch(
       const b = o.toBytes();
       let t = '';
       for (let i = 0; i + 1 < b.length; i += 2) t += charCodeToUnicode((b[i] << 8) | b[i + 1], fontData) || ' ';
+      assertTextEncodable(t, null, false);
       return encodeTextWinAnsi(t).pdfString;
     };
     if (inst && inst.operator === 'Tj') {
@@ -1303,6 +1319,7 @@ function encodePieceForStyle(
   const lossy = encoded.missing.length > 0
     || (encoded.pdfString instanceof PDFString && encoded.pdfString.value.includes('?') && !text.includes('?'));
   if (lossy) {
+    assertTextEncodable(text, null, false);
     const flags = resolveRunStyleFlags(fontData?.name || fontData?.baseFont || '', fontData);
     return { encoded: encodeTextWinAnsi(text), fontKey: ensureFallbackFont(page, objects, flags) };
   }

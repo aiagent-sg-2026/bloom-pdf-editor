@@ -36,6 +36,7 @@ import { resolveRef } from '../parser/parser';
 import { loadFont, type FontData, charCodeToUnicode } from '../fonts/font-parser';
 import { ensureFallbackFont } from '../fonts/font-augmentation';
 import { ensureBuiltInFallbackFont, getBuiltInFallbackGlyph } from '../fonts/symbol-fallback';
+import { UnsupportedGlyphsError } from '../fonts/unsupported-glyphs';
 import { getStandardFontCharWidth } from '../fonts/standard14';
 import { resolveRunStyleFlags } from '../flow/metrics';
 import { serializeToString } from './stream-compiler';
@@ -92,6 +93,16 @@ export function applyTextEdits(
   objects: Map<string, PDFObject>,
   edits: TextEdit[],
 ): EditResult {
+  // Validate the entire batch before adding fallback resources or changing run indices.
+  const prepared = edits.filter(edit => edit.newText !== edit.targetRun.text).map(edit => {
+    const fontData = loadFontForRun(edit.targetRun, page, objects);
+    const encoded = encodeTextForFont(edit.newText, fontData);
+    return { edit, fontData, encoded };
+  });
+  const unsupported = prepared.flatMap(({ edit, fontData, encoded }) =>
+    unsupportedFallbackCodePoints(edit.newText, fontData, encoded));
+  if (unsupported.length > 0) throw new UnsupportedGlyphsError(unsupported);
+
   // Parse the content stream into instructions
   const instructions = parseContentStream(contentBytes);
 
@@ -103,18 +114,8 @@ export function applyTextEdits(
   let indexOffset = 0;
 
   // Apply each edit
-  for (const edit of edits) {
-    // Unchanged runs must not be rewritten — re-encoding through Helvetica
-    // fallback turns Symbol/Zapf bullets (•) into "-" and can perturb spacing.
-    if (edit.newText === edit.targetRun.text) {
-      continue;
-    }
-
-    // Load font data for encoding
-    const fontData = loadFontForRun(edit.targetRun, page, objects);
-
-    // Encode with the run's font; subset/CID fonts often can't encode typed ASCII (`.` → missing/`?`)
-    let encoded = encodeTextForFont(edit.newText, fontData);
+  for (const { edit, fontData, encoded: initialEncoding } of prepared) {
+    let encoded = initialEncoding;
     let useFallbackFont: string | null = null;
     const specialChars = Array.from(edit.newText).some(ch => getBuiltInFallbackGlyph(ch) !== null);
     const lossy = isEncodingLossy(edit.newText, encoded, fontData);
@@ -638,6 +639,8 @@ export function insertTextRun(
     width?: number;
   } = {},
 ): Uint8Array {
+  assertTextEncodable(text);
+
   // Ensure the page has the Helv font in its resources
   const resourcesObj = page.dict.get('Resources');
   let resources = resourcesObj instanceof PDFRef ? resolveRef(resourcesObj, objects) : resourcesObj;
@@ -1064,8 +1067,7 @@ export function encodeTextForFont(text: string, fontData: FontData | null): Enco
     const reverseMap = buildReverseUnicodeMap(fontData);
     let hex = '';
 
-    for (let i = 0; i < text.length; i++) {
-      const char = text[i];
+    for (const char of text) {
       const code = reverseMap.get(char);
       if (code !== undefined && code !== 0) {
         hex += code.toString(16).padStart(4, '0');
@@ -1086,8 +1088,7 @@ export function encodeTextForFont(text: string, fontData: FontData | null): Enco
     const reverseMap = buildReverseUnicodeMap(fontData);
     let result = '';
 
-    for (let i = 0; i < text.length; i++) {
-      const char = text[i];
+    for (const char of text) {
       const code = reverseMap.get(char);
       if (code !== undefined && code !== 0) {
         result += String.fromCharCode(code & 0xff);
@@ -1124,6 +1125,12 @@ function isBulletLike(cp: number): boolean {
   );
 }
 
+// Retain the existing punctuation substitutions; only unsupported placeholders are rejected.
+const WIN_ANSI_SUBSTITUTIONS: Record<number, string> = {
+  0x2018: "'", 0x2019: "'", 0x201c: '"', 0x201d: '"',
+  0x2013: '-', 0x2014: '-', 0x2026: '...',
+};
+
 /** WinAnsi / Latin-1 encode for Helvetica fallback — keeps `.` `a-z` etc. intact. */
 export function encodeTextWinAnsi(text: string): EncodedText {
   const missing: number[] = [];
@@ -1143,15 +1150,37 @@ export function encodeTextWinAnsi(text: string): EncodedText {
       result += String.fromCharCode(cp);
     } else {
       missing.push(cp);
-      // Best-effort ASCII substitutes for common punctuation
-      if (cp === 0x2018 || cp === 0x2019) result += "'";
-      else if (cp === 0x201c || cp === 0x201d) result += '"';
-      else if (cp === 0x2013 || cp === 0x2014) result += '-';
-      else if (cp === 0x2026) result += '...';
-      else result += '?';
+      result += WIN_ANSI_SUBSTITUTIONS[cp] ?? '?';
     }
   }
   return { pdfString: new PDFString(result), missing };
+}
+
+function unsupportedFallbackCodePoints(
+  text: string,
+  fontData: FontData | null,
+  encoded: EncodedText,
+  allowBuiltInFallback = true,
+): number[] {
+  if (!isEncodingLossy(text, encoded, fontData)) return [];
+  return encodeTextWinAnsi(text).missing.filter(cp =>
+    WIN_ANSI_SUBSTITUTIONS[cp] === undefined &&
+    (!allowBuiltInFallback || getBuiltInFallbackGlyph(String.fromCodePoint(cp)) === null));
+}
+
+/**
+ * Preflight a text commit without modifying page resources or editor state.
+ * Built-in Symbol/Dingbats are allowed only when the caller emits split fallback runs.
+ */
+export function assertTextEncodable(
+  text: string,
+  fontData: FontData | null = null,
+  allowBuiltInFallback = true,
+): void {
+  const unsupported = unsupportedFallbackCodePoints(
+    text, fontData, encodeTextForFont(text, fontData), allowBuiltInFallback,
+  );
+  if (unsupported.length > 0) throw new UnsupportedGlyphsError(unsupported);
 }
 
 /** True when encoding dropped/replaced glyphs the user typed (causes missing text / `?`). */
@@ -1471,7 +1500,6 @@ function applyGroupedTextEdit(
 
   const empty = new PDFString('');
   const primary = instructions[primaryIdx];
-  applyEncodedShowingOperands(primary, newText, encoded, fontData, !!fallbackFont);
 
   for (let i = 0; i < sortedIndices.length; i++) {
     const idx = sortedIndices[i];
@@ -1487,6 +1515,12 @@ function applyGroupedTextEdit(
     }
   }
 
+  if (fallbackFont && Array.from(newText).some(ch => getBuiltInFallbackGlyph(ch) !== null)) {
+    return applySpecialFallbackShowing(
+      instructions, primaryIdx, newText, fallbackFont, run.fontName, runFontSize(run),
+    );
+  }
+  applyEncodedShowingOperands(primary, newText, encoded, fontData, !!fallbackFont);
   if (fallbackFont) {
     return insertFallbackFontAround(
       instructions,

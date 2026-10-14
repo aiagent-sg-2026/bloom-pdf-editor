@@ -18,6 +18,7 @@ export type { TextRun, PathItem, ImageItem, DisplayItem } from './content/interp
 export { loadPageFonts } from './fonts/font-parser';
 export { augmentFontsForMissingGlyphs } from './fonts/font-augmentation';
 export type { FontData } from './fonts/font-parser';
+export { UnsupportedGlyphsError } from './fonts/unsupported-glyphs';
 
 export { renderPage } from './render/renderer';
 export type { RenderResult } from './render/renderer';
@@ -50,7 +51,7 @@ export type { TextLine, TextStylePatch, DetectedTable } from './flow';
 export { ingestPage, blockPlainText } from './bloom';
 export type { BloomBlock, BloomPage } from './bloom';
 
-export { applyRunPositionShifts, findAndReplace, insertTextRun } from './editor/text-editor';
+export { applyRunPositionShifts, findAndReplace, insertTextRun, assertTextEncodable } from './editor/text-editor';
 export { insertImageRun, replaceImageXObject, createRGBAImageObjects } from './editor/image-editor';
 export { applyObjectTransform, deleteObject } from './editor/object-editor';
 export { addHighlightFromLineSelection } from './editor/highlight';

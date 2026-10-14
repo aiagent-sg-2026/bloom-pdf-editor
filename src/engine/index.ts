@@ -217,7 +217,8 @@ export type {
 } from './bloom';
 
 // ── Editor ──
-export { applyTextEdits, applyRunPositionShifts, findTextInPage, findAndReplace, insertTextRun } from './editor/text-editor';
+export { applyTextEdits, applyRunPositionShifts, findTextInPage, findAndReplace, insertTextRun, assertTextEncodable } from './editor/text-editor';
+export { UnsupportedGlyphsError } from './fonts/unsupported-glyphs';
 export { insertImageRun, replaceImageXObject, createRGBAImageObjects } from './editor/image-editor';
 export type { TextEdit, EditResult, RunPositionShift } from './editor/text-editor';
 export {
