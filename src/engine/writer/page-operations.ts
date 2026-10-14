@@ -16,12 +16,14 @@
 import {
   PDFArray,
   PDFDict,
+  PDFHexString,
   PDFName,
   PDFNumber,
   PDFNull,
   PDFObject,
   PDFRef,
   PDFStream,
+  PDFString,
   type PDFDocumentData,
   type PDFPageInfo,
   type PDFRectangle,
@@ -168,6 +170,67 @@ function rewriteOutlineList(
   return kept;
 }
 
+/**
+ * Prune destination name-tree pairs, preserving sibling trees and updating
+ * bounds up through /Kids. Cyclic or unrecognized nodes are left intact.
+ */
+function pruneDestinationTree(
+  doc: PDFDocumentData,
+  tree: PDFObject,
+  pageRef: PDFRef,
+  seen = new Set<PDFDict>(),
+): 'unchanged' | 'changed' | 'empty' {
+  const node = resolveRef(tree, doc.objects);
+  if (!(node instanceof PDFDict) || seen.has(node)) return 'unchanged';
+  seen.add(node);
+  const names = resolveRef(node.get('Names') ?? PDFNull.instance, doc.objects);
+  const kids = resolveRef(node.get('Kids') ?? PDFNull.instance, doc.objects);
+  let changed = false;
+  if (names instanceof PDFArray) {
+    for (let i = 0; i + 1 < names.items.length;) {
+      if (containsDestinationRef(names.items[i + 1], pageRef, doc.objects)) {
+        names.items.splice(i, 2);
+        changed = true;
+      } else {
+        i += 2;
+      }
+    }
+  }
+  if (kids instanceof PDFArray) {
+    for (let i = 0; i < kids.items.length;) {
+      const result = pruneDestinationTree(doc, kids.items[i], pageRef, seen);
+      if (result !== 'unchanged') changed = true;
+      if (result === 'empty') kids.items.splice(i, 1); else i++;
+    }
+  }
+  if (!changed) return 'unchanged';
+  if (names instanceof PDFArray && names.length === 0) node.delete('Names');
+  if (kids instanceof PDFArray && kids.length === 0) node.delete('Kids');
+  if (!node.has('Names') && !node.has('Kids')) return 'empty';
+
+  let first: PDFObject | undefined;
+  let last: PDFObject | undefined;
+  if (names instanceof PDFArray && names.length > 0 && names.length % 2 === 0) {
+    first = names.items[0];
+    last = names.items[names.length - 2];
+  } else if (kids instanceof PDFArray && kids.length > 0) {
+    const firstChild = resolveRef(kids.items[0], doc.objects);
+    const lastChild = resolveRef(kids.items[kids.length - 1], doc.objects);
+    const firstLimits = resolveRef(firstChild instanceof PDFDict ? firstChild.get('Limits') ?? PDFNull.instance : PDFNull.instance, doc.objects);
+    const lastLimits = resolveRef(lastChild instanceof PDFDict ? lastChild.get('Limits') ?? PDFNull.instance : PDFNull.instance, doc.objects);
+    if (firstLimits instanceof PDFArray) first = firstLimits.items[0];
+    if (lastLimits instanceof PDFArray) last = lastLimits.items[1];
+  }
+  if ((first instanceof PDFString || first instanceof PDFHexString) &&
+      (last instanceof PDFString || last instanceof PDFHexString)) {
+    node.set('Limits', new PDFArray([first, last]));
+  } else {
+    // Malformed bounds must not remain stale after pruning.
+    node.delete('Limits');
+  }
+  return 'changed';
+}
+
 function removeDeletedPageDestinations(doc: PDFDocumentData, pageRef: PDFRef): void {
   const catalog = doc.catalog;
   const outlines = catalog.get('Outlines');
@@ -186,18 +249,25 @@ function removeDeletedPageDestinations(doc: PDFDocumentData, pageRef: PDFRef): v
   // Prune legacy catalog destinations individually so surviving named
   // destinations remain valid after page deletion.
   const dests = catalog.get('Dests');
-  const destDict = dests instanceof PDFRef ? doc.objects.get(dests.toKey()) : dests;
+  const destDict = resolveRef(dests ?? PDFNull.instance, doc.objects);
   if (destDict instanceof PDFDict) {
+    let changed = false;
     for (const [name, destination] of Array.from(destDict.entries())) {
-      if (containsDestinationRef(destination, pageRef, doc.objects)) destDict.delete(name);
+      if (containsDestinationRef(destination, pageRef, doc.objects)) {
+        destDict.delete(name);
+        changed = true;
+      }
     }
-    if (destDict.size === 0) catalog.delete('Dests');
+    if (changed && destDict.size === 0) catalog.delete('Dests');
   }
 
-  // Named destinations can be reached through /Names and are otherwise easy to
-  // leave dangling, so drop the names tree if one points to the deleted page.
-  if (containsDestinationRef(catalog.get('Names') ?? PDFNull.instance, pageRef, doc.objects)) {
-    catalog.delete('Names');
+  const names = resolveRef(catalog.get('Names') ?? PDFNull.instance, doc.objects);
+  if (names instanceof PDFDict) {
+    const destTree = names.get('Dests');
+    if (destTree && pruneDestinationTree(doc, destTree, pageRef) === 'empty') {
+      names.delete('Dests');
+      if (names.size === 0) catalog.delete('Names');
+    }
   }
 
   for (const page of doc.pages) {
