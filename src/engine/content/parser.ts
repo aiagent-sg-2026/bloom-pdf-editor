@@ -15,6 +15,7 @@
  */
 
 import { parseContentStream, type CSInstruction } from './operator-lexer';
+import { serializeInstructions } from './instruction-serializer';
 import {
   PDFArray,
   PDFBoolean,
@@ -169,21 +170,7 @@ function hexToBytes(hex: string): Uint8Array {
  * This is the inverse of parseContentStream.
  */
 export function prettyPrint(instructions: CSInstruction[]): Uint8Array {
-  const parts: string[] = [];
-
-  for (const inst of instructions) {
-    // Serialize operands
-    for (const operand of inst.operands) {
-      parts.push(serializeOperand(operand));
-      parts.push(' ');
-    }
-    
-    // Serialize operator
-    parts.push(inst.operator);
-    parts.push('\n');
-  }
-
-  return new TextEncoder().encode(parts.join(''));
+  return serializeInstructions(instructions, serializeOperand);
 }
 
 /**
@@ -314,6 +301,14 @@ function areInstructionsEquivalent(
     const b = inst2[i];
 
     if (a.operator !== b.operator) return false;
+    if (a.operator === 'BI') {
+      // Source offsets can move when surrounding instructions are reformatted.
+      const original = a.inlineImageBytes;
+      const printed = b.inlineImageBytes;
+      if (!original || !printed || original.length !== printed.length
+        || original.some((byte, index) => byte !== printed[index])) return false;
+      continue;
+    }
     if (a.operands.length !== b.operands.length) return false;
 
     for (let j = 0; j < a.operands.length; j++) {
