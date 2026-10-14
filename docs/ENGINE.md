@@ -16,6 +16,25 @@ Bloom's PDF engine is a browser-native TypeScript implementation. It parses PDF 
 
 The engine remains browser-native. Native content-stream editing, annotations, forms, page operations, rendering, PDF save behavior, and IndexedDB persistence must remain independent of any server conversion product surface.
 
+### Page trees and effective resources
+
+Page deletion removes the leaf from its containing `/Kids` array, decrements
+`/Count` on every ancestor, and prunes only intermediate `/Pages` nodes that
+become empty. Nonempty branches and surviving page order are preserved.
+
+Initial parsing and undo restoration use `resolvePageResources` for inline,
+indirect, and inherited `/Resources`. The nearest resource dictionary wins;
+resource categories are not merged across ancestors.
+
+Image insertion on a leaf without its own `/Resources` materializes the
+effective inherited dictionary and copies category dictionaries before adding
+XObjects or opacity states. Resource definitions remain shared, but new
+category entries do not affect siblings. The leaf's cached `page.resources`
+tracks the materialized dictionary.
+
+Synthetic serialize/reopen regressions:
+`npm test -- src/engine/__tests__/page-tree-resources.test.ts`.
+
 ## Image soft masks
 
 `src/engine/render/image-decoder.ts` applies image `/SMask` alpha to decoded RGBA, including browser-decoded JPEG base images. DeviceGray masks support 1-, 2-, 4-, 8-, and 16-bit samples with byte-padded rows, `/Decode` mapping, and nearest-neighbour resizing to the decoded base image dimensions. Images without a mask retain their existing opacity. `/Matte` unpremultiplication is not implemented.
