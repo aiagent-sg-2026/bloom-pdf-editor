@@ -6,6 +6,7 @@ import Image from 'next/image';
 import { savePdfToStorage } from '@/lib/pdfStorage';
 import { isPdfFile } from '@/app/pdf-file-validation';
 import { FileUp, Loader2, Sparkles } from 'lucide-react';
+import { BRAND_NAME } from '@/lib/brand';
 
 export default function Home() {
   const [isDragging, setIsDragging] = useState(false);
@@ -61,14 +62,14 @@ export default function Home() {
         <div className="flex items-center gap-3 mb-3">
           <Image
             src="/logo.png"
-            alt="BloomPDF Logo"
+            alt={`${BRAND_NAME} Logo`}
             width={48}
             height={48}
             className="w-12 h-12 object-contain"
             priority
           />
           <h1 className="text-4xl font-extrabold tracking-tight text-app">
-            Bloom<span className="text-[#E8607A]">PDF</span>
+            {BRAND_NAME}
           </h1>
         </div>
         <div className="inline-flex items-center gap-1.5 px-3.5 py-1 rounded-full bg-[#E8607A]/10 border border-[#E8607A]/20 text-[#E8607A] text-xs font-semibold tracking-wide">

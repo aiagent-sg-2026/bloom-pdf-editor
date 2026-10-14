@@ -3,6 +3,7 @@
  */
 
 import { describe, it, expect } from 'vitest';
+import { BRAND_NAME } from '../../lib/brand';
 import {
   PDFArray,
   PDFDict,
@@ -257,12 +258,12 @@ describe('Phase 7 — Metadata Security', () => {
 
   it('preserves producer when requested', () => {
     const doc = makeMinimalDoc();
-    securityEngine.metadata.editInfo(doc, { Producer: 'Bloom' });
+    securityEngine.metadata.editInfo(doc, { Producer: BRAND_NAME });
     securityEngine.metadata.stripMetadata(doc, {
       stripInfo: true,
       preserveProducer: true,
     });
-    expect(securityEngine.metadata.readInfo(doc).Producer).toBe('Bloom');
+    expect(securityEngine.metadata.readInfo(doc).Producer).toBe(BRAND_NAME);
   });
 });
 

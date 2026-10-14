@@ -1,6 +1,6 @@
 <div align="center">
 
-# 🌸 Bloom PDF Editor
+# 🌸 Paperloom PDF
 
 ### A Pure-Engine, Open-Source PDF Editor
 
@@ -14,9 +14,9 @@
 
 </div>
 
-## ✨ What is Bloom?
+## ✨ What is Paperloom PDF?
 
-Bloom is a full-featured PDF editor built with Next.js and React. Its custom TypeScript engine parses, renders, edits, and serializes PDFs in the browser. The application is a browser-only client and exports as static files to `out/`; it has no server conversion runtime.
+Paperloom PDF is a full-featured PDF editor built with Next.js and React. Its custom TypeScript engine parses, renders, edits, and serializes PDFs in the browser. The application is a browser-only client and exports as static files to `out/`; it has no server conversion runtime.
 
 The editor supports native PDF content-stream editing, annotations, forms, page operations, signatures, browser-side PNG/JPEG/SVG/TXT export, and PDF save/optimization.
 
@@ -79,4 +79,8 @@ bloom-pdf-editor/
 
 ## License
 
-Bloom PDF Editor is licensed under the Apache License 2.0. See [LICENSE](LICENSE).
+Paperloom PDF is licensed under the Apache License 2.0. See [LICENSE](LICENSE).
+
+## Credits
+
+Paperloom PDF is based on BloomPDF by stemlen, licensed under Apache-2.0.

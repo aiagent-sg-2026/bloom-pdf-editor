@@ -4,6 +4,7 @@
  */
 
 import { describe, it, expect, beforeEach } from 'vitest';
+import { BRAND_NAME } from '../../../lib/brand';
 import {
   calculateByteRange,
   validateByteRange,
@@ -190,7 +191,7 @@ describe('Phase 8 — end-to-end finalize via signing pipeline', () => {
         hashAlgorithm: 'sha256',
         contentsSize: 4096,
         certificateDer: bundle.leaf!.der,
-        appearanceText: 'Bloom Test',
+        appearanceText: `${BRAND_NAME} Test`,
       },
     );
 

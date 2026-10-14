@@ -3,6 +3,7 @@
  */
 
 import { describe, it, expect } from 'vitest';
+import { BRAND_NAME } from '../../lib/brand';
 import type { TextRun } from '../content/interpreter';
 import { buildDocumentFlow } from '../flow/index';
 import { ingestPage } from '../bloom/ingest';
@@ -83,16 +84,16 @@ describe('bloom ingest', () => {
 describe('bloom edit + layout', () => {
   it('replaces block text and reflows without duplicating content', () => {
     const runs = [
-      makeRun('Hello world from Bloom', { x: 50, y: 700, fontSize: 12, indices: [0] }),
+      makeRun(`Hello world from ${BRAND_NAME}`, { x: 50, y: 700, fontSize: 12, indices: [0] }),
     ];
     let page = ingestPage(runs, { pageIndex: 0, width: 612, height: 792 });
     const blockId = page.blocks[0].id;
     const original = blockPlainText(page.blocks[0]);
 
-    page = replaceBlockText(page, blockId, 'Hello brave new world from Bloom engine');
+    page = replaceBlockText(page, blockId, `Hello brave new world from ${BRAND_NAME} engine`);
     const next = blockPlainText(page.blocks[0]);
 
-    expect(next).toBe('Hello brave new world from Bloom engine');
+    expect(next).toBe(`Hello brave new world from ${BRAND_NAME} engine`);
     expect(next).not.toContain(original + original);
     expect(next.indexOf('Hello')).toBe(0);
     expect(next.split('Hello').length - 1).toBe(1);

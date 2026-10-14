@@ -3,6 +3,7 @@
  */
 
 import { describe, it, expect, beforeEach, beforeAll } from 'vitest';
+import { BRAND_NAME } from '../../../lib/brand';
 import { readFileSync, mkdtempSync } from 'fs';
 import { execFileSync } from 'child_process';
 import { join } from 'path';
@@ -129,7 +130,7 @@ async function signFixtureField(doc: PDFDocumentData, name: string) {
       hashAlgorithm: 'sha256',
       contentsSize: 4096,
       certificateDer: bundle.leaf!.der,
-      appearanceText: 'Bloom',
+      appearanceText: BRAND_NAME,
       enableTimestamp: false,
     },
   );

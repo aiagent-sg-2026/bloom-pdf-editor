@@ -7,6 +7,7 @@ import {
 } from 'lucide-react';
 import type { DrawMode, EditorTool } from '../types';
 import type { TextRun, ImageItem, PathItem, AcroFormWidget, VisualSignature, SignatureLibraryEntry, SignatureField, ManagedIdentity, ValidationReport, LtvStatus, ManagedSignature, RevisionViewEntry } from '@/engine/browser-core';
+import { BRAND_NAME } from '@/lib/brand';
 
 interface PropertiesSidebarProps {
   onClose?: () => void;
@@ -189,7 +190,7 @@ export function PropertiesSidebar(props: PropertiesSidebarProps) {
     watermarkShapeType = 'circle', setWatermarkShapeType,
     watermarkShapeColor = '#000000', setWatermarkShapeColor,
     watermarkImageFile = null, onWatermarkImageUpload, onWatermarkImageClear,
-    watermarkText = 'Bloom PDF', setWatermarkText,
+    watermarkText = BRAND_NAME, setWatermarkText,
     watermarkFontName = 'Arial', setWatermarkFontName,
     watermarkOpacity = 25, setWatermarkOpacity,
     watermarkRotation = 45, setWatermarkRotation,
