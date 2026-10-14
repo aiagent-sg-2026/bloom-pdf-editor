@@ -2,13 +2,70 @@
  * Save pipeline — quick (incremental) vs optimized (GC + dedup + full serialize).
  */
 
-import type { PDFDocumentData, PDFObject } from '../types';
+import { PDFArray, PDFDict, PDFHexString, PDFStream, type PDFDocumentData, type PDFObject } from '../types';
 import { serializeDocument } from './serializer';
 import { saveIncremental } from './incremental-writer';
 import { garbageCollect, rootsFromTrailer, deduplicateStreams, applyRefMap } from '../optimize';
 import { getReencryptSaveContext } from '../security/encryption/encrypt-objects';
+import { parsePDF } from '../parser/parser';
+import { serializeToString } from '../editor/stream-compiler';
+import { decryptDocumentObjects } from '../security/encryption/decrypt-pipeline';
+import { parseFileId } from '../security/encryption/encrypt-dict';
 
-/** A signed PDF must be exported byte-for-byte from the finalized buffer. */
+export class SignedDocumentEditError extends Error {
+  constructor() {
+    super('This document is digitally signed; edits would invalidate the signature.');
+    this.name = 'SignedDocumentEditError';
+  }
+}
+
+function equalObjects(a: PDFObject | undefined, b: PDFObject | undefined): boolean {
+  if (a === b) return true;
+  if (!a || !b || a._tag !== b._tag) return false;
+  if (a instanceof PDFStream && b instanceof PDFStream) {
+    // Decoded bytes are a rendering cache; writers emit the raw stream bytes.
+    return equalObjects(a.dict, b.dict) &&
+      a.rawBytes.length === b.rawBytes.length &&
+      a.rawBytes.every((byte, i) => byte === b.rawBytes[i]);
+  }
+  if (a instanceof PDFDict && b instanceof PDFDict) {
+    if (a.size !== b.size) return false;
+    for (const [key, value] of a.entries()) {
+      if (!equalObjects(value, b.get(key))) return false;
+    }
+    return true;
+  }
+  if (a instanceof PDFArray && b instanceof PDFArray) {
+    return a.length === b.length && a.items.every((value, i) => equalObjects(value, b.get(i)));
+  }
+  if (a instanceof PDFHexString && b instanceof PDFHexString) {
+    return a.hex.replace(/\s/g, '').toLowerCase() === b.hex.replace(/\s/g, '').toLowerCase();
+  }
+  return serializeToString(a) === serializeToString(b);
+}
+
+/** Compare exportable state, not xref offsets, trailer bookkeeping or render caches. */
+async function hasDocumentEdits(doc: PDFDocumentData): Promise<boolean> {
+  const original = await parsePDF(doc.rawBytes);
+  const encryption = getReencryptSaveContext(doc);
+  if (encryption) {
+    await decryptDocumentObjects(original, {
+      ...encryption,
+      fileId: parseFileId(original.xref.trailerDict),
+      isOwner: false,
+    });
+  }
+  if (doc.version !== original.version || doc.objects.size !== original.objects.size) return true;
+  for (const [key, value] of doc.objects) {
+    if (!equalObjects(value, original.objects.get(key))) return true;
+  }
+  for (const key of ['Root', 'Info', 'Encrypt', 'ID']) {
+    if (!equalObjects(doc.xref.trailerDict.get(key), original.xref.trailerDict.get(key))) return true;
+  }
+  return false;
+}
+
+/** Finalized signed bytes may be reused only when the document has no edits. */
 function hasFinalizedSignature(bytes: Uint8Array): boolean {
   if (!bytes || bytes.length === 0) return false;
   let text = '';
@@ -22,6 +79,7 @@ function hasFinalizedSignature(bytes: Uint8Array): boolean {
 
 /**
  * Quick save: append only changed objects when possible.
+ * Finalized signed documents preserve their bytes, or throw SignedDocumentEditError for edits.
  */
 export async function saveQuick(
   doc: PDFDocumentData,
@@ -29,6 +87,9 @@ export async function saveQuick(
   newObjects?: Map<string, PDFObject>,
 ): Promise<Uint8Array> {
   if (doc.rawBytes.length > 0 && hasFinalizedSignature(doc.rawBytes)) {
+    if (modifiedKeys?.size || newObjects?.size || await hasDocumentEdits(doc)) {
+      throw new SignedDocumentEditError();
+    }
     return new Uint8Array(doc.rawBytes);
   }
   if (doc.rawBytes.length === 0) {
@@ -55,9 +116,11 @@ export async function saveQuick(
 
 /**
  * Optimized save: garbage-collect unreachable objects, dedupe streams, full serialize.
+ * Signed-document edit detection compares the object graph with the finalized bytes.
  */
 export async function saveOptimized(doc: PDFDocumentData): Promise<Uint8Array> {
   if (doc.rawBytes.length > 0 && hasFinalizedSignature(doc.rawBytes)) {
+    if (await hasDocumentEdits(doc)) throw new SignedDocumentEditError();
     return new Uint8Array(doc.rawBytes);
   }
   try {

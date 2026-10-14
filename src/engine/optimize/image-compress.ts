@@ -1,7 +1,7 @@
 /**
  * Smart PDF compression.
  *
- * Strategy (smallest-wins, never grow the file):
+ * Strategy (smallest current-state candidate wins):
  *   1. Lossless optimize (GC + dedup + re-serialize)
  *   2. Recompress embedded Image XObjects (JPEG + DPI downsample)
  *   3. Rasterize pages → JPEG rebuild — ONLY when it beats the best
@@ -10,7 +10,7 @@
  *
  * Target size uses binary search on quality for steps 2/3, then returns
  * the smallest candidate that is ≤ target, or the best effort that is
- * still ≤ original size.
+ * no larger than the serialized current-state baseline.
  */
 
 import { PDFDocument } from 'pdf-lib';
@@ -41,7 +41,7 @@ export interface ImageCompressResult {
   finalQuality: number;
   originalBytes: number;
   compressedBytes: number;
-  /** True when target was set but could not be met without growing the file. */
+  /** True when target was set but could not be met from the current document. */
   targetMissed: boolean;
   method: 'optimized' | 'images' | 'raster' | 'unchanged';
   message: string;
@@ -287,29 +287,14 @@ export async function compressDocumentImages(
   const quality = Math.min(0.95, Math.max(0.05, options.quality));
   const target = options.targetBytes;
 
-  // Always measure against the *original file bytes* the user uploaded.
-  const raw = doc.rawBytes?.length ? doc.rawBytes : null;
-  const originalBytes = raw?.length ?? 0;
+  // Upload size is only a reporting/rasterization metric, not a safe fallback:
+  // PDFDocumentData has no reliable dirty flag, so raw bytes may predate edits.
+  const originalBytes = doc.rawBytes?.length ?? 0;
 
   options.onProgress?.(0, 1, 'baseline');
-  let baseline: Uint8Array;
-  try {
-    baseline = await serializeOptimizedCopy(doc);
-  } catch {
-    baseline = raw ? raw.slice() : new Uint8Array(0);
-  }
-
-  // Start from whichever is smaller: original file or our optimized rewrite.
-  // (Rewriting can bloat tiny PDFs — Ghostscript docs warn about this too.)
-  let best: Uint8Array;
-  let method: ImageCompressResult['method'];
-  if (raw && (!baseline.length || raw.length <= baseline.length)) {
-    best = raw.slice();
-    method = 'unchanged';
-  } else {
-    best = baseline;
-    method = 'optimized';
-  }
+  // Serialization failures must propagate rather than export stale upload bytes.
+  let best = await serializeOptimizedCopy(doc);
+  let method: ImageCompressResult['method'] = 'optimized';
 
   let imagesTouched = 0;
   let finalQuality = 1;
@@ -354,7 +339,7 @@ export async function compressDocumentImages(
   // ── Rasterize only when it can win ──
   const stillNeedShrink =
     (target != null && best.length > target) ||
-    (target == null && method !== 'unchanged' && best.length > originalBytes * 0.9);
+    (target == null && best.length > originalBytes * 0.9);
 
   if (rasterCandidate && stillNeedShrink) {
     const qualities =
@@ -379,14 +364,6 @@ export async function compressDocumentImages(
     }
   }
 
-  // Absolute guard: never return larger than the original upload
-  if (raw && best.length > raw.length) {
-    best = raw.slice();
-    method = 'unchanged';
-    finalQuality = 1;
-    imagesTouched = 0;
-  }
-
   if (target != null && target > 0 && best.length > target) {
     targetMissed = true;
   }
@@ -407,7 +384,7 @@ export async function compressDocumentImages(
       `Could not reach ${formatBytes(target)} — best is ${formatBytes(best.length)} ` +
       `(original ${formatBytes(originalBytes)}).`;
   } else if (method === 'unchanged') {
-    message = `Already as small as we can get (${formatBytes(originalBytes)}).`;
+    message = `Already as small as we can get (${formatBytes(best.length)}).`;
   } else {
     message = `Compressed ${formatBytes(originalBytes)} → ${formatBytes(best.length)} (${method}).`;
   }
