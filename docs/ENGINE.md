@@ -22,9 +22,26 @@ The engine remains browser-native. Native content-stream editing, annotations, f
 
 Synthetic public-decoder regressions: `npm test -- src/engine/__tests__/image-decoder.test.ts`.
 
+### Text-edit backgrounds
+
+Complete text-operator rewrites do not paint an erase rectangle. Replacing
+string operands, patching `TJ` spans, and emptying grouped siblings remove the
+replaced glyphs while preserving coloured cells, images, and other backgrounds.
+
+The legacy white erase remains only for incomplete rewrites with unmatched
+source indices or an unmatched placement hint. It stays within the original
+run bounds and may cover background content. Its placement before `BT` does
+not guarantee that unmatched glyphs painted afterward are hidden; it is not a
+substitute for removing their text operators.
+
+
 ## Export
 
 The editor exports PNG, JPEG, SVG, and plain text in the browser. PDF save and optimization remain native writer operations.
+
+Image compression derives candidates from the current document, including committed edits, even when serialization is larger than the upload. `compressDocumentImages` accepts `originalIsCurrent: true` only when the caller can prove the upload still represents the current document; this permits the smaller upload as the baseline and caps the result at its size. The option defaults to false.
+
+The editor permits this fallback only for an unrecovered, unencrypted upload with unchanged exportable objects, no recorded or pending edits, and unchanged upload bytes. Saving does not reset its edit provenance. Uncertain state or a failed object comparison disables the fallback.
 
 ## Development
 

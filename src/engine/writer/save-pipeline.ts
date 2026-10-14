@@ -45,7 +45,7 @@ function equalObjects(a: PDFObject | undefined, b: PDFObject | undefined): boole
 }
 
 /** Compare exportable state, not xref offsets, trailer bookkeeping or render caches. */
-async function hasDocumentEdits(doc: PDFDocumentData): Promise<boolean> {
+export async function hasDocumentEdits(doc: PDFDocumentData): Promise<boolean> {
   const original = await parsePDF(doc.rawBytes);
   const encryption = getReencryptSaveContext(doc);
   if (encryption) {

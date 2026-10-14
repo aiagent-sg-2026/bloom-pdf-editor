@@ -10,7 +10,8 @@
  *
  * Target size uses binary search on quality for steps 2/3, then returns
  * the smallest candidate that is ≤ target, or the best effort that is
- * no larger than the serialized current-state baseline.
+ * no larger than the serialized current-state baseline (or the upload when
+ * the caller explicitly proves it is still current).
  */
 
 import { PDFDocument } from 'pdf-lib';
@@ -32,6 +33,8 @@ export interface ImageCompressOptions {
   quality: number;
   dpi: number;
   targetBytes?: number;
+  /** Permit upload-byte fallback only when the upload still represents every edit. Defaults to false. */
+  originalIsCurrent?: boolean;
   onProgress?: (current: number, total: number, phase: string) => void;
 }
 
@@ -287,14 +290,18 @@ export async function compressDocumentImages(
   const quality = Math.min(0.95, Math.max(0.05, options.quality));
   const target = options.targetBytes;
 
-  // Upload size is only a reporting/rasterization metric, not a safe fallback:
-  // PDFDocumentData has no reliable dirty flag, so raw bytes may predate edits.
+  // Upload size is normally only a reporting/rasterization metric.
+  // Only an explicit caller guarantee makes these bytes a safe fallback.
   const originalBytes = doc.rawBytes?.length ?? 0;
 
   options.onProgress?.(0, 1, 'baseline');
   // Serialization failures must propagate rather than export stale upload bytes.
   let best = await serializeOptimizedCopy(doc);
   let method: ImageCompressResult['method'] = 'optimized';
+  if (options.originalIsCurrent === true && originalBytes > 0 && doc.rawBytes.length <= best.length) {
+    best = doc.rawBytes;
+    method = 'unchanged';
+  }
 
   let imagesTouched = 0;
   let finalQuality = 1;

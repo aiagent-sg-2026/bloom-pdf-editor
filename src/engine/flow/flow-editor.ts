@@ -434,8 +434,8 @@ export function applyLineTextEdit(
   const skipResidualForSpaces = dSpaces > 0;
 
   // Apply position shifts FIRST while sourceInstructionIndices still match the
-  // stream. applyTextEdits inserts erase ops that invalidate those indices, so
-  // shifting afterward silently no-ops and trailing runs overlap grown text.
+  // stream. Font switches and incomplete-rewrite erase fallbacks can insert
+  // operators, so shifting afterward can miss runs and overlap grown text.
   let bytes = contentBytes;
   if (horizShifts.length > 0) {
     bytes = applyRunPositionShifts(

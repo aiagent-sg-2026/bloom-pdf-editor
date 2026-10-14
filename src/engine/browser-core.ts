@@ -74,6 +74,7 @@ export {
 
 export { getNextObjNum } from './writer/serializer';
 export { saveQuick, saveOptimized, saveDocument } from './worker/client';
+export { hasDocumentEdits } from './writer/save-pipeline';
 export {
   deletePage,
   rotatePageBy,

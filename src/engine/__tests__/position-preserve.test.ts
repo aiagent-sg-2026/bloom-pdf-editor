@@ -320,6 +320,11 @@ describe('position-preserving line edit', () => {
       flow,
     );
 
+    // The grouped rewrite removes old glyphs; it must not paint over the background.
+    expect(new TextDecoder().decode(result.newContentBytes)).not.toMatch(
+      /1\s+1\s+1\s+rg\s+[-\d.]+\s+[-\d.]+\s+[-\d.]+\s+[-\d.]+\s+re\s+f\b/,
+    );
+
     const after = interpretPage(result.newContentBytes, page, objects);
     const joined = after.textRuns.map(r => r.text).join('');
     expect(joined).toContain('KUMxxxAR');
