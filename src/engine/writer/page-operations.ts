@@ -30,6 +30,7 @@ import {
 } from '../types';
 import { resolveRef } from '../parser/parser';
 import { getNextObjNum } from './serializer';
+import { bindPageContentRefs } from '../editor/stream-compiler';
 
 // ─── Page deletion ──────────────────────────────────────────────────────────
 
@@ -540,7 +541,7 @@ export function insertPagesFromDocument(
       ]));
       pageDictObj.set('Rotate', new PDFNumber(srcPage.rotate));
 
-      pagesToInsert.push({
+      pagesToInsert.push(bindPageContentRefs({
         index: insertAtIndex + i,
         dict: pageDictObj,
         mediaBox: { ...srcPage.mediaBox },
@@ -552,7 +553,7 @@ export function insertPagesFromDocument(
           const mapped = refMap.get(ref.toKey());
           return (mapped as PDFRef) ?? ref;
         }),
-      });
+      }));
     }
   }
 
@@ -791,7 +792,7 @@ export function extractPages(
       ]));
       pageDictObj.set('Rotate', new PDFNumber(srcPage.rotate));
 
-      newPages.push({
+      newPages.push(bindPageContentRefs({
         index: i,
         dict: pageDictObj,
         mediaBox: { ...srcPage.mediaBox },
@@ -803,7 +804,7 @@ export function extractPages(
           const mapped = refMap.get(ref.toKey());
           return (mapped as PDFRef) ?? ref;
         }),
-      });
+      }));
     }
   }
 

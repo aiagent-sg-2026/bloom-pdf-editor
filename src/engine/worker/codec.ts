@@ -4,6 +4,7 @@ import {
   type PDFDocumentData, type PDFObject, type PDFPageInfo, type PDFRectangle,
   type XRefEntry,
 } from '../types';
+import { bindPageContentRefs } from '../editor/stream-compiler';
 
 export type WireBytes = Uint8Array;
 export type WireNode =
@@ -111,7 +112,7 @@ export function hydrateDocument(wire: WireDocument, rawBytes?: Uint8Array): PDFD
     objects: new Map(wire.objects.map(([key, id]) => [key, get(id)])),
     xref: { entries: new Map(wire.xref.entries.map(([key, entry]) => [key, { ...entry }])), trailerDict: get(wire.xref.trailerDict) as PDFDict },
     catalog: get(wire.catalog) as PDFDict,
-    pages: wire.pages.map((page): PDFPageInfo => ({ ...page, dict: get(page.dict) as PDFDict, ref: get(page.ref) as PDFRef, resources: get(page.resources) as PDFDict, contentRefs: page.contentRefs.map((id) => get(id) as PDFRef) })),
+    pages: wire.pages.map((page): PDFPageInfo => bindPageContentRefs({ ...page, dict: get(page.dict) as PDFDict, ref: get(page.ref) as PDFRef, resources: get(page.resources) as PDFDict, contentRefs: page.contentRefs.map((id) => get(id) as PDFRef) })),
     info: { ...wire.info },
     rawBytes: rawBytes !== undefined ? rawBytes : wire.rawBytes?.slice() ?? new Uint8Array(),
     decryptedFromEncrypted: wire.decryptedFromEncrypted,
