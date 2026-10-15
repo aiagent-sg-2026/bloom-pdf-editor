@@ -25,7 +25,7 @@ import {
 } from './utils';
 import { buildDisplayListIndex, hitTestDisplayList, isSelectableDisplayItem, EditorHistory, captureHistoryEntry, restoreAnnotSnapshot, restoreDocumentStructure, parseOverlaySnapshot, deleteObject, visualFontSize, resolveRunStyleFlags, transformObject, applyObjectTransform, distributeTextChangeToSegments, segmentAtIndex, createVisualSignature, hitTestSignature, moveSignature, resizeSignature, rotateSignature, setSignatureOpacity, setSignatureLocked, deleteSignature, updateSignature, visualSignatureToImagePlacement, getSignatureLibrary, DEFAULT_SIGNATURE_SIZE, detectSignatureFieldsOnPage, hitTestSignatureField, createSignatureFieldAtPoint, applySignatureFieldAppearanceAsync, getCertificateManager, signDocumentCryptographic, validateDocumentSignatures, enableLongTermValidation, getLtvStatus, listManagedSignatures, buildRevisionViewer, lockSignaturesAfterSigning, pushRecentSignatureId, orderLibraryByRecent, SIGNATURE_SHORTCUTS } from '@/engine/browser-core';
 import type { QuadTree, SelectableItem, EditableObject } from '@/engine/browser-core';
-import { UnsupportedGlyphsError } from '@/engine/browser-core';
+import { UnsupportedGlyphsError, SessionDocumentEditor } from '@/engine/browser-core';
 import { findMatchingFlowLine } from './flowLineMatch';
 import { commitThenCleanup } from './commit-after-success';
 
@@ -474,6 +474,7 @@ export default function EditorPage() {
 
   // Unified undo/redo (content + annotations + overlays)
   const historyRef = useRef(new EditorHistory());
+  const sessionEditorRef = useRef(new SessionDocumentEditor());
   const [canUndo, setCanUndo] = useState(false);
   const [canRedo, setCanRedo] = useState(false);
   const undoSnapshotRef = useRef<{ pageIndex: number; contentBytes: Uint8Array } | null>(null);
@@ -945,6 +946,7 @@ export default function EditorPage() {
       if (initialBytes !== rawInitialBytes) {
         await engine.updatePageContent(page.contentRefs, initialBytes, parsed.objects);
       }
+      sessionEditorRef.current = new SessionDocumentEditor();
       historyRef.current.seed(captureHistoryEntry(
         parsed,
         pageIndex,
@@ -1046,6 +1048,7 @@ export default function EditorPage() {
       if (initialBytes !== rawInitialBytes) {
         await engine.updatePageContent(page0.contentRefs, initialBytes, opened.doc.objects);
       }
+      sessionEditorRef.current = new SessionDocumentEditor();
       historyRef.current.seed(captureHistoryEntry(
         opened.doc,
         0,
@@ -3766,7 +3769,10 @@ export default function EditorPage() {
           const target = replacingEmbeddedImageRef.current;
           replacingEmbeddedImageRef.current = null;
           try {
-            await engineRef.current.replaceImageXObject(doc, currentPage, target, imageDataUrlForPdf, () => engineRef.current!.getNextObjNum(doc));
+            const engine = engineRef.current;
+            await sessionEditorRef.current.edit(doc, 'replace-image', async staged => {
+              await engine.replaceImageXObject(staged, currentPage, target, imageDataUrlForPdf, () => engine.getNextObjNum(staged));
+            });
             pushEditorHistory('replace-image');
             setIsDirty(true);
             setSelectedDisplayItem(null);
@@ -4350,25 +4356,20 @@ export default function EditorPage() {
         };
       }
 
-      const results = await engineRef.current.applyWatermarks(doc, [wm], () => engineRef.current!.getNextObjNum(doc));
-
-      const updatePromises: Promise<void>[] = [];
-      results.forEach((newBytes, pageIdx) => {
-        const page = doc.pages[pageIdx];
-        updatePromises.push(
-          engineRef.current!.updatePageContent(page.contentRefs, newBytes, doc.objects)
-        );
+      const engine = engineRef.current;
+      await sessionEditorRef.current.edit(doc, 'watermark', async staged => {
+        const results = await engine.applyWatermarks(staged, [wm], () => engine.getNextObjNum(staged));
+        const updatePromises: Promise<void>[] = [];
+        results.forEach((newBytes, pageIdx) => {
+          const page = staged.pages[pageIdx];
+          updatePromises.push(engine.updatePageContent(page.contentRefs, newBytes, staged.objects));
+        });
+        await Promise.all(updatePromises);
       });
-
-      Promise.all(updatePromises).then(() => {
-        setDoc({ ...doc });
-        setRenderKey(k => k + 1);
-        setWatermarkLivePreview(false);
-        setShowApplySuccessModal(true);
-      }).catch(err => {
-        console.error('[Editor] Apply watermark failed:', err);
-        setError(`Failed to apply watermark: ${err instanceof Error ? err.message : String(err)}`);
-      });
+      setDoc({ ...doc });
+      setRenderKey(k => k + 1);
+      setWatermarkLivePreview(false);
+      setShowApplySuccessModal(true);
     } catch (e) {
       console.error('[Editor] Apply watermark failed:', e);
       setError(`Failed to apply watermark: ${e instanceof Error ? e.message : String(e)}`);

@@ -111,6 +111,88 @@ not guarantee that unmatched glyphs painted afterward are hidden; it is not a
 substitute for removing their text operators.
 
 
+## Document sessions and edit transactions
+
+`src/engine/session/document-session.ts` owns PDF byte snapshots, a monotonic
+`revision`, and an in-memory post-edit undo/redo stack capped at 50 snapshots,
+matching the existing editor history limit. It has no React or DOM imports.
+`getBytes()`, `undo()`, and `redo()` return defensive copies. Undo/redo return
+`null` at the ends of history; successful restores advance the revision.
+`canUndo` and `canRedo` are getters.
+
+`snapshot(label)` records the current bytes. During the partial migration,
+`snapshot(label, bytes)` also accepts the latest serialized native state as a
+checkpoint. New snapshots and commits clear redo. `subscribe(listener)` returns
+an unsubscribe function; listeners run synchronously once after each committed
+snapshot or successful undo/redo, not during staging or rollback.
+
+`session.beginTransaction(label)` returns an `EditTransaction` with asynchronous
+`apply(bytes => Promise<Uint8Array>)`, synchronous `commit()`, and idempotent
+`rollback()`. Apply steps chain private byte buffers. Only commit publishes the
+staged result and creates one history entry/revision/notification. A thrown apply
+aborts the entire transaction and releases it; rollback also cancels an in-flight
+apply so its eventual result cannot publish. Committing a closed transaction or
+committing while apply is pending throws. Nested/concurrent transactions,
+overlapping applies, and snapshot/undo/redo during a transaction are rejected.
+
+### Native editor bridge
+
+`SessionDocumentEditor` in `src/engine/session/document-edit.ts` bridges the
+byte-only API to the editor's mutable native PDF graph. It serializes the current
+graph at the transaction boundary, checkpointing intervening legacy changes only
+when their serialized bytes differ. Native operations run on a detached clone,
+including decoded stream samples and shared resource aliases. After successful
+updates and serialization, it checks that the live document has not changed,
+commits the bytes, and reconciles the draft into the live graph synchronously.
+Object-map, page, dictionary, and single-use image-stream identities are retained;
+upload bytes and native encryption/save provenance are not replaced.
+
+For decrypted documents, internal snapshots omit the encryption trailer entry
+and contain plaintext PDF bytes, like the already decrypted native graph. This
+avoids random AES export IVs producing false revision conflicts. These snapshots
+stay in memory; actual downloads continue through the existing encrypted writer.
+
+This bridge copies the object graph and serializes the document for staging and
+conflict detection. Large documents can use more memory and take longer to edit;
+the 50-snapshot bound limits history count, not total byte size.
+
+### Migration status
+
+Migrated native call paths in `src/app/editor/page.tsx`:
+
+- **Watermark apply:** stage `applyWatermarks` and await every `updatePageContent`
+  before commit. Keep the existing render refresh, live-preview toggle, and
+  success dialog. Do not add a toolbar-history entry or change dirty-state
+  behavior.
+- **Replace embedded image:** stage `replaceImageXObject`, commit, then retain the
+  existing `replace-image` toolbar-history entry, dirty flag, selection cleanup,
+  render refresh, and thumbnail refresh.
+
+The React page still uses `EditorHistory` for its existing content/annotation/
+overlay toolbar undo/redo contract. The byte session does not replace that UI
+history during this first step; session undo/redo operate on byte snapshots, not
+React overlays. The bridge is reset when loading or unlocking a document.
+
+**Not yet migrated** (keep their existing edit and history behavior):
+
+- Existing-line text commits, direct/queued style changes, duplicated lines,
+  table row/column insertion, find/replace, and OCR text insertion.
+- Drawing/highlight/erase/clear-markup operations; floating text/image insertion,
+  editing, movement, replacement, deletion, and overlay flattening.
+- Embedded-image movement/resizing/deletion and other selected-object transforms.
+- Form value edits and flattening; links and annotations.
+- Visual signatures, signature fields/appearances, cryptographic signing,
+  validation/LTV-related mutations, and security-panel changes.
+- Page deletion/rotation/reordering, blank-page insertion, merge/import, and
+  extraction/splitting.
+- Watermark removal, initial text normalization, legacy toolbar undo/redo,
+  export/compression, autosave, recovery, and browser persistence.
+
+Contract coverage is in `src/engine/__tests__/document-session.test.ts`.
+`src/engine/__tests__/session-document-editor.test.ts` covers native watermark
+parity, live/reopened replacement pixels and alpha, object identity, failure
+isolation, and overlapping/legacy-edit conflicts.
+
 ## Export
 
 The editor exports PNG, JPEG, SVG, and plain text in the browser. PDF save and optimization remain native writer operations.
