@@ -1,4 +1,5 @@
 import { readFileSync } from 'node:fs';
+import { basename } from 'node:path';
 import { SCRIPT_FONTS, type ShapingFontId, type ScriptFontId } from '../fonts/script-fonts';
 
 export const shapingCases: readonly { id: ShapingFontId; text: string }[] = [
@@ -14,5 +15,5 @@ export const shapingCases: readonly { id: ShapingFontId; text: string }[] = [
 ];
 const sources: Partial<Record<ScriptFontId, Uint8Array>> = {};
 export function shapingFontBytes(id: ScriptFontId): Uint8Array {
-  return sources[id] ??= new Uint8Array(readFileSync(new URL(`../../../public${SCRIPT_FONTS[id].assetPath}`, import.meta.url)));
+  return sources[id] ??= new Uint8Array(readFileSync(new URL(`../../../public/fonts/${basename(SCRIPT_FONTS[id].assetPath)}`, import.meta.url)));
 }

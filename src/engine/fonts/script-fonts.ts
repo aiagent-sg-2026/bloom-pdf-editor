@@ -1,3 +1,4 @@
+import { assetUrl } from './asset-url';
 import { UnsupportedGlyphsError } from './unsupported-glyphs';
 
 export type ShapingFontId = 'thai' | 'devanagari' | 'bengali' | 'tamil' | 'telugu' | 'kannada' | 'malayalam' | 'gujarati' | 'gurmukhi';
@@ -13,20 +14,20 @@ export interface ScriptFontRun { fontId: ScriptFontId; text: string }
 
 /** Static glyf assets; complex-script sources retain GSUB/GPOS for shaping. */
 export const SCRIPT_FONTS = {
-  sc: { assetPath: '/fonts/NotoSansSC-Regular.ttf', licensePath: '/fonts/NotoSansSC-OFL.txt', baseFont: 'NotoSansSC' },
-  tc: { assetPath: '/fonts/NotoSansTC-Regular.ttf', licensePath: '/fonts/NotoSansTC-OFL.txt', baseFont: 'NotoSansTC' },
-  jp: { assetPath: '/fonts/NotoSansJP-Regular.ttf', licensePath: '/fonts/NotoSansJP-OFL.txt', baseFont: 'NotoSansJP' },
-  kr: { assetPath: '/fonts/NotoSansKR-Regular.ttf', licensePath: '/fonts/NotoSansKR-OFL.txt', baseFont: 'NotoSansKR' },
-  latin: { assetPath: '/fonts/NotoSans-Regular.ttf', licensePath: '/fonts/NotoSans-OFL.txt', baseFont: 'NotoSans' },
-  thai: { assetPath: '/fonts/NotoSansThai-Regular.ttf', licensePath: '/fonts/NotoSansThai-OFL.txt', baseFont: 'NotoSansThai' },
-  devanagari: { assetPath: '/fonts/NotoSansDevanagari-Regular.ttf', licensePath: '/fonts/NotoSansDevanagari-OFL.txt', baseFont: 'NotoSansDevanagari' },
-  bengali: { assetPath: '/fonts/NotoSansBengali-Regular.ttf', licensePath: '/fonts/NotoSansBengali-OFL.txt', baseFont: 'NotoSansBengali' },
-  tamil: { assetPath: '/fonts/NotoSansTamil-Regular.ttf', licensePath: '/fonts/NotoSansTamil-OFL.txt', baseFont: 'NotoSansTamil' },
-  telugu: { assetPath: '/fonts/NotoSansTelugu-Regular.ttf', licensePath: '/fonts/NotoSansTelugu-OFL.txt', baseFont: 'NotoSansTelugu' },
-  kannada: { assetPath: '/fonts/NotoSansKannada-Regular.ttf', licensePath: '/fonts/NotoSansKannada-OFL.txt', baseFont: 'NotoSansKannada' },
-  malayalam: { assetPath: '/fonts/NotoSansMalayalam-Regular.ttf', licensePath: '/fonts/NotoSansMalayalam-OFL.txt', baseFont: 'NotoSansMalayalam' },
-  gujarati: { assetPath: '/fonts/NotoSansGujarati-Regular.ttf', licensePath: '/fonts/NotoSansGujarati-OFL.txt', baseFont: 'NotoSansGujarati' },
-  gurmukhi: { assetPath: '/fonts/NotoSansGurmukhi-Regular.ttf', licensePath: '/fonts/NotoSansGurmukhi-OFL.txt', baseFont: 'NotoSansGurmukhi' },
+  sc: { assetPath: assetUrl('fonts/NotoSansSC-Regular.ttf'), licensePath: assetUrl('fonts/NotoSansSC-OFL.txt'), baseFont: 'NotoSansSC' },
+  tc: { assetPath: assetUrl('fonts/NotoSansTC-Regular.ttf'), licensePath: assetUrl('fonts/NotoSansTC-OFL.txt'), baseFont: 'NotoSansTC' },
+  jp: { assetPath: assetUrl('fonts/NotoSansJP-Regular.ttf'), licensePath: assetUrl('fonts/NotoSansJP-OFL.txt'), baseFont: 'NotoSansJP' },
+  kr: { assetPath: assetUrl('fonts/NotoSansKR-Regular.ttf'), licensePath: assetUrl('fonts/NotoSansKR-OFL.txt'), baseFont: 'NotoSansKR' },
+  latin: { assetPath: assetUrl('fonts/NotoSans-Regular.ttf'), licensePath: assetUrl('fonts/NotoSans-OFL.txt'), baseFont: 'NotoSans' },
+  thai: { assetPath: assetUrl('fonts/NotoSansThai-Regular.ttf'), licensePath: assetUrl('fonts/NotoSansThai-OFL.txt'), baseFont: 'NotoSansThai' },
+  devanagari: { assetPath: assetUrl('fonts/NotoSansDevanagari-Regular.ttf'), licensePath: assetUrl('fonts/NotoSansDevanagari-OFL.txt'), baseFont: 'NotoSansDevanagari' },
+  bengali: { assetPath: assetUrl('fonts/NotoSansBengali-Regular.ttf'), licensePath: assetUrl('fonts/NotoSansBengali-OFL.txt'), baseFont: 'NotoSansBengali' },
+  tamil: { assetPath: assetUrl('fonts/NotoSansTamil-Regular.ttf'), licensePath: assetUrl('fonts/NotoSansTamil-OFL.txt'), baseFont: 'NotoSansTamil' },
+  telugu: { assetPath: assetUrl('fonts/NotoSansTelugu-Regular.ttf'), licensePath: assetUrl('fonts/NotoSansTelugu-OFL.txt'), baseFont: 'NotoSansTelugu' },
+  kannada: { assetPath: assetUrl('fonts/NotoSansKannada-Regular.ttf'), licensePath: assetUrl('fonts/NotoSansKannada-OFL.txt'), baseFont: 'NotoSansKannada' },
+  malayalam: { assetPath: assetUrl('fonts/NotoSansMalayalam-Regular.ttf'), licensePath: assetUrl('fonts/NotoSansMalayalam-OFL.txt'), baseFont: 'NotoSansMalayalam' },
+  gujarati: { assetPath: assetUrl('fonts/NotoSansGujarati-Regular.ttf'), licensePath: assetUrl('fonts/NotoSansGujarati-OFL.txt'), baseFont: 'NotoSansGujarati' },
+  gurmukhi: { assetPath: assetUrl('fonts/NotoSansGurmukhi-Regular.ttf'), licensePath: assetUrl('fonts/NotoSansGurmukhi-OFL.txt'), baseFont: 'NotoSansGurmukhi' },
 } as const;
 
 const chains: Record<ScriptFontId, readonly ScriptFontId[]> = {

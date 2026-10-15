@@ -15,4 +15,21 @@ jobs:
       - run: npm ci
       - run: npx tsc --noEmit
       - run: npx vitest run
-      - run: npx next build
+      - run: npm run build
+      - run: npm run verify:pdf-worker
+      - run: npm run verify:browser-only
+      - run: npm run verify:browser-core
+      - name: Remove root export
+        run: rm -rf out
+      - name: Build sub-path export
+        env:
+          NEXT_PUBLIC_BASE_PATH: /bloom-pdf-editor
+        run: npm run build
+      - name: Verify sub-path export
+        env:
+          NEXT_PUBLIC_BASE_PATH: /bloom-pdf-editor
+        run: |
+          npm run verify:pdf-worker
+          npm run verify:browser-only
+          npm run verify:browser-core
+          npm run verify:base-path
