@@ -19,6 +19,7 @@
  *   - Font selection and sizing
  */
 
+import UPNG from '@pdf-lib/upng';
 import {
   PDFArray,
   PDFDict,
@@ -32,6 +33,7 @@ import {
 } from '../types';
 import { resolveRef } from '../parser/parser';
 import { flateEncode } from '../parser/filters';
+import { createRGBAImageObjects } from '../editor/image-editor';
 
 // ─── Watermark types ────────────────────────────────────────────────────────
 
@@ -459,9 +461,29 @@ export function createOpacityExtGState(
 /**
  * Create an Image XObject for an image watermark.
  */
-export function createWatermarkImageXObject(
+export async function createWatermarkImageXObject(
   wm: ImageWatermark,
-): { stream: PDFStream; name: string } {
+  getNextObjNum: () => number,
+): Promise<{ stream: PDFStream; name: string; imageRef: PDFRef; smaskRef: PDFRef | null; smask: PDFStream | null }> {
+  const name = `/ImWM_${wm.id.substring(0, 8)}`;
+  if (wm.mimeType === 'image/png') {
+    const bytes = wm.imageBytes;
+    // Buffer.slice() is a view; copy partial views into an exact-sized ArrayBuffer.
+    const buffer = bytes.buffer instanceof ArrayBuffer && bytes.byteOffset === 0 && bytes.byteLength === bytes.buffer.byteLength
+      ? bytes.buffer
+      : new Uint8Array(bytes).buffer;
+    const png = UPNG.decode(buffer);
+    if (png.frames.length > 1) throw new Error('Animated PNG watermarks are not supported');
+    const rgba = new Uint8Array(UPNG.toRGBA8(png)[0]);
+    // Reserve locally until both objects are registered in the document map.
+    let nextObjNum = 0;
+    const built = await createRGBAImageObjects(rgba, png.width, png.height, () => {
+      const objNum = Math.max(nextObjNum, getNextObjNum());
+      nextObjNum = objNum + 1;
+      return objNum;
+    });
+    return { stream: built.image, name, imageRef: built.imageRef, smaskRef: built.smaskRef, smask: built.smask };
+  }
   const dict = new PDFDict();
   dict.set('Type', new PDFName('XObject'));
   dict.set('Subtype', new PDFName('Image'));
@@ -470,19 +492,13 @@ export function createWatermarkImageXObject(
   dict.set('ColorSpace', new PDFName('DeviceRGB'));
   dict.set('BitsPerComponent', new PDFNumber(8));
 
-  if (wm.mimeType === 'image/jpeg') {
-    dict.set('Filter', new PDFName('DCTDecode'));
-  } else {
-    dict.set('Filter', new PDFName('FlateDecode'));
-    // For PNG we'd need to decode first — simplified here
-  }
+  dict.set('Filter', new PDFName('DCTDecode'));
 
   dict.set('Length', new PDFNumber(wm.imageBytes.length));
 
   const stream = new PDFStream(dict, wm.imageBytes);
-  const name = `/ImWM_${wm.id.substring(0, 8)}`;
 
-  return { stream, name };
+  return { stream, name, imageRef: new PDFRef(getNextObjNum(), 0), smaskRef: null, smask: null };
 }
 
 /**
@@ -499,7 +515,7 @@ export function createWatermarkImageXObject(
  * @param originY MediaBox lower-left Y (default 0)
  * @returns Modified content stream bytes
  */
-export function applyWatermarkToPage(
+export async function applyWatermarkToPage(
   contentBytes: Uint8Array,
   page: PDFPageInfo,
   objects: Map<string, PDFObject>,
@@ -509,7 +525,7 @@ export function applyWatermarkToPage(
   getNextObjNum: () => number,
   originX: number = 0,
   originY: number = 0,
-): Uint8Array {
+): Promise<Uint8Array> {
   let watermarkContent: Uint8Array;
   let needsExtGState = watermark.opacity < 1 || (watermark.blendMode !== undefined && watermark.blendMode !== 'Normal');
   let needsImageXObject = watermark.type === 'image';
@@ -522,15 +538,15 @@ export function applyWatermarkToPage(
       break;
     case 'image': {
       const imgWm = watermark as ImageWatermark;
-      const { stream, name } = createWatermarkImageXObject(imgWm);
-      const objNum = getNextObjNum();
-      const objRef = new PDFRef(objNum, 0);
-      objects.set(objRef.toKey(), stream);
+      const { stream, name, imageRef, smaskRef, smask } = await createWatermarkImageXObject(imgWm, getNextObjNum);
+      if (smaskRef && smask) objects.set(smaskRef.toKey(), smask);
+      objects.set(imageRef.toKey(), stream);
 
-      // Register in page Resources
-      registerXObjectInResources(page, objects, name.replace('/', ''), objRef);
+      // Register in page Resources; the image dictionary references its indirect mask.
+      const imageName = name.replace('/', '');
+      registerXObjectInResources(page, objects, imageName, imageRef);
 
-      watermarkContent = buildImageWatermarkContent(imgWm, pageWidth, pageHeight, name, originX, originY);
+      watermarkContent = buildImageWatermarkContent(imgWm, pageWidth, pageHeight, imageName, originX, originY);
       break;
     }
     case 'pattern':
@@ -594,11 +610,11 @@ export function applyWatermarkToPage(
 /**
  * Apply watermarks to multiple pages.
  */
-export function applyWatermarks(
+export async function applyWatermarks(
   doc: { pages: PDFPageInfo[]; objects: Map<string, PDFObject> },
   watermarks: Watermark[],
   getNextObjNum: () => number,
-): Map<number, Uint8Array> {
+): Promise<Map<number, Uint8Array>> {
   const results = new Map<number, Uint8Array>();
 
   for (const wm of watermarks) {
@@ -618,7 +634,7 @@ export function applyWatermarks(
       // Get current content bytes
       const currentBytes = results.get(pageIdx) || getPageContentBytesRaw(page, doc.objects);
 
-      const newBytes = applyWatermarkToPage(
+      const newBytes = await applyWatermarkToPage(
         currentBytes, page, doc.objects, wm,
         pageWidth, pageHeight, getNextObjNum,
         originX, originY,

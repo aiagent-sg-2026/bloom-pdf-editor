@@ -41,13 +41,13 @@ export async function createRGBAImageObjects(
     smaskDict.set('Filter', new PDFName('FlateDecode'));
     const alphaBytes = await flateEncode(alpha);
     smaskDict.set('Length', new PDFNumber(alphaBytes.length));
-    smask = new PDFStream(smaskDict, alphaBytes);
+    smask = new PDFStream(smaskDict, alphaBytes, alpha);
     smaskRef = new PDFRef(getNextObjNum(), 0);
     imageDict.set('SMask', smaskRef);
   }
   const rgbBytes = await flateEncode(rgb);
   imageDict.set('Length', new PDFNumber(rgbBytes.length));
-  const image = new PDFStream(imageDict, rgbBytes);
+  const image = new PDFStream(imageDict, rgbBytes, rgb);
   const imageRef = new PDFRef(getNextObjNum(), 0);
   return { imageRef, image, smaskRef, smask };
 }

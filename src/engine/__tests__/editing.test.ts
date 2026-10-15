@@ -223,6 +223,7 @@ describe('scene-graph: buildSceneGraph', () => {
       type: 'image', name: 'Im1',
       ctm: { a: 50, b: 0, c: 0, d: 50, e: 100, f: 200 },
       x: 100, y: 200, width: 50, height: 50,
+      fillAlpha: 1,
       blendMode: 'Normal', softMask: null, clipPaths: [],
     };
     const path: PathItem = {
@@ -407,6 +408,7 @@ describe('object-editor: deleteObject', () => {
         name: 'DoesNotExist',
         ctm: { a: 10, b: 0, c: 0, d: 10, e: 999, f: 999 },
         x: 999, y: 999, width: 10, height: 10,
+        fillAlpha: 1,
         blendMode: 'Normal', softMask: null, clipPaths: [],
       },
     };

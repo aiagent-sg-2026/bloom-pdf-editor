@@ -53,6 +53,7 @@ describe('selection: page background filter', () => {
       height: 60,
       name: 'Im1',
       ctm: { a: 80, b: 0, c: 0, d: 60, e: 200, f: 300 },
+      fillAlpha: 1,
       softMask: null,
       clipPaths: [],
       blendMode: 'Normal',

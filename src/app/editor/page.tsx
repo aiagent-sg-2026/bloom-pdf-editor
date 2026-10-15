@@ -4207,15 +4207,20 @@ export default function EditorPage() {
     reader.onload = async (ev) => {
       const dataUrl = ev.target?.result as string;
       const img = new window.Image();
-      img.onload = () => {
-        // Convert the image to JPEG using a canvas because the simplified PDF engine
-        // only correctly supports image/jpeg (DCTDecode) without complex FlateDecode logic.
+      img.onload = async () => {
+        if (file.type === 'image/png') {
+          setWatermarkImageBytes(new Uint8Array(await file.arrayBuffer()));
+          setWatermarkImageDims({ width: img.naturalWidth, height: img.naturalHeight });
+          return;
+        }
+
+        // Convert other formats to JPEG for DCTDecode.
         const canvas = document.createElement('canvas');
         canvas.width = img.naturalWidth;
         canvas.height = img.naturalHeight;
         const ctx = canvas.getContext('2d');
         if (ctx) {
-          // Fill with white background in case of transparent PNG
+          // JPEG has no alpha channel.
           ctx.fillStyle = '#ffffff';
           ctx.fillRect(0, 0, canvas.width, canvas.height);
           ctx.drawImage(img, 0, 0);
@@ -4246,7 +4251,7 @@ export default function EditorPage() {
     setWatermarkImageDims(null);
   }, []);
 
-  const handleApplyWatermark = useCallback(() => {
+  const handleApplyWatermark = useCallback(async () => {
     if (!doc || !engineRef.current) return;
     try {
       let wm: Watermark;
@@ -4343,7 +4348,7 @@ export default function EditorPage() {
         };
       }
 
-      const results = engineRef.current.applyWatermarks(doc, [wm], () => engineRef.current!.getNextObjNum(doc));
+      const results = await engineRef.current.applyWatermarks(doc, [wm], () => engineRef.current!.getNextObjNum(doc));
 
       const updatePromises: Promise<void>[] = [];
       results.forEach((newBytes, pageIdx) => {

@@ -16,7 +16,7 @@ export function rawPDF(objects: string[]): Uint8Array {
   return Uint8Array.from(pdf, char => char.charCodeAt(0));
 }
 
-function pngChunk(type: string, data: Uint8Array): Buffer {
+export function pngChunk(type: string, data: Uint8Array): Buffer {
   const chunk = Buffer.alloc(data.length + 12);
   chunk.writeUInt32BE(data.length, 0);
   chunk.write(type, 4, 'ascii');
