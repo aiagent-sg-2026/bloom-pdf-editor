@@ -1,5 +1,6 @@
 import { clonePDFObject } from '../editing/editor-history';
 import { bindPageContentRefs } from '../editor/stream-compiler';
+import { parsePDF } from '../parser/parser';
 import { PDFArray, PDFDict, PDFStream, type PDFDocumentData, type PDFObject } from '../types';
 import { serializeDocument } from '../writer/serializer';
 import { DocumentSession } from './document-session';
@@ -31,7 +32,9 @@ function publishDraft(doc: PDFDocumentData, staged: PDFDocumentData, clones: Map
     const target = originals.get(object) ?? object;
     published.set(object, target);
     if (object instanceof PDFDict && target instanceof PDFDict) {
-      for (const key of target.keys()) if (!object.has(key)) target.delete(key);
+      // Match the draft's insertion order as well as its values so the live
+      // serialization matches the committed snapshot. New dictionaries adopt in place.
+      if (target !== object) for (const key of target.keys()) target.delete(key);
       for (const [key, value] of object.entries()) target.set(key, adopt(value));
     } else if (object instanceof PDFArray && target instanceof PDFArray) {
       for (let index = 0; index < object.items.length; index++) target.items[index] = adopt(object.items[index]);
@@ -65,6 +68,61 @@ function publishDraft(doc: PDFDocumentData, staged: PDFDocumentData, clones: Map
 export class SessionDocumentEditor {
   private session: DocumentSession | null = null;
   private editing = false;
+
+  get canUndo(): boolean {
+    return !this.editing && (this.session?.canUndo ?? false);
+  }
+
+  get canRedo(): boolean {
+    return !this.editing && (this.session?.canRedo ?? false);
+  }
+
+  async undo(doc: PDFDocumentData): Promise<boolean> {
+    return this.restore(doc, 'undo');
+  }
+
+  async redo(doc: PDFDocumentData): Promise<boolean> {
+    return this.restore(doc, 'redo');
+  }
+
+  private async restore(doc: PDFDocumentData, direction: 'undo' | 'redo'): Promise<boolean> {
+    if (this.editing) throw new Error('An edit transaction is already active');
+    const session = this.session;
+    if (!session) return false;
+    this.editing = true;
+    const bytes = session[direction]();
+    if (!bytes) {
+      this.editing = false;
+      return false;
+    }
+    try {
+      const restored = await parsePDF(bytes);
+      // Keep upload/save/security provenance on the live document and objects map.
+      // Internal snapshots omit /Encrypt; downloads still need the original entry.
+      const encryptRef = doc.xref.trailerDict.getRef('Encrypt');
+      if (doc.decryptedFromEncrypted && encryptRef) {
+        restored.xref.trailerDict.set('Encrypt', encryptRef);
+        const encrypt = doc.objects.get(encryptRef.toKey());
+        if (encrypt) restored.objects.set(encryptRef.toKey(), encrypt);
+      }
+      // Legacy page-delete history still needs detached page/content objects.
+      // They stay unreachable from the restored roots and are omitted on save.
+      for (const [key, object] of restored.objects) doc.objects.set(key, object);
+      doc.catalog = restored.catalog;
+      doc.pages = restored.pages;
+      doc.xref.trailerDict = restored.xref.trailerDict;
+      doc.info = restored.info;
+      doc.version = restored.version;
+      return true;
+    } catch (error) {
+      // Failed parsing must not consume a toolbar history step.
+      if (direction === 'undo') session.redo();
+      else session.undo();
+      throw error;
+    } finally {
+      this.editing = false;
+    }
+  }
 
   async edit(
     doc: PDFDocumentData,

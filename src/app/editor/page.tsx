@@ -23,9 +23,10 @@ import {
   hitTestTextLine, findNearestTextLine, caretIndexFromLineX,
   getLineBounds, getOverlayFontFamily, getOverlayFontStyle, getDisplayFontFamily,
 } from './utils';
-import { buildDisplayListIndex, hitTestDisplayList, isSelectableDisplayItem, EditorHistory, captureHistoryEntry, restoreAnnotSnapshot, restoreDocumentStructure, parseOverlaySnapshot, deleteObject, visualFontSize, resolveRunStyleFlags, transformObject, applyObjectTransform, distributeTextChangeToSegments, segmentAtIndex, createVisualSignature, hitTestSignature, moveSignature, resizeSignature, rotateSignature, setSignatureOpacity, setSignatureLocked, deleteSignature, updateSignature, visualSignatureToImagePlacement, getSignatureLibrary, DEFAULT_SIGNATURE_SIZE, detectSignatureFieldsOnPage, hitTestSignatureField, createSignatureFieldAtPoint, applySignatureFieldAppearanceAsync, getCertificateManager, signDocumentCryptographic, validateDocumentSignatures, enableLongTermValidation, getLtvStatus, listManagedSignatures, buildRevisionViewer, lockSignaturesAfterSigning, pushRecentSignatureId, orderLibraryByRecent, SIGNATURE_SHORTCUTS } from '@/engine/browser-core';
-import type { QuadTree, SelectableItem, EditableObject } from '@/engine/browser-core';
+import { buildDisplayListIndex, hitTestDisplayList, isSelectableDisplayItem, captureHistoryEntry, restoreAnnotSnapshot, restoreDocumentStructure, parseOverlaySnapshot, deleteObject, visualFontSize, resolveRunStyleFlags, transformObject, applyObjectTransform, distributeTextChangeToSegments, segmentAtIndex, createVisualSignature, hitTestSignature, moveSignature, resizeSignature, rotateSignature, setSignatureOpacity, setSignatureLocked, deleteSignature, updateSignature, visualSignatureToImagePlacement, getSignatureLibrary, DEFAULT_SIGNATURE_SIZE, detectSignatureFieldsOnPage, hitTestSignatureField, createSignatureFieldAtPoint, applySignatureFieldAppearanceAsync, getCertificateManager, signDocumentCryptographic, validateDocumentSignatures, enableLongTermValidation, getLtvStatus, listManagedSignatures, buildRevisionViewer, lockSignaturesAfterSigning, pushRecentSignatureId, orderLibraryByRecent, SIGNATURE_SHORTCUTS } from '@/engine/browser-core';
+import type { QuadTree, SelectableItem, EditableObject, EditorHistoryEntry } from '@/engine/browser-core';
 import { UnsupportedGlyphsError, SessionDocumentEditor } from '@/engine/browser-core';
+import { SessionEditorHistory } from '@/engine/session/editor-history';
 import { findMatchingFlowLine } from './flowLineMatch';
 import { commitThenCleanup } from './commit-after-success';
 
@@ -472,9 +473,10 @@ export default function EditorPage() {
   const [detectedTables, setDetectedTables] = useState<DetectedTable[]>([]);
   const [activeTableId, setActiveTableId] = useState<string | null>(null);
 
-  // Unified undo/redo (content + annotations + overlays)
-  const historyRef = useRef(new EditorHistory());
+  // One chronological toolbar stack for legacy snapshots and session boundaries.
+  const historyRef = useRef(new SessionEditorHistory());
   const sessionEditorRef = useRef(new SessionDocumentEditor());
+  const historyBusyRef = useRef(false);
   const [canUndo, setCanUndo] = useState(false);
   const [canRedo, setCanRedo] = useState(false);
   const undoSnapshotRef = useRef<{ pageIndex: number; contentBytes: Uint8Array } | null>(null);
@@ -606,6 +608,7 @@ export default function EditorPage() {
     },
     pageIndexOverride?: number,
     replaceCurrent = false,
+    sessionEditor?: SessionDocumentEditor,
   ) => {
     if (!doc || !engineRef.current) return;
     const pageIndex = pageIndexOverride ?? currentPage;
@@ -625,7 +628,7 @@ export default function EditorPage() {
       label,
     );
     if (replaceCurrent) historyRef.current.replace(entry, true);
-    else historyRef.current.push(entry);
+    else historyRef.current.push(entry, sessionEditor);
     syncTxState();
   }, [doc, currentPage, syncTxState]);
 
@@ -636,30 +639,41 @@ export default function EditorPage() {
     setIsDirty(true);
   }, [pushEditorHistory]);
 
-  const applyHistoryEntry = useCallback(async (entry: import('@/engine/browser-core').EditorHistoryEntry, displayPageIndex?: number) => {
+  const applyHistoryEntry = useCallback(async (entry: EditorHistoryEntry, restoredDocument = false) => {
     if (!doc || !engineRef.current) return;
     const engine = engineRef.current;
-    if (entry.pages) {
+    if (!restoredDocument && entry.pages) {
       await restoreDocumentStructure(doc, entry, engine.updatePageContent);
-    } else {
+    } else if (!restoredDocument) {
       const page = entry.pageKey ? doc.pages.find((candidate) => candidate.ref.toKey() === entry.pageKey) : doc.pages[entry.pageIndex];
       if (page) {
         await engine.updatePageContent(page.contentRefs, entry.contentBytes, doc.objects);
         restoreAnnotSnapshot(page.dict, doc.objects, entry.annotSnapshot);
       }
     }
-    setDrawnPaths(parseOverlaySnapshot<DrawnPath[]>(entry.overlays.drawnPathsJson));
-    setFloatingTexts(parseOverlaySnapshot<FloatingText[]>(entry.overlays.floatingTextsJson));
-    setFloatingImages(parseOverlaySnapshot<FloatingImage[]>(entry.overlays.floatingImagesJson));
+    const paths = parseOverlaySnapshot<DrawnPath[]>(entry.overlays.drawnPathsJson);
+    const texts = parseOverlaySnapshot<FloatingText[]>(entry.overlays.floatingTextsJson);
+    const images = parseOverlaySnapshot<FloatingImage[]>(entry.overlays.floatingImagesJson);
+    setDrawnPaths(paths);
+    drawnPathsRef.current = paths;
+    setFloatingTexts(texts);
+    floatingTextsRef.current = texts;
+    setFloatingImages(images);
+    floatingImagesRef.current = images;
     const sigs = parseOverlaySnapshot<VisualSignature[]>(entry.overlays.signaturesJson);
     setSignatures(sigs);
     signaturesRef.current = sigs;
     setSelectedSignatureId(null);
+    setSelectedDisplayItem(null);
+    setSelectedLine(null);
+    setTotalPages(doc.pages.length);
+    setIsDirty(true);
     const stablePageIndex = entry.pageKey ? doc.pages.findIndex((page) => page.ref.toKey() === entry.pageKey) : entry.pageIndex;
-    const nextPage = displayPageIndex ?? (stablePageIndex >= 0 ? stablePageIndex : Math.min(entry.pageIndex, doc.pages.length - 1));
+    const nextPage = stablePageIndex >= 0 ? stablePageIndex : Math.min(entry.pageIndex, doc.pages.length - 1);
     if (nextPage !== currentPage) setCurrentPage(nextPage);
     syncTxState();
     setRenderKey((k) => k + 1);
+    setThumbnailKey((k) => k + 1);
   }, [doc, currentPage, syncTxState]);
 
   const bumpRender = useCallback(() => {
@@ -2053,26 +2067,32 @@ export default function EditorPage() {
 
   // ── Undo ──
   const handleUndo = useCallback(async () => {
-    if (!doc || !engineRef.current) return;
-    const entry = historyRef.current.undo();
-    if (!entry) return;
+    if (!doc || !engineRef.current || historyBusyRef.current) return;
+    historyBusyRef.current = true;
     try {
-      await applyHistoryEntry(entry);
+      const result = await historyRef.current.undo(doc);
+      if (result) await applyHistoryEntry(result.entry, result.restoredDocument);
     } catch (e) {
       console.error('[Editor] Undo failed:', e);
+    } finally {
+      historyBusyRef.current = false;
+      syncTxState();
     }
-  }, [doc, applyHistoryEntry]);
+  }, [doc, applyHistoryEntry, syncTxState]);
 
   const handleRedo = useCallback(async () => {
-    if (!doc || !engineRef.current) return;
-    const entry = historyRef.current.redo();
-    if (!entry) return;
+    if (!doc || !engineRef.current || historyBusyRef.current) return;
+    historyBusyRef.current = true;
     try {
-      await applyHistoryEntry(entry);
+      const result = await historyRef.current.redo(doc);
+      if (result) await applyHistoryEntry(result.entry, result.restoredDocument);
     } catch (e) {
       console.error('[Editor] Redo failed:', e);
+    } finally {
+      historyBusyRef.current = false;
+      syncTxState();
     }
-  }, [doc, applyHistoryEntry]);
+  }, [doc, applyHistoryEntry, syncTxState]);
 
   const handleFormFieldSelect = useCallback((field: AcroFormWidget) => {
     setSelectedFormField(field);
@@ -3773,7 +3793,8 @@ export default function EditorPage() {
             await sessionEditorRef.current.edit(doc, 'replace-image', async staged => {
               await engine.replaceImageXObject(staged, currentPage, target, imageDataUrlForPdf, () => engine.getNextObjNum(staged));
             });
-            pushEditorHistory('replace-image');
+            pushEditorHistory('replace-image', undefined, undefined, false, sessionEditorRef.current);
+            sessionEditorRef.current = new SessionDocumentEditor();
             setIsDirty(true);
             setSelectedDisplayItem(null);
             setRenderKey(k => k + 1);
@@ -4366,6 +4387,10 @@ export default function EditorPage() {
         });
         await Promise.all(updatePromises);
       });
+      pushEditorHistory('watermark', undefined, undefined, false, sessionEditorRef.current);
+      sessionEditorRef.current = new SessionDocumentEditor();
+      setIsDirty(true);
+      setThumbnailKey(k => k + 1);
       setDoc({ ...doc });
       setRenderKey(k => k + 1);
       setWatermarkLivePreview(false);
@@ -4374,7 +4399,7 @@ export default function EditorPage() {
       console.error('[Editor] Apply watermark failed:', e);
       setError(`Failed to apply watermark: ${e instanceof Error ? e.message : String(e)}`);
     }
-  }, [doc, watermarkType, watermarkText, watermarkFontName, watermarkOpacity, watermarkRotation, watermarkSize, watermarkPosition, watermarkMosaic, watermarkPageFrom, watermarkPageTo, watermarkLayer, watermarkColor, watermarkShapeColor, watermarkShapeType, watermarkImageBytes, watermarkImageDims, watermarkImageFile, watermarkBlendMode]);
+  }, [doc, pushEditorHistory, watermarkType, watermarkText, watermarkFontName, watermarkOpacity, watermarkRotation, watermarkSize, watermarkPosition, watermarkMosaic, watermarkPageFrom, watermarkPageTo, watermarkLayer, watermarkColor, watermarkShapeColor, watermarkShapeType, watermarkImageBytes, watermarkImageDims, watermarkImageFile, watermarkBlendMode]);
 
   // ── Signature handlers ──
   const resolveSignatureImage = useCallback((sig: VisualSignature): string | null => {

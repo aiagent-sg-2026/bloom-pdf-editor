@@ -35,6 +35,61 @@ beforeEach(installPNGEnvironment);
 afterEach(() => vi.unstubAllGlobals());
 
 describe('SessionDocumentEditor', () => {
+  it.each(['text', 'image'] as const)('restores byte-identical %s watermark revisions', async type => {
+    const doc = await parsePDF(fixture());
+    const original = await serializeDocument(doc);
+    const upload = doc.rawBytes;
+    const objects = doc.objects;
+    const editor = new SessionDocumentEditor();
+    await editor.edit(doc, 'watermark', async staged => {
+      if (type === 'text') return watermark(staged);
+      const updates = await applyWatermarks(staged, [{
+        id: 'image-session', type: 'image',
+        imageBytes: new Uint8Array(Buffer.from(tinyPNG([230, 40, 60, 128]).split(',')[1], 'base64')),
+        mimeType: 'image/png', width: 20, height: 20,
+        opacity: 0.5, blendMode: 'Normal', rotation: 0,
+        tile: false, layer: 'above', position: 'center', pageIndices: [0],
+      }], () => getNextObjNum(staged));
+      await Promise.all([...updates].map(([index, content]) =>
+        updatePageContent(staged.pages[index].contentRefs, content, staged.objects)));
+    });
+    const applied = await serializeDocument(doc);
+    expect(applied).not.toEqual(original);
+    expect(editor.canUndo).toBe(true);
+    expect(editor.canRedo).toBe(false);
+    expect(await editor.undo(doc)).toBe(true);
+    expect(await serializeDocument(doc)).toEqual(original);
+    expect(editor.canUndo).toBe(false);
+    expect(editor.canRedo).toBe(true);
+    expect(await editor.redo(doc)).toBe(true);
+    expect(await serializeDocument(doc)).toEqual(applied);
+    expect(doc.rawBytes).toBe(upload);
+    expect(doc.objects).toBe(objects);
+  });
+
+  it('restores replacement bytes and live pixels through repeated undo/redo', async () => {
+    const doc = await parsePDF(fixture());
+    const original = await serializeDocument(doc);
+    const editor = new SessionDocumentEditor();
+    const image = interpretPage(getPageContentBytes(doc.pages[0], doc.objects), doc.pages[0], doc.objects)
+      .displayList.find(item => item.type === 'image');
+    if (!image || image.type !== 'image') throw new Error('Fixture image missing');
+    const rgba = [220, 30, 30, 255, 0, 0, 0, 0];
+    await editor.edit(doc, 'replace-image', staged =>
+      replaceImageXObject(staged, 0, image, tinyPNG(rgba), () => getNextObjNum(staged)));
+    const replaced = await serializeDocument(doc);
+    for (let cycle = 0; cycle < 2; cycle++) {
+      expect(await editor.undo(doc)).toBe(true);
+      expect(await serializeDocument(doc)).toEqual(original);
+      expect(Array.from((await decodeImage(doc.objects.get('5_0') as PDFStream, doc.objects))!.data))
+        .toEqual([10, 20, 30, 255]);
+      expect(await editor.redo(doc)).toBe(true);
+      expect(await serializeDocument(doc)).toEqual(replaced);
+      expect(Array.from((await decodeImage(doc.objects.get('5_0') as PDFStream, doc.objects))!.data))
+        .toEqual(rgba);
+    }
+  });
+
   it('keeps native watermark output and publishes only after the async edit succeeds', async () => {
     const doc = await parsePDF(fixture());
     const direct = await parsePDF(fixture());
