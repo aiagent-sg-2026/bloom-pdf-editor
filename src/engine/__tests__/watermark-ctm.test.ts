@@ -59,14 +59,14 @@ function textWm(overrides: Partial<TextWatermark> = {}): TextWatermark {
 }
 
 describe('watermark CTM isolation', () => {
-  it('wraps existing content in q/Q so leftover CTM cannot tilt the watermark', () => {
+  it('wraps existing content in q/Q so leftover CTM cannot tilt the watermark', async () => {
     const objects = new Map<string, PDFObject>();
     // Unbalanced cm left active — common in buggy / generated PDFs
     const dirty = '0.7071 0.7071 -0.7071 0.7071 100 200 cm\nBT /F1 12 Tf 0 0 Td (Hello) Tj ET\n';
     const page = makePage(objects, dirty);
     let next = 10;
 
-    const out = applyWatermarkToPage(
+    const out = await applyWatermarkToPage(
       new TextEncoder().encode(dirty),
       page,
       objects,
@@ -97,12 +97,12 @@ describe('watermark CTM isolation', () => {
     expect(afterRestore).not.toMatch(/0\.7071/);
   });
 
-  it('places below-layer watermark before wrapped content', () => {
+  it('places below-layer watermark before wrapped content', async () => {
     const objects = new Map<string, PDFObject>();
     const page = makePage(objects, 'BT /F1 12 Tf 100 700 Td (Hi) Tj ET\n');
     let next = 10;
 
-    const out = applyWatermarkToPage(
+    const out = await applyWatermarkToPage(
       new TextEncoder().encode('BT /F1 12 Tf 100 700 Td (Hi) Tj ET\n'),
       page,
       objects,
