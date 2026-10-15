@@ -330,5 +330,5 @@ export async function replaceImageXObject(
   for (const key of xobj.dict.keys()) xobj.dict.delete(key);
   for (const [key, value] of replacement.dict.entries()) xobj.dict.set(key, value);
   xobj.rawBytes = replacement.rawBytes;
-  xobj.decodedBytes = null;
+  xobj.decodedBytes = replacement.decodedBytes;
 }

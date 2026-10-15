@@ -3770,6 +3770,7 @@ export default function EditorPage() {
             setIsDirty(true);
             setSelectedDisplayItem(null);
             setRenderKey(k => k + 1);
+            setThumbnailKey(k => k + 1);
           } catch (err) {
             console.error('[Editor] Replace embedded image failed:', err);
             setError(`Replace failed: ${err instanceof Error ? err.message : String(err)}`);

@@ -118,6 +118,32 @@ describe('image replacement isolation (P1-B)', () => {
   });
 });
 
+describe('in-session image replacement', () => {
+  it('decodes new RGB and alpha on the same object after JPEG and repeated PNG replacements', async () => {
+    const doc = await fixture('single');
+    const image = doc.objects.get('7_0') as PDFStream;
+    image.rawBytes = tinyJPEG();
+    image.decodedBytes = null;
+    image.dict.set('Filter', new PDFName('DCTDecode'));
+    image.dict.set('Length', new PDFNumber(image.rawBytes.length));
+
+    for (const expected of [
+      [220, 30, 30, 255, 0, 0, 0, 0],
+      [30, 180, 70, 255, 0, 0, 0, 0],
+    ]) {
+      await replaceImageXObject(doc, 0, editedImage(doc), tinyPNG(expected), () => getNextObjNum(doc));
+      const replaced = getResource(doc.pages[0].resources, 'XObject', 'Edit', doc.objects) as PDFStream;
+      expect(replaced).toBe(image);
+      // Decode the live streams without saving, reopening, or repairing decodedBytes.
+      for (let pass = 0; pass < 2; pass++) {
+        const decoded = await decodeImage(replaced, doc.objects);
+        expect(decoded).toMatchObject({ width: 2, height: 1 });
+        expect(Array.from(decoded!.data)).toEqual(expected);
+      }
+    }
+  });
+});
+
 describe('PNG replacement dictionaries (P1-C)', () => {
   it.each([255, 73])('replaces JPEG and obsolete masks/decoding keys with new alpha=%i', async alpha => {
     const doc = await fixture('single');
