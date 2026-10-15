@@ -4490,13 +4490,15 @@ export default function EditorPage() {
     try {
       setIsSaving(true);
       setGlyphWarning(null);
-      await prepareExportText(floatingTextsRef.current.map(ft => ft.text).join('\n'));
-      if (editingLineRef.current && !await handleEditSubmit()) return;
-      await commitDrawingsToPdf();
-      const engine = engineRef.current;
-      const bytes = saveMode === 'quick'
-        ? await engine.saveQuick(doc)
-        : await engine.saveOptimized(doc);
+      const result = await engineRef.current.exportDocument(doc, {
+        mode: saveMode,
+        prepare: () => prepareExportText(floatingTextsRef.current.map(ft => ft.text).join('\n')),
+        commitPendingEdit: () => editingLineRef.current ? handleEditSubmit() : undefined,
+        flatten: commitDrawingsToPdf,
+      });
+      if (result.status === 'cancelled') return;
+      if (result.status === 'error') throw result.error;
+      const bytes = result.bytes;
       const blob = new Blob([bytes as unknown as BlobPart], { type: 'application/pdf' });
       const url = URL.createObjectURL(blob);
       const a = document.createElement('a');
