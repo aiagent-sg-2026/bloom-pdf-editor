@@ -10,6 +10,10 @@
 
 **Edit PDFs in the browser with a custom TypeScript PDF engine.**
 
+**[Live demo](https://aiagent-sg-2026.github.io/bloom-pdf-editor/)**
+
+All processing happens in your browser; files never leave your device.
+
 [Quick Start](#-quick-start) · [Architecture](#-architecture) · [Contributing](CONTRIBUTING.md)
 
 </div>
