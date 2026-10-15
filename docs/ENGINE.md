@@ -35,6 +35,17 @@ tracks the materialized dictionary.
 Synthetic serialize/reopen regressions:
 `npm test -- src/engine/__tests__/page-tree-resources.test.ts`.
 
+### Page placement geometry
+
+`src/engine/__tests__/placement-geometry.test.ts` uses synthetic in-memory PDFs
+with direct and inherited page geometry. Literal user-space rectangles cover
+`/Rotate` 0/90/180/270, zero and offset MediaBox origins, reversed box corners,
+and an inset CropBox. Signature widgets with visual appearances and Square
+annotations are checked before and after serialization, including appearance
+`/BBox` and effective `/Matrix`. Coordinates include zoom and viewport offsets.
+Watermark checks distinguish MediaBox-relative presets from absolute user-space
+custom positions.
+
 ## Image soft masks
 
 `src/engine/render/image-decoder.ts` applies image `/SMask` alpha to decoded RGBA, including browser-decoded JPEG base images. DeviceGray masks support 1-, 2-, 4-, 8-, and 16-bit samples with byte-padded rows, `/Decode` mapping, and nearest-neighbour resizing to the decoded base image dimensions. Images without a mask retain their existing opacity. `/Matte` unpremultiplication is not implemented.
