@@ -121,6 +121,28 @@ Image compression derives candidates from the current document, including commit
 
 The editor permits this fallback only for an unrecovered, unencrypted upload with unchanged exportable objects, no recorded or pending edits, and unchanged upload bytes. Saving does not reset its edit provenance. Uncertain state or a failed object comparison disables the fallback.
 
+### ExportService
+
+`src/engine/export/export-service.ts` owns the ordinary PDF download sequence:
+await text preparation, await the pending line edit (stop if it returns false),
+await overlay flattening, then await the worker client's `saveQuick` or
+`saveOptimized`. It returns a typed success with bytes, cancellation, or the
+original error. The public save APIs, worker fallback, and writer are unchanged.
+
+Preparation, edit submission, and flattening are injected callbacks. Flattening
+still preflights floating text, adds drawing annotations, inserts floating text,
+images, and visual signatures in that order, and awaits `updatePageContent`.
+Only then does `commitThenCleanup` clear overlays and update history/render
+state. This existing cleanup happens before serialization; export is not a
+transaction and does not roll back already committed edits on a save failure.
+
+The page retains overlay geometry, browser image decoding, React state, download
+DOM operations, glyph warnings, and error presentation. It marks the document
+clean only after successful serialization and download dispatch; cancellation
+or any failure must not mark it clean. Compression, autosave, page splitting,
+and navigation keep their existing paths. This first extraction deliberately
+keeps the shared, UI-coupled overlay implementation in `page.tsx`.
+
 ### Unsupported glyphs and on-demand Unicode font embedding
 
 Floating text and existing-run edits have an asynchronous preparation stage
