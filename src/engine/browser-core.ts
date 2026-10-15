@@ -78,6 +78,9 @@ export { saveQuick, saveOptimized, saveDocument } from './worker/client';
 export { hasDocumentEdits } from './writer/save-pipeline';
 export { exportDocument } from './export/export-service';
 export type { ExportOptions, ExportResult } from './export/export-service';
+export { DocumentSession } from './session/document-session';
+export { EditTransaction } from './session/edit-transaction';
+export { SessionDocumentEditor } from './session/document-edit';
 export {
   deletePage,
   rotatePageBy,
