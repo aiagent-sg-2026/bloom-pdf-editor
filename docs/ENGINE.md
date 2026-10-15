@@ -144,8 +144,19 @@ when their serialized bytes differ. Native operations run on a detached clone,
 including decoded stream samples and shared resource aliases. After successful
 updates and serialization, it checks that the live document has not changed,
 commits the bytes, and reconciles the draft into the live graph synchronously.
-Object-map, page, dictionary, and single-use image-stream identities are retained;
-upload bytes and native encryption/save provenance are not replaced.
+Object-map, page, dictionary, and single-use image-stream identities are retained
+during commit; upload bytes and native encryption/save provenance are not replaced.
+Dictionary entries are rebuilt in draft insertion order so the published graph
+serializes identically to the committed snapshot, including image replacements.
+
+The bridge exposes `canUndo`/`canRedo` from its `DocumentSession` and asynchronous
+`undo(doc)`/`redo(doc)`. Restoration parses the session's exact byte snapshot into
+the live document used by rendering and export. The document and objects-map
+identities, upload bytes, and encryption credentials are retained; page and stream
+identities are not retained across restoration. Detached objects remain available
+for legacy page-history restoration but are unreachable from the restored roots
+and omitted by full saves. Decrypted restores reattach the original `/Encrypt`
+entry so downloads still use the encrypted writer.
 
 For decrypted documents, internal snapshots omit the encryption trailer entry
 and contain plaintext PDF bytes, like the already decrypted native graph. This
@@ -161,17 +172,34 @@ the 50-snapshot bound limits history count, not total byte size.
 Migrated native call paths in `src/app/editor/page.tsx`:
 
 - **Watermark apply:** stage `applyWatermarks` and await every `updatePageContent`
-  before commit. Keep the existing render refresh, live-preview toggle, and
-  success dialog. Do not add a toolbar-history entry or change dirty-state
-  behavior.
-- **Replace embedded image:** stage `replaceImageXObject`, commit, then retain the
-  existing `replace-image` toolbar-history entry, dirty flag, selection cleanup,
-  render refresh, and thumbnail refresh.
+  before commit. Add one `watermark` toolbar entry, mark dirty, and refresh the
+  canvas and thumbnails. Keep the live-preview toggle and success dialog.
+- **Replace embedded image:** stage `replaceImageXObject`, commit, then add one
+  `replace-image` toolbar entry, mark dirty, clear selection, and refresh the
+  canvas and thumbnails.
 
-The React page still uses `EditorHistory` for its existing content/annotation/
-overlay toolbar undo/redo contract. The byte session does not replace that UI
-history during this first step; session undo/redo operate on byte snapshots, not
-React overlays. The bridge is reset when loading or unlocking a document.
+`SessionEditorHistory` in `src/engine/session/editor-history.ts` is the page's
+single ordered toolbar stack (50 post-edit states, including the initial state).
+Each migrated entry retains an isolated bridge/session containing its before and
+after bytes. The page starts a fresh bridge after publishing that entry. This
+avoids exposing the bridge's internal legacy checkpoints as duplicate undo steps
+or desynchronizing two independent cursors when legacy and migrated edits mix.
+Availability delegates to the boundary session's `canUndo`/`canRedo`; crossing
+that boundary calls its `undo()`/`redo()`. Legacy entries still restore their
+existing content/annotation/page-tree snapshots. All entries restore React
+overlays and page selection in chronological order. New edits discard the whole
+redo branch; overlay flattening can replace the current snapshot without clearing
+redo or losing its session boundary. Undo/redo marks dirty, clears stale native
+selections, and bumps both render and thumbnail revisions. Download serializes
+this same restored live graph, not the original upload or a separate byte cache.
+Loading or unlocking a document seeds a new ordered history.
+
+**Partial-migration limitation:** there is not yet one byte session spanning all
+edit types. Legacy mutations retain their existing history coverage and restore
+semantics, including edits that never recorded a toolbar entry. Only migrated
+boundaries restore complete byte revisions; legacy entries are not upgraded to
+byte-identical restoration. Each migrated boundary retains two full byte buffers,
+in addition to legacy snapshots, so the 50-entry limit is not a memory-size limit.
 
 **Not yet migrated** (keep their existing edit and history behavior):
 
@@ -185,13 +213,17 @@ React overlays. The bridge is reset when loading or unlocking a document.
   validation/LTV-related mutations, and security-panel changes.
 - Page deletion/rotation/reordering, blank-page insertion, merge/import, and
   extraction/splitting.
-- Watermark removal, initial text normalization, legacy toolbar undo/redo,
+- Watermark removal, initial text normalization,
   export/compression, autosave, recovery, and browser persistence.
 
 Contract coverage is in `src/engine/__tests__/document-session.test.ts`.
 `src/engine/__tests__/session-document-editor.test.ts` covers native watermark
-parity, live/reopened replacement pixels and alpha, object identity, failure
-isolation, and overlapping/legacy-edit conflicts.
+parity, byte-identical text/image watermark and image-replacement undo/redo,
+live/reopened replacement pixels and alpha, object identity, failure isolation,
+and overlapping/legacy-edit conflicts.
+`src/engine/__tests__/session-editor-history.test.ts` covers mixed legacy/session
+ordering, overlay restoration, redo branching, export snapshot replacement, and
+detached resources needed by legacy page-deletion undo.
 
 ## Export
 
