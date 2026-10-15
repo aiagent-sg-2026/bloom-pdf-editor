@@ -30,6 +30,7 @@ import { findMatchingFlowLine } from './flowLineMatch';
 import { commitThenCleanup } from './commit-after-success';
 
 import { Toolbar } from './components/Toolbar';
+import type { CompressedDownloadOptions } from './components/downloadQualityOptions';
 import { ToolsSidebar } from './components/ToolsSidebar';
 import { PropertiesSidebar } from './components/PropertiesSidebar';
 import { EditableLineBox, type OverlaySegmentStyle } from './components/EditableLineBox';
@@ -4515,11 +4516,9 @@ export default function EditorPage() {
   }, [doc, fileName, saveMode, commitDrawingsToPdf, handleEditSubmit, showUnsupportedGlyphWarning, prepareExportText]);
 
   // ── Compressed Download ──
-  const handleCompressedDownload = useCallback(async (opts: {
-    quality: number;
-    dpi: number;
-    targetBytes?: number;
-  }) => {
+  const handleCompressedDownload = useCallback(async (opts: CompressedDownloadOptions) => {
+    // Resizing also requires re-encoding; Original compression always preserves image bytes.
+    if (opts.quality === null) return handleDownload();
     if (!doc || !engineRef.current) return;
     try {
       setIsSaving(true);
@@ -4594,7 +4593,7 @@ export default function EditorPage() {
     } finally {
       setIsSaving(false);
     }
-  }, [doc, fileName, commitDrawingsToPdf, handleEditSubmit, showUnsupportedGlyphWarning, prepareExportText]);
+  }, [doc, fileName, handleDownload, commitDrawingsToPdf, handleEditSubmit, showUnsupportedGlyphWarning, prepareExportText]);
 
   const handleClose = useCallback(async () => {
     await clearEditorSession();
