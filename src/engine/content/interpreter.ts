@@ -225,6 +225,7 @@ export interface ImageItem {
   y: number;
   width: number;
   height: number;
+  fillAlpha: number;
   blendMode: string;
   softMask: PDFDict | null;
   clipPaths: ClipPathNode[];
@@ -882,6 +883,7 @@ export function interpretPage(
                 y: Math.min(y, y2),
                 width: Math.abs(x2 - x),
                 height: Math.abs(y2 - y),
+                fillAlpha: gs.fillAlpha,
                 blendMode: gs.blendMode,
                 softMask: gs.softMask,
                 clipPaths: [...gs.clipPaths],

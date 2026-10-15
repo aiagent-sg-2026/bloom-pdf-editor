@@ -1265,6 +1265,7 @@ async function drawImage(
     drawWithSoftMask(ctx, item.softMask, maskMap, bounds, () => {
       ctx.save();
       ctx.globalCompositeOperation = toCanvasBlendMode(item.blendMode);
+      ctx.globalAlpha *= item.fillAlpha;
       applyClipPaths(ctx, item.clipPaths);
 
       ctx.transform(

@@ -1,10 +1,12 @@
 import { deflateSync } from 'node:zlib';
-import { describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import { interpretPage } from '../content/interpreter';
 import { updatePageContent } from '../editor/stream-compiler';
 import { applyFilters } from '../parser/filters';
 import { getPageContentBytes, getResource, parsePDF, resolveRef } from '../parser/parser';
-import { PDFDict, PDFRef, PDFStream } from '../types';
+import { decodeImage } from '../render/image-decoder';
+import { renderPage } from '../render/renderer';
+import { PDFDict, PDFNumber, PDFRef, PDFStream } from '../types';
 import { applyWatermarks, type ImageWatermark } from '../watermark/watermark-engine';
 import { saveOptimized, saveQuick } from '../writer/save-pipeline';
 import { getNextObjNum } from '../writer/serializer';
@@ -42,7 +44,7 @@ const transparentPNGs = [
   })),
 ];
 
-async function applyAndReopen(imageBytes: Uint8Array, mimeType: ImageWatermark['mimeType'], save: typeof saveQuick) {
+async function applyInSession(imageBytes: Uint8Array, mimeType: ImageWatermark['mimeType'], opacity = 0.4) {
   const background = '0 0 1 rg 0 0 200 200 re f\n';
   const doc = await parsePDF(rawPDF([
     '<< /Type /Catalog /Pages 2 0 R >>',
@@ -53,13 +55,18 @@ async function applyAndReopen(imageBytes: Uint8Array, mimeType: ImageWatermark['
   const wm: ImageWatermark = {
     id: 'alpha001', type: 'image', imageBytes, mimeType,
     width: 60, height: 40, position: 'center',
-    opacity: 0.4, blendMode: 'Multiply', rotation: 0, tile: false, layer: 'above',
+    opacity, blendMode: 'Multiply', rotation: 0, tile: false, layer: 'above',
   };
   // Match the editor's non-reserving allocator, not just a monotonically increasing counter.
   const results = await applyWatermarks(doc, [wm], () => getNextObjNum(doc));
   for (const [index, bytes] of results) {
     await updatePageContent(doc.pages[index].contentRefs, bytes, doc.objects);
   }
+  return doc;
+}
+
+async function applyAndReopen(imageBytes: Uint8Array, mimeType: ImageWatermark['mimeType'], save: typeof saveQuick) {
+  const doc = await applyInSession(imageBytes, mimeType);
   const reopened = await parsePDF(await save(doc));
   const page = reopened.pages[0];
   const resources = resolveRef(page.dict.get('Resources')!, reopened.objects) as PDFDict;
@@ -124,3 +131,57 @@ for (const save of [saveQuick, saveOptimized]) {
     });
   });
 }
+
+describe('in-session image watermarks', () => {
+  afterEach(() => vi.unstubAllGlobals());
+
+  it.each(transparentPNGs)('decodes $name pixel alpha before saving or reopening', async fixture => {
+    const doc = await applyInSession(fixture.bytes(), 'image/png', 0.5);
+    const image = getResource(doc.pages[0].resources, 'XObject', 'ImWM_alpha001', doc.objects) as PDFStream;
+    // Use the live object map as-is: no parser/filter pass to repair the new streams.
+    const decoded = await decodeImage(image, doc.objects);
+    expect(decoded).not.toBeNull();
+    expect(Array.from(decoded!.data)).toEqual(fixture.alpha.flatMap((alpha, i) => [
+      ...fixture.rgb.slice(i * 3, i * 3 + 3), alpha,
+    ]));
+  });
+
+  it.each([0, 0.5, 1])('draws with fill alpha %s without leaking it to the next image', async opacity => {
+    const doc = await applyInSession(transparentPNGs[0].bytes(), 'image/png', opacity);
+    const page = doc.pages[0];
+    const state = getResource(page.resources, 'ExtGState', 'GS_wm_alpha001', doc.objects);
+    // Image painting uses non-stroking /ca, not /CA.
+    if (state instanceof PDFDict) state.set('CA', new PDFNumber(0.9));
+    const content = getPageContentBytes(page, doc.objects);
+    const nextImage = new TextEncoder().encode('\nq 2 0 0 2 0 0 cm /ImWM_alpha001 Do Q\n');
+    const combined = new Uint8Array(content.length + nextImage.length);
+    combined.set(content);
+    combined.set(nextImage, content.length);
+    await updatePageContent(page.contentRefs, combined, doc.objects);
+
+    const drawnAlphas: number[] = [];
+    const stack: number[] = [];
+    const ctx = {
+      globalAlpha: 1,
+      save() { stack.push(this.globalAlpha); },
+      restore() { this.globalAlpha = stack.pop()!; },
+      fillRect() {},
+      scale() {},
+      transform() {},
+      translate() {},
+      drawImage() { drawnAlphas.push(this.globalAlpha); },
+    };
+    vi.stubGlobal('document', {
+      createElement: () => ({ width: 0, height: 0, style: {}, getContext: () => ctx }),
+    });
+    vi.stubGlobal('ImageData', class {
+      constructor(public data: Uint8ClampedArray, public width: number, public height: number) {}
+    });
+    vi.stubGlobal('OffscreenCanvas', class {
+      getContext() { return { putImageData() {} }; }
+    });
+
+    await renderPage(doc, 0, { scale: 1, renderText: false, renderPaths: false });
+    expect(drawnAlphas).toEqual([opacity, 1]);
+  });
+});

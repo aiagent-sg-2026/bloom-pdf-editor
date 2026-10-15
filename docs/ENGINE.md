@@ -49,6 +49,12 @@ Flate RGB data, and an indirect 8-bit DeviceGray `/SMask` when any alpha is belo
 from page resources, and retained by quick and optimized saves. Opaque PNGs omit
 the mask; JPEGs retain their DCT path. Watermark opacity and blend mode remain
 separate ExtGState settings applied on top of pixel alpha.
+The builder retains the uncompressed RGB and mask buffers as `decodedBytes` for
+immediate in-session rendering; `rawBytes` remain Flate-compressed for export.
+`PDFStream.getBytes()` does not apply filters, so newly constructed image streams
+must expose decoded samples just as parser-loaded streams do. Image display items
+carry non-stroking `/ca`; the renderer multiplies it into canvas `globalAlpha`
+inside the image's save/restore scope, independently of `/CA` and pixel alpha.
 
 `createWatermarkImageXObject`, `applyWatermarkToPage`, and `applyWatermarks` are
 asynchronous; callers must await them. PNG samples are normalized to 8-bit RGBA
@@ -56,7 +62,8 @@ asynchronous; callers must await them. PNG samples are normalized to 8-bit RGBA
 PNG decoding receives only the input view's bytes, including for pooled Node
 Buffers. Image resource keys are unprefixed; content-stream `Do` operands add
 exactly one `/`.
-Synthetic RGBA, palette/tRNS, opaque PNG, and JPEG round-trip regressions:
+Synthetic in-session RGBA decoding and image draw-alpha regressions, plus RGBA,
+palette/tRNS, opaque PNG, and JPEG round-trip regressions:
 `npm test -- src/engine/__tests__/watermark-image.test.ts src/engine/__tests__/watermark-ctm.test.ts`.
 
 ### Content-stream edit integrity
