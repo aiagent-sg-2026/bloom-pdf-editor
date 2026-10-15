@@ -1,10 +1,9 @@
 'use client';
 
 import React, { createContext, useCallback, useContext, useEffect, useState } from 'react';
+import { resolveInitialTheme, STORAGE_KEY } from './initialTheme';
 
 export type ThemeMode = 'dark' | 'light';
-
-const STORAGE_KEY = 'pdf-editor-theme';
 
 interface ThemeContextValue {
   theme: ThemeMode;
@@ -13,7 +12,7 @@ interface ThemeContextValue {
 }
 
 const ThemeContext = createContext<ThemeContextValue>({
-  theme: 'dark',
+  theme: 'light',
   setTheme: () => {},
   toggleTheme: () => {},
 });
@@ -25,16 +24,15 @@ function applyTheme(mode: ThemeMode) {
 }
 
 export function ThemeProvider({ children }: { children: React.ReactNode }) {
-  const [theme, setThemeState] = useState<ThemeMode>('dark');
+  const [theme, setThemeState] = useState<ThemeMode>('light');
 
   useEffect(() => {
     try {
-      const stored = localStorage.getItem(STORAGE_KEY) as ThemeMode | null;
-      const initial = stored === 'light' || stored === 'dark' ? stored : 'dark';
+      const initial = resolveInitialTheme(localStorage.getItem(STORAGE_KEY));
       setThemeState(initial);
       applyTheme(initial);
     } catch {
-      applyTheme('dark');
+      applyTheme('light');
     }
   }, []);
 

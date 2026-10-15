@@ -33,8 +33,7 @@
   color-scheme: light;
 }
 
-[data-theme="dark"],
-:root:not([data-theme="light"]) {
+[data-theme="dark"] {
   /* Dark theme neutrals */
   --bloom-100: #123B36;
   --surface: #030304;
@@ -125,8 +124,7 @@
     background-position: 0 0;
   }
 
-  [data-theme="dark"] .checkerboard,
-  :root:not([data-theme="light"]) .checkerboard {
+  [data-theme="dark"] .checkerboard {
     background-color: #0B0C10;
     background-image: radial-gradient(#1E2330 1.25px, transparent 1.25px);
     background-size: 24px 24px;
@@ -178,8 +176,7 @@
     background-color: rgba(0, 0, 0, 0.5);
     animation: backdropFadeIn 0.2s ease forwards;
   }
-  [data-theme="dark"] .mobile-backdrop,
-  :root:not([data-theme="light"]) .mobile-backdrop {
+  [data-theme="dark"] .mobile-backdrop {
     background-color: rgba(0, 0, 0, 0.7);
   }
   @keyframes backdropFadeIn {
