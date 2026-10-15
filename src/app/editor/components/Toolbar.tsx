@@ -5,6 +5,7 @@ import { ChevronLeft, ChevronRight, ZoomOut, ZoomIn, X, Undo2, Redo2, Search, Fi
 import type { DrawnPath } from '../types';
 import type { PDFDocumentData } from '@/engine/browser-core';
 import { DownloadDropdown } from './DownloadDropdown';
+import type { CompressedDownloadOptions } from './downloadQualityOptions';
 import { useTheme } from '@/app/theme/ThemeProvider';
 import { BRAND_BASE_PATH, BRAND_NAME } from '@/lib/brand';
 
@@ -35,7 +36,7 @@ interface ToolbarProps {
   /** PDF document for size estimation */
   doc?: PDFDocumentData | null;
   /** Compressed download handler */
-  onCompressedDownload?: (opts: import('./DownloadDropdown').CompressedDownloadOptions) => void;
+  onCompressedDownload?: (opts: CompressedDownloadOptions) => void;
 }
 
 export function Toolbar({

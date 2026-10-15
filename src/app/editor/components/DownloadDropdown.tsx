@@ -17,16 +17,15 @@ import {
   type SizeEstimation,
 } from '../export-formats';
 
-// ─── Props ──────────────────────────────────────────────────────────────────────
+import {
+  COMPRESSION_PRESETS,
+  DEFAULT_DOWNLOAD_OPTIONS,
+  DPI_PRESETS,
+  downloadQualityLabel,
+} from './downloadQualityOptions';
+import type { CompressedDownloadOptions } from './downloadQualityOptions';
 
-export interface CompressedDownloadOptions {
-  /** JPEG quality 0–1. Used when targetBytes is not set. */
-  quality: number;
-  /** Target image DPI (downsamples denser images). */
-  dpi: number;
-  /** Optional max file size in bytes — binary-searches quality to fit. */
-  targetBytes?: number;
-}
+// ─── Props ──────────────────────────────────────────────────────────────────────
 
 interface DownloadDropdownProps {
   isSaving: boolean;
@@ -37,22 +36,6 @@ interface DownloadDropdownProps {
   /** Custom download with compression / DPI / target size. */
   onCompressedDownload?: (opts: CompressedDownloadOptions) => void;
 }
-
-// ─── DPI Presets ────────────────────────────────────────────────────────────────
-
-const DPI_PRESETS = [
-  { value: 72, label: 'Screen', desc: '72 DPI — Smallest file' },
-  { value: 150, label: 'Standard', desc: '150 DPI — Good balance' },
-  { value: 300, label: 'Print', desc: '300 DPI — Print quality' },
-  { value: 600, label: 'High', desc: '600 DPI — Maximum detail' },
-];
-
-const COMPRESSION_PRESETS = [
-  { value: 20, label: 'Extreme', desc: 'Smallest file' },
-  { value: 50, label: 'High', desc: 'Good balance' },
-  { value: 75, label: 'Medium', desc: 'Better quality' },
-  { value: 100, label: 'Low', desc: 'Highest quality' },
-];
 
 // ─── Component ──────────────────────────────────────────────────────────────────
 
@@ -65,8 +48,8 @@ export function DownloadDropdown({
   saveMode,
 }: DownloadDropdownProps) {
   const [isOpen, setIsOpen] = useState(false);
-  const [selectedDpi, setSelectedDpi] = useState(150);
-  const [compressionQuality, setCompressionQuality] = useState(75);
+  const [selectedDpi, setSelectedDpi] = useState<number | null>(DEFAULT_DOWNLOAD_OPTIONS.dpi);
+  const [compressionQuality, setCompressionQuality] = useState<number | null>(DEFAULT_DOWNLOAD_OPTIONS.quality);
   const [sizeEstimation, setSizeEstimation] = useState<SizeEstimation | null>(null);
   const dropdownRef = useRef<HTMLDivElement>(null);
 
@@ -102,9 +85,8 @@ export function DownloadDropdown({
       setIsOpen(false);
       return;
     }
-    // Dropdown Download always runs the compressor with current settings
     onCompressedDownload({
-      quality: compressionQuality / 100,
+      quality: compressionQuality === null ? null : compressionQuality / 100,
       dpi: selectedDpi,
     });
     setIsOpen(false);
@@ -213,6 +195,7 @@ export function DownloadDropdown({
                   <div className="absolute bottom-full mb-2 left-1/2 -translate-x-1/2 w-56 p-2.5 bg-panel-elevated border border-app rounded-xl shadow-xl text-[10.5px] text-app opacity-0 invisible group-hover:opacity-100 group-hover:visible transition-all duration-200 z-[60] leading-relaxed">
                     <strong className="text-app font-semibold">DPI (Dots Per Inch)</strong> controls image clarity. Higher DPI looks better but makes the file bigger.
                     <ul className="mt-1.5 space-y-1 list-disc pl-3.5 text-app-muted">
+                      <li><strong className="text-app">Original:</strong> No downsampling.</li>
                       <li><strong className="text-app">72:</strong> Good for sharing on web/email.</li>
                       <li><strong className="text-app">150:</strong> Good balance for viewing on screens.</li>
                       <li><strong className="text-app">300:</strong> Standard for high-quality printing.</li>
@@ -223,11 +206,13 @@ export function DownloadDropdown({
                 </div>
               </div>
             </div>
-            <div className="grid grid-cols-4 gap-1.5">
+            <div className="grid grid-cols-5 gap-1.5">
               {DPI_PRESETS.map(preset => (
                 <button
-                  key={preset.value}
+                  key={preset.value ?? 'original'}
                   onClick={() => setSelectedDpi(preset.value)}
+                  title={preset.desc}
+                  aria-pressed={selectedDpi === preset.value}
                   className={`px-2 py-2 rounded-lg text-center transition-all duration-200 ${
                     selectedDpi === preset.value
                       ? 'bg-bloom-100 text-accent border border-accent/40 ring-1 ring-accent/20 font-semibold'
@@ -235,12 +220,14 @@ export function DownloadDropdown({
                   }`}
                 >
                   <div className="text-xs font-medium">{preset.label}</div>
-                  <div className="text-[9px] opacity-60 mt-0.5">{preset.value}</div>
+                  <div className="text-[9px] opacity-60 mt-0.5">{preset.value ?? 'No resize'}</div>
                 </button>
               ))}
             </div>
             <p className="text-[9px] text-app-faint mt-2">
-              Downsamples embedded images denser than the selected DPI.
+              {compressionQuality === null && selectedDpi !== null
+                ? 'Downsampling requires image re-encoding. Choose a compression preset to apply this DPI; Original compression keeps image bytes unchanged.'
+                : 'Original keeps image resolution. Other presets downsample embedded images.'}
             </p>
           </div>
 
@@ -255,17 +242,18 @@ export function DownloadDropdown({
                   <Info size={12} className="text-app-muted hover:text-app cursor-help transition-colors" />
                   <div className="absolute bottom-full mb-2 left-1/2 -translate-x-1/2 w-56 p-2.5 bg-panel-elevated border border-app rounded-xl shadow-xl text-[10.5px] text-app opacity-0 invisible group-hover:opacity-100 group-hover:visible transition-all duration-200 z-[60] leading-relaxed">
                     <strong className="text-app font-semibold">Compression</strong> shrinks the file size.
-                    <p className="mt-1.5 text-app-muted">Lower quality makes images smaller but slightly blurrier. We also remove unused fonts to save space.</p>
+                    <p className="mt-1.5 text-app-muted">Original passes image bytes through unchanged. Lower quality makes images smaller but slightly blurrier.</p>
                     <div className="absolute -bottom-1.5 left-1/2 -translate-x-1/2 border-[6px] border-transparent border-t-app" />
                   </div>
                 </div>
               </div>
             </div>
-            <div className="grid grid-cols-4 gap-1.5">
+            <div className="grid grid-cols-5 gap-1.5">
               {COMPRESSION_PRESETS.map(preset => (
                 <button
-                  key={preset.value}
+                  key={preset.value ?? 'original'}
                   onClick={() => setCompressionQuality(preset.value)}
+                  aria-pressed={compressionQuality === preset.value}
                   className={`px-2 py-2 rounded-lg text-center transition-all duration-200 ${
                     compressionQuality === preset.value
                       ? 'bg-bloom-100 text-accent border border-accent/40 ring-1 ring-accent/20 font-semibold'
@@ -281,7 +269,7 @@ export function DownloadDropdown({
 
           <div className="px-5 py-3">
             <p className="text-[10px] text-app-faint mb-2 leading-relaxed">
-              Use this button to apply compression. The left “Download” saves without recompressing.
+              The default keeps original quality, just like the left “Download”. Compression is applied only when you choose a compression preset.
             </p>
             <button
               onClick={handleOptionsDownload}
@@ -289,7 +277,10 @@ export function DownloadDropdown({
               className="w-full flex items-center justify-center gap-2 px-4 py-2.5 bg-gradient-to-b from-bloom-500 to-bloom-600 hover:from-bloom-600 hover:to-bloom-700 disabled:from-zinc-700 disabled:to-zinc-800 disabled:text-zinc-500 text-white font-medium text-sm rounded-xl shadow-lg shadow-accent/25 transition-all duration-200 ease-out active:scale-[0.98]"
             >
               {isSaving ? <Loader2 size={14} className="animate-spin" /> : <Download size={14} />}
-              {`Download (${compressionQuality}% · ${selectedDpi} DPI)`}
+              {downloadQualityLabel({
+                quality: compressionQuality === null ? null : compressionQuality / 100,
+                dpi: selectedDpi,
+              })}
             </button>
           </div>
         </div>

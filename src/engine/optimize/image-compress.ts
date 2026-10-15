@@ -25,13 +25,16 @@ import {
 import { decodeImage } from '../render/image-decoder';
 import { renderPage } from '../render/renderer';
 import { serializeDocument, serializeDocumentCompact } from '../writer/serializer';
+import { saveOptimized } from '../writer/save-pipeline';
 import { garbageCollect, rootsFromTrailer } from './garbage-collect';
 import { recompressStreams } from './stream-recompress';
 import { subsetFonts } from './font-subsetter';
 
 export interface ImageCompressOptions {
-  quality: number;
-  dpi: number;
+  /** null preserves image streams; DPI and target size are not applied in this mode. */
+  quality: number | null;
+  /** null disables downsampling and page rasterization. */
+  dpi: number | null;
   targetBytes?: number;
   /** Permit upload-byte fallback only when the upload still represents every edit. Defaults to false. */
   originalIsCurrent?: boolean;
@@ -286,7 +289,21 @@ export async function compressDocumentImages(
   doc: PDFDocumentData,
   options: ImageCompressOptions,
 ): Promise<ImageCompressResult> {
-  const dpi = options.dpi > 0 ? options.dpi : 150;
+  if (options.quality === null) {
+    const bytes = await saveOptimized(doc);
+    return {
+      bytes,
+      imagesTouched: 0,
+      finalQuality: 1,
+      originalBytes: doc.rawBytes?.length || bytes.length,
+      compressedBytes: bytes.length,
+      targetMissed: options.targetBytes != null && bytes.length > options.targetBytes,
+      method: 'optimized',
+      message: 'Saved with original image quality (no image re-encoding or downsampling).',
+    };
+  }
+
+  const dpi = options.dpi === null ? 0 : options.dpi > 0 ? options.dpi : 150;
   const quality = Math.min(0.95, Math.max(0.05, options.quality));
   const target = options.targetBytes;
 
@@ -348,7 +365,7 @@ export async function compressDocumentImages(
     (target != null && best.length > target) ||
     (target == null && best.length > originalBytes * 0.9);
 
-  if (rasterCandidate && stillNeedShrink) {
+  if (options.dpi !== null && rasterCandidate && stillNeedShrink) {
     const qualities =
       target != null && target > 0
         ? [0.55, 0.35, 0.18, 0.08]
