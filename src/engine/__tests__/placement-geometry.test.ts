@@ -141,7 +141,7 @@ describe('watermark page origins', () => {
     ];
     for (const { position, expected } of positions) {
       let next = getNextObjNum(doc);
-      const bytes = applyWatermarks(doc, [{ ...base, position }], () => next++).get(0)!;
+      const bytes = (await applyWatermarks(doc, [{ ...base, position }], () => next++)).get(0)!;
       const translations = parseContentStream(bytes).filter(inst => inst.operator === 'cm').map(inst => inst.operands.map(n => (n as PDFNumber).value));
       expect(translations[0]).toEqual([1, 0, 0, 1, ...expected]);
     }
