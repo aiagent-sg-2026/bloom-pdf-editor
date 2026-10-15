@@ -5,6 +5,8 @@
 
 The workflow sets `NEXT_PUBLIC_BASE_PATH=/<repo>` at build time. For a repository named `<owner>.github.io`, it uses an empty base path and deploys at the site root. Changing the prefix requires rebuilding.
 
+After `deploy`, the `smoke` job runs `scripts/smoke-pages.sh` with the deploy job's `page_url` output. It requires HTTP 200 for the site root, `editor/`, `icon.png`, and `brand/paperloom-logo.svg`, retrying curl failures for up to approximately two minutes per URL while Pages becomes available. A failed request or non-200 response fails the job with the affected URL and HTTP status.
+
 Always use `npm run build` (`next build --webpack`). Plain `next build` uses Turbopack and can emit an unusable PDF worker; see [PDF_WORKER.md](PDF_WORKER.md).
 
 ## Local sub-path simulation
