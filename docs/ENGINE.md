@@ -66,6 +66,13 @@ immediate in-session rendering; `rawBytes` remain Flate-compressed for export.
 must expose decoded samples just as parser-loaded streams do. Image display items
 carry non-stroking `/ca`; the renderer multiplies it into canvas `globalAlpha`
 inside the image's save/restore scope, independently of `/CA` and pixel alpha.
+Single-use image replacement keeps the existing stream identity and indirect
+reference while copying both encoded and decoded bytes from the replacement.
+Clearing only `decodedBytes` would make the live decoder read Flate data as RGB
+samples, despite a correct export. The editor refreshes both the page render and
+thumbnail generation after replacement.
+Synthetic live replacement regression (including repeated replacement on the same
+object): `npm test -- src/engine/__tests__/image-replacement-audit.test.ts`.
 
 `createWatermarkImageXObject`, `applyWatermarkToPage`, and `applyWatermarks` are
 asynchronous; callers must await them. PNG samples are normalized to 8-bit RGBA
