@@ -1,4 +1,5 @@
 import { readFileSync } from 'node:fs';
+import { basename } from 'node:path';
 import { describe, expect, it, vi } from 'vitest';
 import { extractPagePlainText } from '../ai/compare';
 import { interpretPage } from '../content/interpreter';
@@ -20,7 +21,7 @@ import { syntheticUnicodeFont, unicodeDocument } from './unicode-font-fixtures';
 const bytes: Partial<Record<ScriptFontId, Uint8Array>> = {};
 const metrics: Partial<Record<ScriptFontId, TTFFont>> = {};
 function fontBytes(id: ScriptFontId): Uint8Array {
-  bytes[id] ??= new Uint8Array(readFileSync(new URL(`../../../public${SCRIPT_FONTS[id].assetPath}`, import.meta.url)));
+  bytes[id] ??= new Uint8Array(readFileSync(new URL(`../../../public/fonts/${basename(SCRIPT_FONTS[id].assetPath)}`, import.meta.url)));
   return bytes[id]!;
 }
 function sources() {

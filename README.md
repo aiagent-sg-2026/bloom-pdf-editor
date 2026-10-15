@@ -65,6 +65,8 @@ npm run verify:browser-only # Check for server-runtime regressions
 
 `npm run build` produces the static export in `out/`, which can be hosted by any static web server or CDN.
 
+Deploy a demo with GitHub Actions: [GitHub Pages guide](docs/DEPLOY_PAGES.md).
+
 ## 📁 Project Structure
 
 ```

@@ -50,9 +50,7 @@ async function loadSource(id: ScriptFontId, source?: UnicodeFontSources): Promis
     bytes = await pending;
   } else {
     if (!bundledFonts[id]) {
-      // Next replaces this constant with the configured basePath, including static exports.
-      const basePath = process.env.__NEXT_ROUTER_BASEPATH ?? '';
-      bundledFonts[id] = fetch(`${basePath}${SCRIPT_FONTS[id].assetPath}`).then(async response => {
+      bundledFonts[id] = fetch(SCRIPT_FONTS[id].assetPath).then(async response => {
         if (!response.ok) throw new Error(`Font download failed (${response.status})`);
         return new Uint8Array(await response.arrayBuffer());
       }).catch(error => { delete bundledFonts[id]; throw error; });
