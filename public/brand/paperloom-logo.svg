@@ -1,0 +1,23 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="358" height="64" viewBox="0 0 358 64" fill="none">
+  <title>Paperloom PDF</title>
+  <desc>Woven-page mark with custom geometric Paperloom PDF lettering drawn entirely as paths.</desc>
+  <style>.lettering { stroke: #0F172A; } @media (prefers-color-scheme: dark) { .lettering { stroke: #F8FAFC; } }</style>
+  <g stroke="#238C80" stroke-width="4" stroke-linecap="square" stroke-linejoin="round">
+    <path d="M32 8H12V56H52V48M32 8L52 28M32 8V28H36M44 28H60"/>
+    <path d="M40 20V32M40 44V48M52 36V48M28 40H48M56 40H60"/>
+  </g>
+  <g class="lettering" stroke="#0F172A" stroke-width="2.8" stroke-linecap="round" stroke-linejoin="round">
+    <path aria-label="P" d="M82 44V20H91C102 20 102 34 91 34H82"/>
+    <path aria-label="a" d="M118 28V44M118 32C116 26 104 26 104 36C104 46 116 46 118 40"/>
+    <path aria-label="p" d="M126 28V52M126 32C128 26 140 26 140 36C140 46 128 46 126 40"/>
+    <path aria-label="e" d="M148 35H162C162 25 148 25 148 36C148 45 157 47 162 41"/>
+    <path aria-label="r" d="M170 44V28M170 34C172 29 175 28 180 28"/>
+    <path aria-label="l" d="M188 20V40Q188 44 192 44"/>
+    <path aria-label="o" d="M207 28C197 28 197 44 207 44C217 44 217 28 207 28Z"/>
+    <path aria-label="o" d="M229 28C219 28 219 44 229 44C239 44 239 28 229 28Z"/>
+    <path aria-label="m" d="M244 44V28M244 32C247 26 255 27 255 33V44M255 33C258 26 266 27 266 33V44"/>
+    <path aria-label="P" d="M282 44V20H291C302 20 302 34 291 34H282"/>
+    <path aria-label="D" d="M307 20V44H313C329 44 329 20 313 20H307Z"/>
+    <path aria-label="F" d="M335 44V20H350M335 32H347"/>
+  </g>
+</svg>

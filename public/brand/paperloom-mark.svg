@@ -1,0 +1,8 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="64" height="64" viewBox="0 0 64 64" fill="none">
+  <title>Paperloom PDF</title>
+  <desc>A geometric page whose folded corner becomes two interlaced paper threads.</desc>
+  <g stroke="#238C80" stroke-width="4" stroke-linecap="square" stroke-linejoin="round">
+    <path d="M32 8H12V56H52V48M32 8L52 28M32 8V28H36M44 28H60"/>
+    <path d="M40 20V32M40 44V48M52 36V48M28 40H48M56 40H60"/>
+  </g>
+</svg>

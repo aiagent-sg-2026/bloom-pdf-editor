@@ -224,10 +224,10 @@ export function SignatureOverlay(props: SignatureOverlayProps) {
       {selected && (
         <>
           <div
-            className={`absolute inset-0 border-2 ${sig.locked ? 'border-amber-500' : 'border-[#E8607A]'} border-dashed pointer-events-none`}
+            className={`absolute inset-0 border-2 ${sig.locked ? 'border-amber-500' : 'border-accent'} border-dashed pointer-events-none`}
           />
           <div className="absolute -top-8 left-0 flex items-center gap-1 whitespace-nowrap">
-            <span className="flex items-center gap-1 px-1.5 py-0.5 bg-[#E8607A] text-white text-[10px] rounded shadow">
+            <span className="flex items-center gap-1 px-1.5 py-0.5 bg-bloom-500 text-white text-[10px] rounded shadow">
               <PenLine size={10} /> Signature
               {sig.locked && <Lock size={10} />}
             </span>
@@ -272,7 +272,7 @@ export function SignatureOverlay(props: SignatureOverlayProps) {
           {!sig.locked && (
             <>
               <div
-                className="absolute w-2.5 h-2.5 bg-[#E8607A] border border-white rounded-sm cursor-se-resize z-50"
+                className="absolute w-2.5 h-2.5 bg-accent border border-white rounded-sm cursor-se-resize z-50"
                 style={{ right: -5, bottom: -5 }}
                 onPointerDown={(e) => begin('resize-se', e)}
               />

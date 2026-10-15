@@ -48,11 +48,11 @@ export function FindReplacePanel({
   };
 
   return (
-    <div className="p-3 space-y-2.5 bg-zinc-900/95 backdrop-blur-md rounded-xl border border-zinc-700/80 shadow-2xl w-full md:w-72 font-sans">
+    <div data-theme="dark" className="p-3 space-y-2.5 bg-zinc-900/95 backdrop-blur-md rounded-xl border border-zinc-700/80 shadow-2xl w-full md:w-72 font-sans">
       {/* Header */}
       <div className="flex items-center justify-between">
         <div className="flex items-center gap-1.5 text-[11px] font-bold tracking-wider text-zinc-300 uppercase">
-          <Search size={13} className="text-[#E8607A]" />
+          <Search size={13} className="text-accent" />
           Find & Replace
         </div>
         {onClose && (
@@ -75,7 +75,7 @@ export function FindReplacePanel({
             onKeyDown={handleKeyDown}
             placeholder="Search text in PDF..."
             autoFocus
-            className="w-full bg-zinc-800/90 border border-zinc-700 focus:border-[#E8607A] focus:ring-1 focus:ring-[#E8607A] rounded-lg pl-2.5 pr-20 py-1.5 text-xs text-zinc-100 placeholder-zinc-500 outline-none transition-all"
+            className="w-full bg-zinc-800/90 border border-zinc-700 focus:border-accent focus:ring-1 focus:ring-accent rounded-lg pl-2.5 pr-20 py-1.5 text-xs text-zinc-100 placeholder-zinc-500 outline-none transition-all"
           />
 
           <div className="absolute right-1 flex items-center gap-0.5">
@@ -92,7 +92,7 @@ export function FindReplacePanel({
               title={caseSensitive ? 'Match Case (Active)' : 'Match Case (Inactive)'}
               className={`p-1 rounded transition-colors ${
                 caseSensitive
-                  ? 'bg-[#E8607A]/20 text-[#E8607A] font-bold'
+                  ? 'bg-bloom-100 text-accent font-bold'
                   : 'text-zinc-400 hover:text-zinc-200 hover:bg-zinc-700/50'
               }`}
             >
@@ -126,7 +126,7 @@ export function FindReplacePanel({
           value={replaceText}
           onChange={(e) => onReplaceTextChange(e.target.value)}
           placeholder="Replace with..."
-          className="w-full bg-zinc-800/90 border border-zinc-700 focus:border-[#E8607A] focus:ring-1 focus:ring-[#E8607A] rounded-lg px-2.5 py-1.5 text-xs text-zinc-100 placeholder-zinc-500 outline-none transition-all"
+          className="w-full bg-zinc-800/90 border border-zinc-700 focus:border-accent focus:ring-1 focus:ring-accent rounded-lg px-2.5 py-1.5 text-xs text-zinc-100 placeholder-zinc-500 outline-none transition-all"
         />
       </div>
 
@@ -143,7 +143,7 @@ export function FindReplacePanel({
         <button
           onClick={onReplaceAll}
           disabled={busy || matchCount === 0 || !findText.trim()}
-          className="flex items-center justify-center gap-1.5 py-1.5 px-2 bg-[#E8607A]/20 hover:bg-[#E8607A]/30 text-[#E8607A] border border-[#E8607A]/40 rounded-lg text-xs font-semibold disabled:opacity-40 transition-all"
+          className="flex items-center justify-center gap-1.5 py-1.5 px-2 bg-bloom-100 hover:bg-bloom-100/80 text-accent border border-accent/40 rounded-lg text-xs font-semibold disabled:opacity-40 transition-all"
         >
           {busy ? <Loader2 size={12} className="animate-spin" /> : <Replace size={12} />}
           Replace All

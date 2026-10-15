@@ -1,7 +1,7 @@
 import type { Metadata } from "next";
 import "./globals.css";
 import { ThemeProvider } from "./theme/ThemeProvider";
-import { BRAND_NAME } from "@/lib/brand";
+import { BRAND_BASE_PATH, BRAND_NAME } from "@/lib/brand";
 
 export const metadata: Metadata = {
   title: `${BRAND_NAME} Editor — Pure TypeScript PDF Engine`,
@@ -9,13 +9,10 @@ export const metadata: Metadata = {
     "A robust PDF editor built from scratch in pure TypeScript. Zero external dependencies. Professional-grade PDF capabilities.",
   icons: {
     icon: [
-      { url: "/favicon.ico", sizes: "any" },
-      { url: "/icon-192.png", type: "image/png", sizes: "192x192" },
-      { url: "/icon-32.png", type: "image/png", sizes: "32x32" },
-      { url: "/logo.png", type: "image/png" },
+      { url: `${BRAND_BASE_PATH}/brand/paperloom-icon.svg`, type: "image/svg+xml", sizes: "any" },
     ],
-    shortcut: "/favicon.ico",
-    apple: "/apple-icon.png",
+    shortcut: `${BRAND_BASE_PATH}/brand/paperloom-icon.svg`,
+    apple: { url: `${BRAND_BASE_PATH}/apple-icon.png`, sizes: "180x180", type: "image/png" },
   },
 };
 

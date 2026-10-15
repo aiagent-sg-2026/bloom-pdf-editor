@@ -205,8 +205,8 @@ export function WatermarkToolIcon({ size = 20, className = '' }: CustomIconProps
     <svg width={size} height={size} viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg" className={className}>
       <defs>
         <linearGradient id="stamp_grad" x1="4" y1="3" x2="20" y2="21" gradientUnits="userSpaceOnUse">
-          <stop stopColor="#FF6B8E" />
-          <stop offset="1" stopColor="#B83A57" />
+          <stop stopColor="#68D5C5" />
+          <stop offset="1" stopColor="#176B65" />
         </linearGradient>
       </defs>
       {/* Wooden Handle & Mount */}
@@ -226,7 +226,7 @@ export function WatermarkToolIcon({ size = 20, className = '' }: CustomIconProps
         strokeWidth="2.2"
         strokeLinecap="round"
       />
-      <circle cx="12" cy="6" r="1.2" fill="#FF6B8E" />
+      <circle cx="12" cy="6" r="1.2" fill="#68D5C5" />
     </svg>
   );
 }

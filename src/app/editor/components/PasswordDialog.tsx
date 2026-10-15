@@ -38,7 +38,7 @@ export function PasswordDialog({
         className="w-full max-w-sm rounded-2xl border border-app bg-panel p-6 shadow-2xl"
       >
         <div className="mb-4 flex items-center gap-3">
-          <div className="rounded-xl bg-[#E8607A]/10 p-2.5 text-[#E8607A]">
+          <div className="rounded-xl bg-bloom-100 p-2.5 text-accent">
             <Lock size={20} />
           </div>
           <div>
@@ -58,7 +58,7 @@ export function PasswordDialog({
           autoFocus
           value={password}
           onChange={(e) => setPassword(e.target.value)}
-          className="mb-3 w-full rounded-xl border border-app bg-panel-elevated px-3 py-2 text-sm text-app outline-none focus:border-[#E8607A]"
+          className="mb-3 w-full rounded-xl border border-app bg-panel-elevated px-3 py-2 text-sm text-app outline-none focus:border-accent"
           placeholder="Enter password"
           disabled={isVerifying}
         />
@@ -83,7 +83,7 @@ export function PasswordDialog({
           <button
             type="submit"
             disabled={isVerifying}
-            className="inline-flex items-center gap-2 rounded-xl bg-[#E8607A] px-4 py-1.5 text-sm font-semibold text-white hover:bg-[#D94D6A] disabled:opacity-60 shadow-md shadow-[#E8607A]/20 transition-all"
+            className="inline-flex items-center gap-2 rounded-xl bg-bloom-500 px-4 py-1.5 text-sm font-semibold text-white hover:bg-bloom-600 disabled:opacity-60 shadow-md shadow-accent/20 transition-all"
           >
             {isVerifying ? <Loader2 size={14} className="animate-spin" /> : null}
             Unlock

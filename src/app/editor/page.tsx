@@ -4987,7 +4987,7 @@ export default function EditorPage() {
   if (isLoading) {
     return (
       <div className="min-h-screen flex flex-col items-center justify-center bg-surface text-app-muted">
-        <div className="w-8 h-8 border-4 border-[var(--border)] border-t-[#E8607A] rounded-full animate-spin" />
+        <div className="w-8 h-8 border-4 border-[var(--border)] border-t-accent rounded-full animate-spin" />
         <p className="mt-4 text-sm font-medium animate-pulse">Processing PDF...</p>
       </div>
     );
@@ -5027,7 +5027,7 @@ export default function EditorPage() {
 
   // ── Main editor UI ──
   return (
-    <div className="flex flex-col h-screen font-sans bg-surface text-app selection:bg-[#E8607A]/30 overflow-hidden">
+    <div className="flex flex-col h-screen font-sans bg-surface text-app overflow-hidden">
 
       {/* ── Top toolbar ── */}
       <Toolbar
@@ -5361,7 +5361,7 @@ export default function EditorPage() {
           )}
           {isRendering && (
             <div className="absolute top-4 right-4 z-30 bg-zinc-900/90 backdrop-blur border border-zinc-800 shadow-lg rounded-full px-4 py-2 flex items-center gap-2 text-zinc-300 text-sm font-medium animate-in slide-in-from-top-4 fade-in">
-              <Loader2 size={16} className="animate-spin text-[#E8607A]" />
+              <Loader2 size={16} className="animate-spin text-accent" />
               Rendering...
             </div>
           )}
@@ -5615,7 +5615,7 @@ export default function EditorPage() {
               return (
                 <div
                   key={ft.id}
-                  className={`absolute z-20 cursor-move touch-none border-2 ${isActive ? 'border-[#E8607A] border-dashed' : 'border-transparent hover:border-zinc-500 hover:border-dashed'} p-1 -m-1`}
+                  className={`absolute z-20 cursor-move touch-none border-2 ${isActive ? 'border-accent border-dashed' : 'border-transparent hover:border-zinc-500 hover:border-dashed'} p-1 -m-1`}
                   style={{
                     left: cssX,
                     top: cssY - (ft.fontSize * scale),
@@ -5721,7 +5721,7 @@ export default function EditorPage() {
               return (
                 <div
                   key={fi.id}
-                  className={`absolute z-20 cursor-move touch-none border-2 ${isActive ? 'border-[#E8607A] border-dashed' : 'border-transparent hover:border-zinc-500 hover:border-dashed'} p-1 -m-1`}
+                  className={`absolute z-20 cursor-move touch-none border-2 ${isActive ? 'border-accent border-dashed' : 'border-transparent hover:border-zinc-500 hover:border-dashed'} p-1 -m-1`}
                   style={{
                     left: cssX,
                     top: cssY,
@@ -5754,7 +5754,7 @@ export default function EditorPage() {
                         <X size={12} />
                       </button>
                       <button
-                        className="absolute -top-3 right-8 bg-[#E8607A] text-white rounded-full p-1 shadow hover:bg-[#D94D6A] transition-colors z-30"
+                        className="absolute -top-3 right-8 bg-bloom-500 text-white rounded-full p-1 shadow hover:bg-bloom-600 transition-colors z-30"
                         title="Replace Image"
                         data-control="replace-image"
                         onClick={(e) => {
@@ -5782,7 +5782,7 @@ export default function EditorPage() {
                               const newW = (parseFloat(e.target.value) * 72) / 2.54;
                               if (newW > 0) setFloatingImages(prev => prev.map(p => p.id === fi.id ? { ...p, pdfWidth: newW } : p));
                             }}
-                            className="w-10 bg-zinc-800 rounded px-1 py-0.5 text-right no-spinners outline-none focus:ring-1 focus:ring-[#E8607A]"
+                            className="w-10 bg-zinc-800 rounded px-1 py-0.5 text-right no-spinners outline-none focus:ring-1 focus:ring-accent"
                             step="0.1"
                           />
                           <span className="text-zinc-500 text-[10px]">cm</span>
@@ -5796,7 +5796,7 @@ export default function EditorPage() {
                               const newH = (parseFloat(e.target.value) * 72) / 2.54;
                               if (newH > 0) setFloatingImages(prev => prev.map(p => p.id === fi.id ? { ...p, pdfHeight: newH } : p));
                             }}
-                            className="w-10 bg-zinc-800 rounded px-1 py-0.5 text-right no-spinners outline-none focus:ring-1 focus:ring-[#E8607A]"
+                            className="w-10 bg-zinc-800 rounded px-1 py-0.5 text-right no-spinners outline-none focus:ring-1 focus:ring-accent"
                             step="0.1"
                           />
                           <span className="text-zinc-500 text-[10px]">cm</span>
@@ -5807,7 +5807,7 @@ export default function EditorPage() {
 
                   {/* CSS Resize Handle (only active when hovered to avoid drag conflict) */}
                   <div
-                    className="absolute bottom-0 right-0 w-3 h-3 cursor-se-resize bg-[#E8607A]/50"
+                    className="absolute bottom-0 right-0 w-3 h-3 cursor-se-resize bg-accent/50"
                     onPointerDown={e => {
                       e.stopPropagation(); // prevent dragging
                       const startX = e.clientX;
@@ -6067,13 +6067,13 @@ export default function EditorPage() {
             {/* Snap guides while dragging a text box */}
             {editingLine && snapGuides.x !== null && (
               <div
-                className="absolute top-0 bottom-0 w-px bg-[#E8607A] pointer-events-none z-[45]"
+                className="absolute top-0 bottom-0 w-px bg-accent pointer-events-none z-[45]"
                 style={{ left: snapGuides.x }}
               />
             )}
             {editingLine && snapGuides.y !== null && (
               <div
-                className="absolute left-0 right-0 h-px bg-[#E8607A] pointer-events-none z-[45]"
+                className="absolute left-0 right-0 h-px bg-accent pointer-events-none z-[45]"
                 style={{ top: snapGuides.y }}
               />
             )}
@@ -6289,7 +6289,7 @@ export default function EditorPage() {
             </p>
             <button
               onClick={() => setShowApplySuccessModal(false)}
-              className="w-full px-4 py-2.5 rounded font-medium text-sm bg-[#E8607A] hover:bg-[#B83A57] text-white transition-colors"
+              className="w-full px-4 py-2.5 rounded font-medium text-sm bg-bloom-500 hover:bg-bloom-700 text-white transition-colors"
             >
               Okay
             </button>
