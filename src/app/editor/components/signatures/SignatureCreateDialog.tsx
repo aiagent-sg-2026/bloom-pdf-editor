@@ -221,7 +221,7 @@ export function SignatureCreateDialog({ open, onOpenChange, onSave }: SignatureC
     <Dialog.Root open={open} onOpenChange={onOpenChange}>
       <Dialog.Portal>
         <Dialog.Overlay className="fixed inset-0 bg-black/60 z-[100]" />
-        <Dialog.Content className="fixed left-1/2 top-1/2 z-[101] w-[min(560px,94vw)] -translate-x-1/2 -translate-y-1/2 rounded-xl border border-zinc-700 bg-zinc-900 shadow-2xl focus:outline-none">
+        <Dialog.Content data-theme="dark" className="fixed left-1/2 top-1/2 z-[101] w-[min(560px,94vw)] -translate-x-1/2 -translate-y-1/2 rounded-xl border border-zinc-700 bg-zinc-900 shadow-2xl focus:outline-none">
           <div className="flex items-center justify-between px-4 py-3 border-b border-zinc-700">
             <Dialog.Title className="text-sm font-semibold text-zinc-100">
               Create signature
@@ -245,7 +245,7 @@ export function SignatureCreateDialog({ open, onOpenChange, onSave }: SignatureC
                 onClick={() => setTab(id)}
                 className={`flex-1 flex items-center justify-center gap-2 py-2.5 text-xs font-medium transition-colors ${
                   tab === id
-                    ? 'text-[#E8607A] border-b-2 border-[#E8607A] bg-zinc-800/40'
+                    ? 'text-accent border-b-2 border-accent bg-zinc-800/40'
                     : 'text-zinc-400 hover:text-zinc-200'
                 }`}
               >
@@ -261,7 +261,7 @@ export function SignatureCreateDialog({ open, onOpenChange, onSave }: SignatureC
               <input
                 value={name}
                 onChange={(e) => setName(e.target.value)}
-                className="w-full bg-zinc-800 border border-zinc-700 rounded px-3 py-2 text-xs text-zinc-200 outline-none focus:border-[#E8607A]"
+                className="w-full bg-zinc-800 border border-zinc-700 rounded px-3 py-2 text-xs text-zinc-200 outline-none focus:border-accent"
               />
             </div>
 
@@ -325,7 +325,7 @@ export function SignatureCreateDialog({ open, onOpenChange, onSave }: SignatureC
                 <button
                   type="button"
                   onClick={() => fileRef.current?.click()}
-                  className="w-full py-8 rounded-lg border border-dashed border-zinc-600 text-zinc-400 text-xs hover:border-[#E8607A] hover:text-[#E8607A] transition-colors"
+                  className="w-full py-8 rounded-lg border border-dashed border-zinc-600 text-zinc-400 text-xs hover:border-accent hover:text-accent transition-colors"
                 >
                   Click to upload PNG, JPG, or SVG
                 </button>
@@ -348,7 +348,7 @@ export function SignatureCreateDialog({ open, onOpenChange, onSave }: SignatureC
                   value={typedText}
                   onChange={(e) => setTypedText(e.target.value)}
                   placeholder="Type your name"
-                  className="w-full bg-zinc-800 border border-zinc-700 rounded px-3 py-2 text-xs text-zinc-200 outline-none focus:border-[#E8607A]"
+                  className="w-full bg-zinc-800 border border-zinc-700 rounded px-3 py-2 text-xs text-zinc-200 outline-none focus:border-accent"
                 />
                 <div className="grid grid-cols-2 gap-3">
                   <div className="space-y-1">
@@ -424,7 +424,7 @@ export function SignatureCreateDialog({ open, onOpenChange, onSave }: SignatureC
             <button
               type="button"
               onClick={() => void handleSave()}
-              className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold text-white bg-[#E8607A] rounded hover:bg-[#D94D6A]"
+              className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold text-white bg-bloom-500 rounded hover:bg-bloom-600"
             >
               <Check size={14} /> Save to library
             </button>

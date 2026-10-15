@@ -1,0 +1,9 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="512" height="512" viewBox="0 0 512 512" fill="none">
+  <title>Paperloom PDF</title>
+  <desc>Mint woven-page mark on a deep jade rounded-square tile.</desc>
+  <rect width="512" height="512" rx="112" fill="#123B36"/>
+  <g transform="translate(13 40) scale(6.75)" stroke="#68D5C5" stroke-width="4" stroke-linecap="square" stroke-linejoin="round">
+    <path d="M32 8H12V56H52V48M32 8L52 28M32 8V28H36M44 28H60"/>
+    <path d="M40 20V32M40 44V48M52 36V48M28 40H48M56 40H60"/>
+  </g>
+</svg>

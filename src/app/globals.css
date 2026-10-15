@@ -2,19 +2,19 @@
 
 :root,
 [data-theme="light"] {
-  /* ── BloomPDF Core Palette ────────────────────────────── */
-  --bloom-50:  #FFF0F3;
-  --bloom-100: #FFE0E8;
-  --bloom-200: #FFC5D3;
-  --bloom-300: #FF9BB3;
-  --bloom-400: #FF6B8E;
-  --bloom-500: #E8607A;   /* primary brand */
-  --bloom-600: #D94D6A;   /* hover/active  */
-  --bloom-700: #B83A57;
-  --bloom-800: #8F2D43;
-  --bloom-900: #6B1F32;
+  /* Paperloom jade palette; legacy token names retained for consumers. */
+  --bloom-50:  #F1FAF7;
+  --bloom-100: #E6F5F1;
+  --bloom-200: #B9EBDF;
+  --bloom-300: #8FE0D1;
+  --bloom-400: #68D5C5;
+  --bloom-500: #176B65;   /* white-label primary */
+  --bloom-600: #125952;   /* white-label hover */
+  --bloom-700: #0E4944;
+  --bloom-800: #123B36;
+  --bloom-900: #0B2926;
 
-  /* Executive Light Theme Tokens (Adobe Acrobat / Apple HIG Palette) */
+  /* Light theme neutrals */
   --surface: #F1F3F5;
   --panel: #FFFFFF;
   --panel-elevated: #F8FAFC;
@@ -23,7 +23,7 @@
   --text: #0F172A;
   --text-muted: #64748B;
   --text-faint: #94A3B8;
-  --accent: #E8607A;
+  --accent: #176B65;
   --canvas-bg: #E6E8EC;
   --checker-a: #EEF0F4;
   --checker-b: #E1E4E9;
@@ -35,7 +35,8 @@
 
 [data-theme="dark"],
 :root:not([data-theme="light"]) {
-  /* Core palette - Pitch Dark SaaS (Obsidian Void Theme) */
+  /* Dark theme neutrals */
+  --bloom-100: #123B36;
   --surface: #030304;
   --panel: #0A0B0E;
   --panel-elevated: #12141A;
@@ -44,7 +45,7 @@
   --text: #F8FAFC;
   --text-muted: #8E95A5;
   --text-faint: #525866;
-  --accent: #E8607A;
+  --accent: #68D5C5;
   --canvas-bg: #0D0E12;
   --checker-a: #161820;
   --checker-b: #0A0B0E;
@@ -54,18 +55,18 @@
   color-scheme: dark;
 }
 
-@theme {
-  --color-bloom-50: #FFF0F3;
-  --color-bloom-100: #FFE0E8;
-  --color-bloom-200: #FFC5D3;
-  --color-bloom-300: #FF9BB3;
-  --color-bloom-400: #FF6B8E;
-  --color-bloom-500: #E8607A;
-  --color-bloom-600: #D94D6A;
-  --color-bloom-700: #B83A57;
-  --color-bloom-800: #8F2D43;
-  --color-bloom-900: #6B1F32;
-  --color-bloom-brand: #E8607A;
+@theme inline {
+  --color-bloom-50: var(--bloom-50);
+  --color-bloom-100: var(--bloom-100);
+  --color-bloom-200: var(--bloom-200);
+  --color-bloom-300: var(--bloom-300);
+  --color-bloom-400: var(--bloom-400);
+  --color-bloom-500: var(--bloom-500);
+  --color-bloom-600: var(--bloom-600);
+  --color-bloom-700: var(--bloom-700);
+  --color-bloom-800: var(--bloom-800);
+  --color-bloom-900: var(--bloom-900);
+  --color-bloom-brand: var(--bloom-500);
   --color-canvas-bg: var(--canvas-bg);
   --color-surface: var(--surface);
   --color-panel: var(--panel);
@@ -79,6 +80,13 @@
   --color-contrast: var(--contrast);
 }
 
+/* Unlayered so outline-none utilities cannot suppress keyboard focus. */
+:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+  box-shadow: 0 0 0 2px var(--ring-offset);
+}
+
 @layer base {
   html, body {
     background-color: var(--surface);
@@ -87,12 +95,8 @@
   }
 
   ::selection {
-    background: rgba(232, 96, 122, 0.35);
-    color: #0F172A;
-  }
-  [data-theme="dark"] ::selection {
-    background: rgba(232, 96, 122, 0.45);
-    color: #FFFFFF;
+    background: var(--bloom-100);
+    color: var(--accent);
   }
 
   /* ── Scrollbars ─────────────────────────────────────────── */
@@ -139,14 +143,14 @@
   .text-app-faint { color: var(--text-faint); }
 
   .bloom-btn-primary {
-    background-image: linear-gradient(to bottom, #E8607A, #D94D6A);
+    background-image: linear-gradient(to bottom, var(--bloom-500), var(--bloom-600));
     color: #ffffff;
-    box-shadow: 0 4px 14px 0 rgba(232, 96, 122, 0.35);
+    box-shadow: 0 4px 14px 0 color-mix(in srgb, var(--accent) 35%, transparent);
     transition: all 0.2s cubic-bezier(0.4, 0, 0.2, 1);
   }
   .bloom-btn-primary:hover:not(:disabled) {
-    background-image: linear-gradient(to bottom, #FF6B8E, #E8607A);
-    box-shadow: 0 6px 20px 0 rgba(232, 96, 122, 0.45);
+    background-image: linear-gradient(to bottom, var(--bloom-600), var(--bloom-700));
+    box-shadow: 0 6px 20px 0 color-mix(in srgb, var(--accent) 45%, transparent);
   }
 
   /* ── Mobile Responsive Utilities ────────────────────────── */

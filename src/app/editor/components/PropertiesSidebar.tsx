@@ -330,7 +330,7 @@ export function PropertiesSidebar(props: PropertiesSidebarProps) {
                   value={fontValue}
                   onChange={(e) => setTextFontFamily(e.target.value)}
                   onFocus={(e) => e.stopPropagation()}
-                  className="w-full bg-panel-elevated border border-app rounded-lg px-3 py-2 text-xs text-app outline-none focus:border-[#E8607A] transition-colors cursor-pointer"
+                  className="w-full bg-panel-elevated border border-app rounded-lg px-3 py-2 text-xs text-app outline-none focus:border-accent transition-colors cursor-pointer"
                 >
                   {showCurrent && (
                     <option value={fontValue}>{fontValue}</option>
@@ -359,7 +359,7 @@ export function PropertiesSidebar(props: PropertiesSidebarProps) {
                 value={textFontSize}
                 onChange={(e) => setTextFontSize(Math.max(4, Math.min(200, parseInt(e.target.value) || 12)))}
                 onMouseDown={(e) => e.preventDefault()}
-                className="w-16 bg-panel-elevated border border-app rounded-lg px-2 py-1.5 text-xs text-app text-center outline-none focus:border-[#E8607A]"
+                className="w-16 bg-panel-elevated border border-app rounded-lg px-2 py-1.5 text-xs text-app text-center outline-none focus:border-accent"
               />
               <button
                 onClick={() => setTextFontSize(s => Math.min(200, s + 1))}
@@ -375,7 +375,7 @@ export function PropertiesSidebar(props: PropertiesSidebarProps) {
                   key={s}
                   onClick={() => setTextFontSize(s)}
                   onMouseDown={(e) => e.preventDefault()}
-                  className={`px-2 py-0.5 rounded text-[10px] font-medium transition-all ${textFontSize === s ? 'bg-[#E8607A] text-white shadow-sm' : 'bg-panel-elevated text-app-muted hover:text-app hover:bg-panel-elevated/80 border border-app'}`}
+                  className={`px-2 py-0.5 rounded text-[10px] font-medium transition-all ${textFontSize === s ? 'bg-bloom-500 text-white shadow-sm' : 'bg-panel-elevated text-app-muted hover:text-app hover:bg-panel-elevated/80 border border-app'}`}
                 >
                   {s}
                 </button>
@@ -390,7 +390,7 @@ export function PropertiesSidebar(props: PropertiesSidebarProps) {
               <button
                 onClick={() => setTextBold(b => !b)}
                 onMouseDown={(e) => e.preventDefault()}
-                className={`flex-1 py-2 rounded-lg text-xs font-semibold flex items-center justify-center gap-1.5 transition-all ${textBold ? 'bg-[#E8607A]/20 text-[#E8607A] border border-[#E8607A]/50' : 'bg-panel-elevated text-app-muted border border-app hover:text-app hover:bg-panel-elevated/80'}`}
+                className={`flex-1 py-2 rounded-lg text-xs font-semibold flex items-center justify-center gap-1.5 transition-all ${textBold ? 'bg-bloom-100 text-accent border border-accent/50' : 'bg-panel-elevated text-app-muted border border-app hover:text-app hover:bg-panel-elevated/80'}`}
                 title="Bold"
               >
                 <Bold size={16} />
@@ -398,7 +398,7 @@ export function PropertiesSidebar(props: PropertiesSidebarProps) {
               <button
                 onClick={() => setTextItalic(i => !i)}
                 onMouseDown={(e) => e.preventDefault()}
-                className={`flex-1 py-2 rounded-lg text-xs font-semibold flex items-center justify-center gap-1.5 transition-all ${textItalic ? 'bg-[#E8607A]/20 text-[#E8607A] border border-[#E8607A]/50' : 'bg-panel-elevated text-app-muted border border-app hover:text-app hover:bg-panel-elevated/80'}`}
+                className={`flex-1 py-2 rounded-lg text-xs font-semibold flex items-center justify-center gap-1.5 transition-all ${textItalic ? 'bg-bloom-100 text-accent border border-accent/50' : 'bg-panel-elevated text-app-muted border border-app hover:text-app hover:bg-panel-elevated/80'}`}
                 title="Italic"
               >
                 <Italic size={16} />
@@ -406,7 +406,7 @@ export function PropertiesSidebar(props: PropertiesSidebarProps) {
               <button
                 onClick={() => setTextUnderline(u => !u)}
                 onMouseDown={(e) => e.preventDefault()}
-                className={`flex-1 py-2 rounded-lg text-xs font-semibold flex items-center justify-center gap-1.5 transition-all ${textUnderline ? 'bg-[#E8607A]/20 text-[#E8607A] border border-[#E8607A]/50' : 'bg-panel-elevated text-app-muted border border-app hover:text-app hover:bg-panel-elevated/80'}`}
+                className={`flex-1 py-2 rounded-lg text-xs font-semibold flex items-center justify-center gap-1.5 transition-all ${textUnderline ? 'bg-bloom-100 text-accent border border-accent/50' : 'bg-panel-elevated text-app-muted border border-app hover:text-app hover:bg-panel-elevated/80'}`}
                 title="Underline"
               >
                 <Underline size={16} />
@@ -432,7 +432,7 @@ export function PropertiesSidebar(props: PropertiesSidebarProps) {
                   if (!val.startsWith('#')) val = '#' + val;
                   setTextColor(val);
                 }}
-                className="w-16 bg-transparent border-b border-app text-[11px] text-app font-mono focus:outline-none focus:border-[#E8607A] uppercase pb-0.5"
+                className="w-16 bg-transparent border-b border-app text-[11px] text-app font-mono focus:outline-none focus:border-accent uppercase pb-0.5"
                 maxLength={7}
               />
             </div>
@@ -442,7 +442,7 @@ export function PropertiesSidebar(props: PropertiesSidebarProps) {
                   key={c}
                   onClick={() => setTextColor(c)}
                   onMouseDown={(e) => e.preventDefault()}
-                  className={`w-5 h-5 rounded-full border-2 transition-transform ${textColor.toLowerCase() === c ? 'scale-125 border-[#FF9BB3]' : 'border-app hover:scale-110'}`}
+                  className={`w-5 h-5 rounded-full border-2 transition-transform ${textColor.toLowerCase() === c ? 'scale-125 border-accent' : 'border-app hover:scale-110'}`}
                   style={{ backgroundColor: c }}
                 />
               ))}
@@ -462,7 +462,7 @@ export function PropertiesSidebar(props: PropertiesSidebarProps) {
                   key={a.val}
                   onClick={() => setTextAlign(a.val)}
                   onMouseDown={(e) => e.preventDefault()}
-                  className={`flex-1 py-1.5 rounded-md flex items-center justify-center transition-all ${textAlign === a.val ? 'bg-[#E8607A] text-white shadow-sm' : 'text-app-muted hover:text-app'}`}
+                  className={`flex-1 py-1.5 rounded-md flex items-center justify-center transition-all ${textAlign === a.val ? 'bg-bloom-500 text-white shadow-sm' : 'text-app-muted hover:text-app'}`}
                 >
                   {a.icon}
                 </button>
@@ -483,7 +483,7 @@ export function PropertiesSidebar(props: PropertiesSidebarProps) {
                 onMouseDown={(e) => e.preventDefault()}
                 className={`w-full flex items-center justify-center gap-2 py-2 rounded-lg text-xs font-semibold transition-colors border ${
                   linksHighlighted
-                    ? 'bg-[#E8607A]/25 text-[#E8607A] border-[#E8607A]/40'
+                    ? 'bg-bloom-100 text-accent border-accent/40'
                     : 'bg-panel-elevated text-app border-app hover:bg-panel-elevated/80'
                 }`}
               >
@@ -493,14 +493,14 @@ export function PropertiesSidebar(props: PropertiesSidebarProps) {
             )}
 
             {linkCreatePending ? (
-              <div className="space-y-2 rounded-lg border border-[#E8607A]/30 bg-[#E8607A]/5 p-2.5">
-                <p className="text-[10px] text-[#E8607A] font-medium">New link URL</p>
+              <div className="space-y-2 rounded-lg border border-accent/30 bg-bloom-100 p-2.5">
+                <p className="text-[10px] text-accent font-medium">New link URL</p>
                 <input
                   type="url"
                   value={selectedLinkUrl}
                   onChange={(e) => onSelectedLinkUrlChange?.(e.target.value)}
                   placeholder="https://example.com"
-                  className="w-full bg-panel-elevated border border-app rounded-lg px-3 py-2 text-xs text-app outline-none focus:border-[#E8607A]"
+                  className="w-full bg-panel-elevated border border-app rounded-lg px-3 py-2 text-xs text-app outline-none focus:border-accent"
                   autoFocus
                 />
                 <div className="flex gap-2">
@@ -508,7 +508,7 @@ export function PropertiesSidebar(props: PropertiesSidebarProps) {
                     type="button"
                     onClick={onSaveSelectedLink}
                     onMouseDown={(e) => e.preventDefault()}
-                    className="flex-1 py-1.5 rounded-lg bg-[#E8607A] text-white text-[11px] font-semibold hover:bg-[#D94D6A]"
+                    className="flex-1 py-1.5 rounded-lg bg-bloom-500 text-white text-[11px] font-semibold hover:bg-bloom-600"
                   >
                     Save
                   </button>
@@ -529,7 +529,7 @@ export function PropertiesSidebar(props: PropertiesSidebarProps) {
                     type="button"
                     onClick={onAddLink}
                     onMouseDown={(e) => e.preventDefault()}
-                    className="w-full flex items-center justify-center gap-2 py-2 rounded-lg bg-[#E8607A]/15 text-[#E8607A] border border-[#E8607A]/30 hover:bg-[#D94D6A]/25 text-xs font-semibold transition-colors"
+                    className="w-full flex items-center justify-center gap-2 py-2 rounded-lg bg-bloom-100 text-accent border border-accent/30 hover:bg-bloom-100/80 text-xs font-semibold transition-colors"
                   >
                     <Link2 size={14} />
                     Add link to selection
@@ -553,7 +553,7 @@ export function PropertiesSidebar(props: PropertiesSidebarProps) {
                 min="0" max="100"
                 value={textOpacity}
                 onChange={(e) => setTextOpacity(parseInt(e.target.value))}
-                className="flex-1 accent-[#E8607A]"
+                className="flex-1 accent-accent"
               />
               <span className="text-[11px] text-zinc-400 w-8 text-right font-mono">{textOpacity}%</span>
             </div>
@@ -566,7 +566,7 @@ export function PropertiesSidebar(props: PropertiesSidebarProps) {
             </div>
             <button
               onClick={() => setActiveTool('addtext')}
-              className={`w-full flex items-center justify-center gap-2 py-2 rounded-md transition-colors text-xs font-semibold ${activeTool === 'addtext' ? 'bg-[#E8607A]/20 text-[#E8607A] border border-[#E8607A]/30' : 'bg-panel-elevated text-app hover:bg-panel-elevated/80'}`}
+              className={`w-full flex items-center justify-center gap-2 py-2 rounded-md transition-colors text-xs font-semibold ${activeTool === 'addtext' ? 'bg-bloom-100 text-accent border border-accent/30' : 'bg-panel-elevated text-app hover:bg-panel-elevated/80'}`}
             >
               <TextCursorInput size={14} />
               Add Text Box
@@ -653,7 +653,7 @@ export function PropertiesSidebar(props: PropertiesSidebarProps) {
                     onClick={() => setDrawMode(id)}
                     className={`flex items-center justify-center h-9 rounded-lg border transition-colors ${
                       drawMode === id
-                        ? 'bg-[#E8607A]/20 text-[#E8607A] border-[#E8607A]/50'
+                        ? 'bg-bloom-100 text-accent border-accent/50'
                         : 'bg-panel-elevated text-app-muted border-app hover:text-app hover:bg-panel-elevated/80'
                     }`}
                   >
@@ -680,7 +680,7 @@ export function PropertiesSidebar(props: PropertiesSidebarProps) {
                   if (!val.startsWith('#')) val = '#' + val;
                   setDrawColor(val);
                 }}
-                className="w-16 bg-transparent border-b border-app text-[11px] text-app font-mono focus:outline-none focus:border-[#E8607A] uppercase pb-0.5"
+                className="w-16 bg-transparent border-b border-app text-[11px] text-app font-mono focus:outline-none focus:border-accent uppercase pb-0.5"
                 maxLength={7}
               />
             </div>
@@ -689,7 +689,7 @@ export function PropertiesSidebar(props: PropertiesSidebarProps) {
                 <button
                   key={color}
                   onClick={() => setDrawColor(color)}
-                  className={`w-6 h-6 rounded-full mx-auto transition-transform ${drawColor.toLowerCase() === color.toLowerCase() ? 'scale-125 ring-2 ring-bloom-500 ring-offset-2 ring-offset-panel' : 'hover:scale-110'}`}
+                  className={`w-6 h-6 rounded-full mx-auto transition-transform ${drawColor.toLowerCase() === color.toLowerCase() ? 'scale-125 ring-2 ring-accent ring-offset-2 ring-offset-panel' : 'hover:scale-110'}`}
                   style={{ backgroundColor: color }}
                 />
               ))}
@@ -703,7 +703,7 @@ export function PropertiesSidebar(props: PropertiesSidebarProps) {
                 min="1" max="20"
                 value={drawSize}
                 onChange={(e) => setDrawSize(parseInt(e.target.value))}
-                className="flex-1 accent-[#E8607A]"
+                className="flex-1 accent-accent"
               />
               <span className="text-[11px] text-app-muted w-8 text-right font-mono">{drawSize}px</span>
             </div>
@@ -742,7 +742,7 @@ export function PropertiesSidebar(props: PropertiesSidebarProps) {
                   if (!val.startsWith('#')) val = '#' + val;
                   setHighlightColor(val);
                 }}
-                className="w-16 bg-transparent border-b border-app text-[11px] text-app font-mono focus:outline-none focus:border-[#E8607A] uppercase pb-0.5"
+                className="w-16 bg-transparent border-b border-app text-[11px] text-app font-mono focus:outline-none focus:border-accent uppercase pb-0.5"
                 maxLength={7}
               />
             </div>
@@ -800,7 +800,7 @@ export function PropertiesSidebar(props: PropertiesSidebarProps) {
             <span className="text-[10px] text-app-faint">Preview:</span>
             <div
               className="rounded-full border-2 border-app-strong"
-              style={{ width: eraserSize, height: eraserSize, backgroundColor: 'rgba(232,96,122,0.15)' }}
+              style={{ width: eraserSize, height: eraserSize, backgroundColor: 'color-mix(in srgb, var(--accent) 15%, transparent)' }}
             />
           </div>
         </div>
@@ -831,7 +831,7 @@ export function PropertiesSidebar(props: PropertiesSidebarProps) {
             {selectedDisplayItem.type === 'image' && (
               <button
                 onClick={() => onReplaceSelectedImage?.()}
-                className="w-full flex items-center justify-center gap-2 py-2 rounded-lg text-xs font-medium bg-[#E8607A]/10 text-[#E8607A] border border-[#E8607A]/30 hover:bg-[#D94D6A]/20 transition-colors"
+                className="w-full flex items-center justify-center gap-2 py-2 rounded-lg text-xs font-medium bg-bloom-100 text-accent border border-accent/30 hover:bg-bloom-100/80 transition-colors"
               >
                 <Image size={12} /> Replace Image
               </button>
@@ -866,7 +866,7 @@ export function PropertiesSidebar(props: PropertiesSidebarProps) {
             <div className="bg-panel-elevated rounded-lg p-2.5 border border-app">
               <span className="text-[10px] font-bold tracking-widest text-app-faint uppercase">Detected</span>
               <div className="flex gap-3 mt-2">
-                <span className="text-[11px] text-[#E8607A]">
+                <span className="text-[11px] text-accent">
                   {displayItems.filter(d => d.type === 'image').length} images
                 </span>
                 <span className="text-[11px] text-emerald-500">
@@ -911,7 +911,7 @@ export function PropertiesSidebar(props: PropertiesSidebarProps) {
                 onClick={() => onFormFieldSelect?.(field)}
                 className={`w-full text-left px-2.5 py-2 rounded-lg text-[11px] transition-colors ${
                   selectedFormField?.ref.toKey() === field.ref.toKey()
-                    ? 'bg-[#E8607A]/15 text-[#E8607A] border border-[#E8607A]/30'
+                    ? 'bg-bloom-100 text-accent border border-accent/30'
                     : 'bg-panel-elevated text-app-muted border border-app hover:bg-panel-elevated/80'
                 }`}
               >
@@ -928,7 +928,7 @@ export function PropertiesSidebar(props: PropertiesSidebarProps) {
                 type="text"
                 value={formFieldDraft}
                 onChange={(e) => onFormFieldChange(e.target.value)}
-                className="w-full px-3 py-2 text-sm bg-panel-elevated border border-app rounded-lg text-app focus:outline-none focus:border-[#E8607A]"
+                className="w-full px-3 py-2 text-sm bg-panel-elevated border border-app rounded-lg text-app focus:outline-none focus:border-accent"
               />
             </div>
           )}
@@ -958,7 +958,7 @@ export function PropertiesSidebar(props: PropertiesSidebarProps) {
                 value={formFieldDraft}
                 onChange={(e) => onFormFieldChange(e.target.value)}
                 placeholder="Enter option value"
-                className="w-full px-3 py-2 text-sm bg-panel-elevated border border-app rounded-lg text-app focus:outline-none focus:border-[#E8607A]"
+                className="w-full px-3 py-2 text-sm bg-panel-elevated border border-app rounded-lg text-app focus:outline-none focus:border-accent"
               />
             </div>
           )}
@@ -1006,7 +1006,7 @@ export function PropertiesSidebar(props: PropertiesSidebarProps) {
             <span className="text-xs font-semibold text-app">Live Preview</span>
             <button 
               onClick={() => setWatermarkLivePreview?.(!watermarkLivePreview)}
-              className={`relative inline-flex h-5 w-9 items-center rounded-full transition-colors focus:outline-none ${watermarkLivePreview ? 'bg-[#E8607A]' : 'bg-panel-elevated border border-app'}`}
+              className={`relative inline-flex h-5 w-9 items-center rounded-full transition-colors focus:outline-none ${watermarkLivePreview ? 'bg-bloom-500' : 'bg-panel-elevated border border-app'}`}
             >
               <span className={`inline-block h-4 w-4 transform rounded-full bg-white shadow-sm transition-transform ${watermarkLivePreview ? 'translate-x-[18px]' : 'translate-x-0.5'}`} />
             </button>
@@ -1021,7 +1021,7 @@ export function PropertiesSidebar(props: PropertiesSidebarProps) {
                     type="text"
                     value={watermarkText}
                     onChange={(e) => setWatermarkText?.(e.target.value)}
-                    className="w-full bg-panel-elevated border border-app rounded px-3 py-2 text-xs text-app outline-none focus:border-[#E8607A] transition-colors"
+                    className="w-full bg-panel-elevated border border-app rounded px-3 py-2 text-xs text-app outline-none focus:border-accent transition-colors"
                   />
                 </div>
 
@@ -1030,7 +1030,7 @@ export function PropertiesSidebar(props: PropertiesSidebarProps) {
                   <select
                     value={watermarkFontName}
                     onChange={(e) => setWatermarkFontName?.(e.target.value)}
-                    className="w-full bg-panel-elevated border border-app rounded px-3 py-2 text-xs text-app outline-none focus:border-[#E8607A] transition-colors appearance-none cursor-pointer"
+                    className="w-full bg-panel-elevated border border-app rounded px-3 py-2 text-xs text-app outline-none focus:border-accent transition-colors appearance-none cursor-pointer"
                   >
                     <option value="Arial">Arial</option>
                     <option value="Helvetica">Helvetica</option>
@@ -1059,7 +1059,7 @@ export function PropertiesSidebar(props: PropertiesSidebarProps) {
                   <select
                     value={watermarkShapeType}
                     onChange={(e) => setWatermarkShapeType?.(e.target.value as any)}
-                    className="w-full bg-panel-elevated border border-app rounded px-3 py-2 text-xs text-app outline-none focus:border-[#E8607A] transition-colors appearance-none cursor-pointer"
+                    className="w-full bg-panel-elevated border border-app rounded px-3 py-2 text-xs text-app outline-none focus:border-accent transition-colors appearance-none cursor-pointer"
                   >
                     <option value="rectangle">Rectangle</option>
                     <option value="circle">Circle</option>
@@ -1072,7 +1072,7 @@ export function PropertiesSidebar(props: PropertiesSidebarProps) {
                     type="text"
                     value={watermarkText}
                     onChange={(e) => setWatermarkText?.(e.target.value)}
-                    className="w-full bg-panel-elevated border border-app rounded px-3 py-2 text-xs text-app outline-none focus:border-[#E8607A] transition-colors"
+                    className="w-full bg-panel-elevated border border-app rounded px-3 py-2 text-xs text-app outline-none focus:border-accent transition-colors"
                   />
                 </div>
                 <div className="flex gap-4">
@@ -1111,7 +1111,7 @@ export function PropertiesSidebar(props: PropertiesSidebarProps) {
                       fileInput.onchange = (e) => onWatermarkImageUpload?.(e as any);
                       fileInput.click();
                     }}
-                    className="flex items-center gap-2 bg-[#E8607A] hover:bg-[#D94D6A] text-white px-8 py-3 rounded text-xs font-medium transition-colors"
+                    className="flex items-center gap-2 bg-bloom-500 hover:bg-bloom-600 text-white px-8 py-3 rounded text-xs font-medium transition-colors"
                   >
                     <Image size={16} /> ADD IMAGE
                   </button>
@@ -1142,7 +1142,7 @@ export function PropertiesSidebar(props: PropertiesSidebarProps) {
                       onClick={() => setWatermarkPosition?.(pos)}
                       className="border border-app flex items-center justify-center hover:bg-panel-elevated transition-colors"
                     >
-                      {(watermarkPosition === pos || watermarkMosaic) && <div className="w-3 h-3 bg-[#E8607A] rounded-full" />}
+                      {(watermarkPosition === pos || watermarkMosaic) && <div className="w-3 h-3 bg-accent rounded-full" />}
                     </button>
                   ))}
                 </div>
@@ -1151,7 +1151,7 @@ export function PropertiesSidebar(props: PropertiesSidebarProps) {
                     type="checkbox"
                     checked={watermarkMosaic}
                     onChange={(e) => setWatermarkMosaic?.(e.target.checked)}
-                    className="rounded border-app bg-panel-elevated text-[#E8607A] cursor-pointer"
+                    className="rounded border-app bg-panel-elevated text-accent cursor-pointer"
                   />
                   Mosaic
                 </label>
@@ -1168,7 +1168,7 @@ export function PropertiesSidebar(props: PropertiesSidebarProps) {
                     if (val === 'No transparency') setWatermarkOpacity?.(100);
                     else setWatermarkOpacity?.(100 - parseInt(val));
                   }}
-                  className="w-full bg-panel-elevated border border-app rounded px-2 py-2 text-[11px] text-app outline-none focus:border-[#E8607A] transition-colors appearance-none cursor-pointer"
+                  className="w-full bg-panel-elevated border border-app rounded px-2 py-2 text-[11px] text-app outline-none focus:border-accent transition-colors appearance-none cursor-pointer"
                 >
                   <option value="No transparency">No transparency</option>
                   <option value="25%">25%</option>
@@ -1185,7 +1185,7 @@ export function PropertiesSidebar(props: PropertiesSidebarProps) {
                     if (val === 'Do not rotate') setWatermarkRotation?.(0);
                     else setWatermarkRotation?.(parseInt(val));
                   }}
-                  className="w-full bg-panel-elevated border border-app rounded px-2 py-2 text-[11px] text-app outline-none focus:border-[#E8607A] transition-colors appearance-none cursor-pointer"
+                  className="w-full bg-panel-elevated border border-app rounded px-2 py-2 text-[11px] text-app outline-none focus:border-accent transition-colors appearance-none cursor-pointer"
                 >
                   <option value="Do not rotate">Do not rotate</option>
                   <option value="45 degrees">45 degrees</option>
@@ -1201,7 +1201,7 @@ export function PropertiesSidebar(props: PropertiesSidebarProps) {
               <select
                 value={watermarkBlendMode}
                 onChange={(e) => setWatermarkBlendMode?.(e.target.value)}
-                className="w-full bg-panel-elevated border border-app rounded px-2 py-2 text-[11px] text-app outline-none focus:border-[#E8607A] transition-colors appearance-none cursor-pointer"
+                className="w-full bg-panel-elevated border border-app rounded px-2 py-2 text-[11px] text-app outline-none focus:border-accent transition-colors appearance-none cursor-pointer"
               >
                 <option value="Normal">Normal (source-over)</option>
                 <option value="Multiply">Multiply</option>
@@ -1233,7 +1233,7 @@ export function PropertiesSidebar(props: PropertiesSidebarProps) {
                 max="300"
                 value={watermarkSize}
                 onChange={(e) => setWatermarkSize?.(parseInt(e.target.value))}
-                className="w-full accent-[#E8607A]"
+                className="w-full accent-accent"
               />
             </div>
 
@@ -1268,14 +1268,14 @@ export function PropertiesSidebar(props: PropertiesSidebarProps) {
               <div className="flex gap-2">
                 <button
                   onClick={() => setWatermarkLayer?.('above')}
-                  className={`flex-1 py-6 flex flex-col items-center justify-center gap-2 rounded border transition-colors ${watermarkLayer === 'above' ? 'bg-[#E8607A]/15 border-[#E8607A]/50 text-[#E8607A]' : 'bg-panel-elevated border-app text-app-muted hover:text-app'}`}
+                  className={`flex-1 py-6 flex flex-col items-center justify-center gap-2 rounded border transition-colors ${watermarkLayer === 'above' ? 'bg-bloom-100 border-accent/50 text-accent' : 'bg-panel-elevated border-app text-app-muted hover:text-app'}`}
                 >
                   <div className="rotate-45 w-4 h-4 bg-current" />
                   <span className="text-[10px] text-center px-2">Over the PDF content</span>
                 </button>
                 <button
                   onClick={() => setWatermarkLayer?.('below')}
-                  className={`flex-1 py-6 flex flex-col items-center justify-center gap-2 rounded border transition-colors ${watermarkLayer === 'below' ? 'bg-[#E8607A]/15 border-[#E8607A]/50 text-[#E8607A]' : 'bg-panel-elevated border-app text-app-muted hover:text-app'}`}
+                  className={`flex-1 py-6 flex flex-col items-center justify-center gap-2 rounded border transition-colors ${watermarkLayer === 'below' ? 'bg-bloom-100 border-accent/50 text-accent' : 'bg-panel-elevated border-app text-app-muted hover:text-app'}`}
                 >
                   <div className="rotate-45 w-4 h-4 border-2 border-current" />
                   <span className="text-[10px] text-center px-2">Below the PDF content</span>
@@ -1286,7 +1286,7 @@ export function PropertiesSidebar(props: PropertiesSidebarProps) {
             <div className="pt-2 flex flex-col gap-2 pb-4">
               <button
                 onClick={onApplyWatermark}
-                className="w-full bg-[#E8607A] hover:bg-[#D94D6A] text-white rounded py-2.5 text-xs font-semibold transition-colors"
+                className="w-full bg-bloom-500 hover:bg-bloom-600 text-white rounded py-2.5 text-xs font-semibold transition-colors"
               >
                 Add watermark
               </button>
@@ -1346,7 +1346,7 @@ export function PropertiesSidebar(props: PropertiesSidebarProps) {
             <button
               type="button"
               onClick={onOpenSignatureCreate}
-              className="w-full flex items-center justify-center gap-2 py-2 rounded-md bg-[#E8607A] hover:bg-[#D94D6A] text-white text-xs font-semibold transition-colors"
+              className="w-full flex items-center justify-center gap-2 py-2 rounded-md bg-bloom-500 hover:bg-bloom-600 text-white text-xs font-semibold transition-colors"
             >
               <PenLine size={14} /> Create signature
             </button>
@@ -1416,7 +1416,7 @@ export function PropertiesSidebar(props: PropertiesSidebarProps) {
                       onClick={() => onSelectCertificate?.(id.id)}
                       className={`w-full text-left rounded-md border px-2 py-1.5 text-[11px] transition-colors ${
                         active
-                          ? 'border-[#E8607A] bg-[#E8607A]/10 text-[#E8607A]'
+                          ? 'border-accent bg-bloom-100 text-accent'
                           : 'border-app text-app hover:border-app-strong'
                       }`}
                     >
@@ -1564,7 +1564,7 @@ export function PropertiesSidebar(props: PropertiesSidebarProps) {
                   onChange={(e) =>
                     onSignatureOpacity?.(selectedSignature.id, Number(e.target.value) / 100)
                   }
-                  className="w-full accent-[#E8607A]"
+                  className="w-full accent-accent"
                 />
               </div>
               <div className="flex gap-2">
@@ -1625,7 +1625,7 @@ export function PropertiesSidebar(props: PropertiesSidebarProps) {
                   }}
                   className={`rounded-lg border p-2 cursor-grab active:cursor-grabbing transition-colors ${
                     active
-                      ? 'border-[#E8607A] bg-[#E8607A]/10'
+                      ? 'border-accent bg-bloom-100'
                       : 'border-app hover:border-app-strong bg-panel-elevated/60'
                   }`}
                   onClick={() => setActiveLibraryId?.(entry.id)}

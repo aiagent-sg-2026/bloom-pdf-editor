@@ -54,10 +54,10 @@ export default function DebugPage() {
         type="file"
         accept="application/pdf"
         onChange={handleFileUpload}
-        className="block w-full text-sm text-gray-500 file:mr-4 file:py-2 file:px-4 file:rounded-full file:border-0 file:text-sm file:font-semibold file:bg-blue-50 file:text-[#B83A57] hover:file:bg-blue-100 mb-8"
+        className="block w-full text-sm text-gray-500 file:mr-4 file:py-2 file:px-4 file:rounded-full file:border-0 file:text-sm file:font-semibold file:bg-bloom-100 file:text-accent hover:file:bg-bloom-100/80 mb-8"
       />
 
-      {loading && <div className="text-[#E8607A] animate-pulse">Processing PDF...</div>}
+      {loading && <div className="text-accent animate-pulse">Processing PDF...</div>}
       {error && <div className="text-red-600 font-medium">Error: {error}</div>}
       {summary && <div className="text-emerald-700 font-medium">{summary}</div>}
     </div>

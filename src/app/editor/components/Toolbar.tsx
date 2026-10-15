@@ -6,7 +6,7 @@ import type { DrawnPath } from '../types';
 import type { PDFDocumentData } from '@/engine/browser-core';
 import { DownloadDropdown } from './DownloadDropdown';
 import { useTheme } from '@/app/theme/ThemeProvider';
-import { BRAND_NAME } from '@/lib/brand';
+import { BRAND_BASE_PATH, BRAND_NAME } from '@/lib/brand';
 
 interface ToolbarProps {
   fileName: string;
@@ -79,14 +79,14 @@ export function Toolbar({
         </button>
         <Link href="/" className="flex items-center gap-2 mr-1.5 group">
           <Image
-            src="/logo.png"
-            alt={`${BRAND_NAME} Logo`}
+            src={`${BRAND_BASE_PATH}/brand/paperloom-mark.svg`}
+            alt={BRAND_NAME}
             width={32}
             height={32}
             className="w-6 h-6 md:w-7 md:h-7 object-contain shrink-0"
             priority
           />
-          <span className="hidden sm:inline font-bold text-sm tracking-tight text-app group-hover:text-[#E8607A] transition-colors">
+          <span className="hidden sm:inline font-bold text-sm tracking-tight text-app group-hover:text-accent transition-colors">
             {BRAND_NAME}
           </span>
         </Link>
@@ -151,7 +151,7 @@ export function Toolbar({
         {onToggleSearch && (
           <button
             onClick={onToggleSearch}
-            className={`p-1.5 md:p-2 rounded-lg transition-colors border ${isSearchOpen ? 'bg-[#E8607A]/20 text-[#E8607A] border-[#E8607A]/50' : 'bg-panel-elevated text-app-muted hover:text-app border-app'}`}
+            className={`p-1.5 md:p-2 rounded-lg transition-colors border ${isSearchOpen ? 'bg-bloom-100 text-accent border-accent/50' : 'bg-panel-elevated text-app-muted hover:text-app border-app'}`}
             title="Toggle Find & Replace"
           >
             <Search size={16} />

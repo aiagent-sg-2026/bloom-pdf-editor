@@ -173,6 +173,7 @@ export function ExportPanel({
 
       <div
         ref={panelRef}
+        data-theme="dark"
         className="fixed right-0 top-0 bottom-0 z-50 w-full max-w-[520px] flex flex-col"
         style={{
           animation: 'slideInRight 0.35s cubic-bezier(0.16, 1, 0.3, 1)',
@@ -293,7 +294,7 @@ export function ExportPanel({
                       onChange={(e) =>
                         setCustomFrom(Math.max(1, Math.min(totalPages, Number(e.target.value))))
                       }
-                      className="w-full px-3 py-2 text-sm bg-zinc-800 border border-zinc-700 rounded-lg text-zinc-200 focus:ring-2 focus:ring-[#E8607A]/40 focus:border-[#E8607A]/50 outline-none transition-all"
+                      className="w-full px-3 py-2 text-sm bg-zinc-800 border border-zinc-700 rounded-lg text-zinc-200 focus:ring-2 focus:ring-accent focus:border-accent outline-none transition-all"
                     />
                   </div>
                   <span className="text-zinc-600 text-xs mt-4">to</span>
@@ -307,7 +308,7 @@ export function ExportPanel({
                       onChange={(e) =>
                         setCustomTo(Math.max(1, Math.min(totalPages, Number(e.target.value))))
                       }
-                      className="w-full px-3 py-2 text-sm bg-zinc-800 border border-zinc-700 rounded-lg text-zinc-200 focus:ring-2 focus:ring-[#E8607A]/40 focus:border-[#E8607A]/50 outline-none transition-all"
+                      className="w-full px-3 py-2 text-sm bg-zinc-800 border border-zinc-700 rounded-lg text-zinc-200 focus:ring-2 focus:ring-accent focus:border-accent outline-none transition-all"
                     />
                   </div>
                 </div>
@@ -369,7 +370,7 @@ export function ExportPanel({
                       max={100}
                       value={jpegQuality}
                       onChange={(e) => setJpegQuality(Number(e.target.value))}
-                      className="w-full accent-[#E8607A]"
+                      className="w-full accent-accent"
                       style={{ height: '4px' }}
                     />
                     <div className="flex justify-between mt-1">
@@ -409,7 +410,7 @@ export function ExportPanel({
                 </div>
                 <div className="h-1.5 bg-zinc-800 rounded-full overflow-hidden">
                   <div
-                    className="h-full bg-gradient-to-r from-[#E8607A] to-[#FF9BB3] rounded-full transition-all duration-300 ease-out"
+                    className="h-full bg-gradient-to-r from-bloom-500 to-bloom-300 rounded-full transition-all duration-300 ease-out"
                     style={{ width: `${progressPct}%` }}
                   />
                 </div>
@@ -420,11 +421,11 @@ export function ExportPanel({
                 disabled={primaryDisabled}
                 className="
                   w-full flex items-center justify-center gap-2.5 px-4 py-3
-                  bg-gradient-to-b from-[#E8607A] to-[#D94D6A]
-                  hover:from-[#FF6B8E] hover:to-[#E8607A]
+                  bg-gradient-to-b from-bloom-500 to-bloom-600
+                  hover:from-bloom-600 hover:to-bloom-700
                   disabled:from-zinc-700 disabled:to-zinc-800 disabled:text-zinc-500
                   text-white font-medium text-sm rounded-xl
-                  shadow-lg shadow-[#E8607A]/30
+                  shadow-lg shadow-accent/30
                   transition-all duration-200 ease-out
                   active:scale-[0.98]
                 "

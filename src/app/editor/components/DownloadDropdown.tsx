@@ -119,12 +119,12 @@ export function DownloadDropdown({
 
   return (
     <div className="relative" ref={dropdownRef}>
-      <div className="flex items-stretch shadow-md shadow-[#E8607A]/15 rounded-xl">
+      <div className="flex items-stretch shadow-md shadow-accent/15 rounded-xl">
         <button
           onClick={onDownload}
           disabled={isSaving}
           title="Download original / edited PDF (no recompression)"
-          className="flex items-center gap-2 text-xs font-semibold pl-3 md:pl-4 pr-2 md:pr-3 py-2 bg-gradient-to-b from-[#E8607A] to-[#D94D6A] hover:from-[#FF6B8E] hover:to-[#E8607A] disabled:from-zinc-700 disabled:to-zinc-800 disabled:text-zinc-500 text-white rounded-l-xl transition-all duration-200 ease-out active:scale-[0.98]"
+          className="flex items-center gap-2 text-xs font-semibold pl-3 md:pl-4 pr-2 md:pr-3 py-2 bg-gradient-to-b from-bloom-500 to-bloom-600 hover:from-bloom-600 hover:to-bloom-700 disabled:from-zinc-700 disabled:to-zinc-800 disabled:text-zinc-500 text-white rounded-l-xl transition-all duration-200 ease-out active:scale-[0.98]"
         >
           {isSaving ? <Loader2 size={14} className="animate-spin" /> : <Download size={14} />}
           <span className="hidden sm:inline">Download</span>
@@ -134,7 +134,7 @@ export function DownloadDropdown({
           onClick={() => setIsOpen(!isOpen)}
           disabled={isSaving}
           title="Download options"
-          className="flex items-center px-2 py-2 bg-gradient-to-b from-[#E8607A] to-[#D94D6A] hover:from-[#FF6B8E] hover:to-[#E8607A] disabled:from-zinc-700 disabled:to-zinc-800 disabled:text-zinc-500 text-white rounded-r-xl border-l border-[#FFC5D3]/30 transition-all duration-200 ease-out active:scale-[0.98]"
+          className="flex items-center px-2 py-2 bg-gradient-to-b from-bloom-500 to-bloom-600 hover:from-bloom-600 hover:to-bloom-700 disabled:from-zinc-700 disabled:to-zinc-800 disabled:text-zinc-500 text-white rounded-r-xl border-l border-bloom-200/30 transition-all duration-200 ease-out active:scale-[0.98]"
         >
           <ChevronDown
             size={14}
@@ -190,7 +190,7 @@ export function DownloadDropdown({
                   onClick={() => onSaveModeChange(opt.value)}
                   className={`flex-1 px-3 py-2 rounded-lg text-xs font-medium transition-all duration-200 ${
                     saveMode === opt.value
-                      ? 'bg-[#E8607A] text-white shadow-sm font-semibold'
+                      ? 'bg-bloom-500 text-white shadow-sm font-semibold'
                       : 'text-app-muted hover:text-app'
                   }`}
                 >
@@ -230,7 +230,7 @@ export function DownloadDropdown({
                   onClick={() => setSelectedDpi(preset.value)}
                   className={`px-2 py-2 rounded-lg text-center transition-all duration-200 ${
                     selectedDpi === preset.value
-                      ? 'bg-[#E8607A]/15 text-[#E8607A] border border-[#E8607A]/40 ring-1 ring-[#E8607A]/20 font-semibold'
+                      ? 'bg-bloom-100 text-accent border border-accent/40 ring-1 ring-accent/20 font-semibold'
                       : 'bg-panel-elevated text-app-muted border border-app hover:text-app'
                   }`}
                 >
@@ -268,7 +268,7 @@ export function DownloadDropdown({
                   onClick={() => setCompressionQuality(preset.value)}
                   className={`px-2 py-2 rounded-lg text-center transition-all duration-200 ${
                     compressionQuality === preset.value
-                      ? 'bg-[#E8607A]/15 text-[#E8607A] border border-[#E8607A]/40 ring-1 ring-[#E8607A]/20 font-semibold'
+                      ? 'bg-bloom-100 text-accent border border-accent/40 ring-1 ring-accent/20 font-semibold'
                       : 'bg-panel-elevated text-app-muted border border-app hover:text-app'
                   }`}
                 >
@@ -286,7 +286,7 @@ export function DownloadDropdown({
             <button
               onClick={handleOptionsDownload}
               disabled={isSaving}
-              className="w-full flex items-center justify-center gap-2 px-4 py-2.5 bg-gradient-to-b from-[#E8607A] to-[#D94D6A] hover:from-[#FF6B8E] hover:to-[#E8607A] disabled:from-zinc-700 disabled:to-zinc-800 disabled:text-zinc-500 text-white font-medium text-sm rounded-xl shadow-lg shadow-[#E8607A]/25 transition-all duration-200 ease-out active:scale-[0.98]"
+              className="w-full flex items-center justify-center gap-2 px-4 py-2.5 bg-gradient-to-b from-bloom-500 to-bloom-600 hover:from-bloom-600 hover:to-bloom-700 disabled:from-zinc-700 disabled:to-zinc-800 disabled:text-zinc-500 text-white font-medium text-sm rounded-xl shadow-lg shadow-accent/25 transition-all duration-200 ease-out active:scale-[0.98]"
             >
               {isSaving ? <Loader2 size={14} className="animate-spin" /> : <Download size={14} />}
               {`Download (${compressionQuality}% · ${selectedDpi} DPI)`}

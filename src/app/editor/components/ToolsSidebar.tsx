@@ -22,7 +22,7 @@ const TOOL_COLORS: Record<string, string> = {
   highlight: '#F59E0B',  // Amber Yellow
   draw: '#A855F7',       // Purple / Violet
   erase: '#FF66C4',      // Vibrant Eraser Pink
-  watermark: '#E8607A',  // Bloom Coral
+  watermark: '#238C80',  // Paperloom jade
   redact: '#EF4444',     // Redact Red
   sign: '#3B82F6',       // Royal Blue Signature
   link: '#3B82F6',       // Link Blue
@@ -72,8 +72,8 @@ export function ToolsSidebar({
           {TOOLS.map((tool) => {
             const isActive = activeTool === tool.id;
             const isHighlight = tool.id === 'highlight';
-            const rawAccentColor = isHighlight ? (highlightColor || '#F59E0B') : (TOOL_COLORS[tool.id] ?? '#E8607A');
-            const labelColor = getAccessibleTextColor(rawAccentColor);
+            const rawAccentColor = isHighlight ? (highlightColor || '#F59E0B') : (TOOL_COLORS[tool.id] ?? '#238C80');
+            const labelColor = tool.id === 'watermark' ? 'var(--accent)' : getAccessibleTextColor(rawAccentColor);
 
             return (
               <button
@@ -119,7 +119,7 @@ export function ToolsSidebar({
                 flex items-center justify-center rounded-xl p-2 min-w-[44px] border transition-all duration-200 shrink-0
                 ${isPanelOpen 
                   ? 'bg-panel-elevated/80 border-app text-app-muted'
-                  : 'bg-bloom-500/15 border-bloom-500/40 text-bloom-500'
+                  : 'bg-bloom-100 border-accent/40 text-accent'
                 }
               `}
             >
@@ -145,9 +145,9 @@ export function ToolsSidebar({
         {TOOLS.map((tool) => {
           const isActive = activeTool === tool.id;
           const isHighlight = tool.id === 'highlight';
-          const rawAccentColor = isHighlight ? (highlightColor || '#F59E0B') : (TOOL_COLORS[tool.id] ?? '#E8607A');
+          const rawAccentColor = isHighlight ? (highlightColor || '#F59E0B') : (TOOL_COLORS[tool.id] ?? '#238C80');
           const accentColor = rawAccentColor;
-          const labelColor = getAccessibleTextColor(rawAccentColor);
+          const labelColor = tool.id === 'watermark' ? 'var(--accent)' : getAccessibleTextColor(rawAccentColor);
 
           return (
             <div key={tool.id} className="relative group w-full overflow-visible">
@@ -229,7 +229,7 @@ export function ToolsSidebar({
               w-8 h-8 flex items-center justify-center rounded-xl border transition-all duration-200
               ${isPanelOpen 
                 ? 'bg-panel-elevated/80 border-app text-app-muted hover:text-app hover:border-app-strong'
-                : 'bg-bloom-500/15 border-bloom-500/40 text-bloom-500 hover:bg-bloom-500/25 shadow-md'
+                : 'bg-bloom-100 border-accent/40 text-accent hover:bg-bloom-100/80 shadow-md'
               }
             `}
           >

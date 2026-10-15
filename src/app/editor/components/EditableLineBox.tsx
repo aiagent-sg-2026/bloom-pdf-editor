@@ -439,7 +439,7 @@ export function EditableLineBox(props: EditableLineBoxProps) {
 
       {/* Selection chrome */}
       <div
-        className="absolute inset-0 border border-dashed border-[#E8607A] rounded-sm pointer-events-none shadow-[0_0_0_1px_rgba(232,96,122,0.3)]"
+        className="absolute inset-0 border border-dashed border-accent rounded-sm pointer-events-none shadow-[0_0_0_1px_var(--accent)]"
       />
 
       {/* Move hit targets (positioned outside text bounds so text click/caret positioning is unimpeded) */}
@@ -463,7 +463,7 @@ export function EditableLineBox(props: EditableLineBoxProps) {
         title="Drag to move text"
       />
       <div
-        className="absolute -top-7 left-1/2 -translate-x-1/2 flex items-center gap-1 px-2 py-0.5 bg-[#E8607A] hover:bg-[#D94D6A] text-white text-[9px] font-semibold rounded shadow-md cursor-grab active:cursor-grabbing z-40 select-none whitespace-nowrap border border-white/30 transition-colors touch-none"
+        className="absolute -top-7 left-1/2 -translate-x-1/2 flex items-center gap-1 px-2 py-0.5 bg-bloom-500 hover:bg-bloom-600 text-white text-[9px] font-semibold rounded shadow-md cursor-grab active:cursor-grabbing z-40 select-none whitespace-nowrap border border-white/30 transition-colors touch-none"
         onPointerDown={(e) => startDrag('move', e)}
         title="Drag to move text"
       >
@@ -479,8 +479,8 @@ export function EditableLineBox(props: EditableLineBoxProps) {
           style={{
             left: selLeftPx,
             width: selWidthPx,
-            background: 'rgba(232, 96, 122, 0.30)',
-            borderBottom: '2px solid #E8607A',
+            background: 'color-mix(in srgb, var(--accent) 30%, transparent)',
+            borderBottom: '2px solid var(--accent)',
           }}
         />
       )}
@@ -583,7 +583,7 @@ export function EditableLineBox(props: EditableLineBoxProps) {
         title="Resize height"
       />
       <div
-        className="absolute -right-1.5 -bottom-1.5 w-3.5 h-3.5 bg-[#E8607A] border-2 border-white rounded-sm cursor-se-resize z-40 shadow touch-none"
+        className="absolute -right-1.5 -bottom-1.5 w-3.5 h-3.5 bg-accent border-2 border-white rounded-sm cursor-se-resize z-40 shadow touch-none"
         onPointerDown={(e) => startDrag('resize-se', e)}
         title="Resize"
       />
