@@ -211,16 +211,26 @@ Migrated native call paths in `src/app/editor/page.tsx`:
   and refresh the canvas and thumbnails. There are no new annotation controls;
   the current creation UI still requests Highlight, while the native helper
   supports all three subtypes.
-- **Text-markup erase and Clear:** partition hits from the existing annotation
-  geometry helpers. Only Highlight, Underline, and StrikeOut removal commits
-  through a transaction; Ink, shapes, Squiggly, and overlay erasing/clearing retain
-  legacy snapshots. Eraser samples share one transaction at gesture completion,
-  with a detached annotation-list preview preserving feedback during the drag.
-  Mixed gestures attach that transaction to the same legacy toolbar entry, not a
-  second undo step. Clear stages text-markup removal before clearing legacy marks.
-  Failed staging does not publish text-markup changes. Undo/redo, Download,
-  compressed Download, export-panel opening, and overlay baking await pending
-  text-markup erase commits.
+- **Drawing and shapes:** freehand drawing and freehand highlighter strokes create
+  Ink annotations; rectangles, ellipses, lines, and arrows create Square, Circle,
+  and Line annotations with the existing geometry, colour, opacity, width, and
+  arrow endings. Stage native creation at gesture completion, then add one
+  `draw-stroke`, `highlight-stroke`, or `draw-shape` session toolbar entry.
+  Refresh the canvas and thumbnails. Failed staging leaves the graph and history
+  unchanged and retains the overlay for retry at the existing bake boundary.
+  Recovered/uncommitted drawing overlays bake transactionally alongside text-box
+  insertion; later legacy image-processing failure rolls back those native edits.
+- **Text-markup and Ink erase:** partition hits from the existing annotation
+  geometry helper. Highlight, Underline, StrikeOut, and Ink removal share one
+  transaction at gesture completion, with a detached annotation-list preview
+  preserving feedback during the drag. Shapes, Squiggly, and overlay erasure
+  retain legacy snapshots. Mixed gestures attach the transaction to the same
+  legacy toolbar entry, not a second undo step. Failed staging does not publish
+  migrated annotation changes.
+- **Clear:** stages text-markup removal before clearing legacy marks. Ink, shapes,
+  Squiggly, and overlays still use the existing legacy Clear behavior.
+  Undo/redo, Download, compressed Download, export-panel opening, and overlay
+  baking await pending drawing/shape creation and annotation-erase commits.
 
 `SessionEditorHistory` in `src/engine/session/editor-history.ts` is the page's
 single ordered toolbar stack (50 post-edit states, including the initial state).
@@ -255,13 +265,13 @@ on the same toolbar entry, so the 50-entry limit is not a memory-size limit.
 
 - Direct style changes outside an existing-line commit, duplicated lines,
   table row/column insertion, find/replace, and OCR text insertion.
-- Drawing, freehand highlighter strokes, and erasing/clearing non-text-markup
-  annotations or overlays; floating text preview editing, movement and deletion;
+- Shape/Squiggly erasure, Ink/shape/non-text-markup clearing, and overlay erasing
+  or clearing; floating text preview editing, movement and deletion;
   floating image insertion, editing, movement, replacement and deletion;
-  non-text overlay flattening.
+  non-text/non-drawing overlay flattening.
 - Embedded-image movement/resizing/deletion and other selected-object transforms.
-- Form value edits and flattening; links and annotations other than the three
-  migrated text-markup subtypes.
+- Form value edits and flattening; links and other annotation types beyond
+  migrated text-markup, Ink, and shape creation.
 - Visual signatures, signature fields/appearances, cryptographic signing,
   validation/LTV-related mutations, and security-panel changes.
 - Page deletion/rotation/reordering, blank-page insertion, merge/import, and
@@ -269,12 +279,11 @@ on the same toolbar entry, so the 50-entry limit is not a memory-size limit.
 - Watermark removal, initial text normalization,
   export/compression, autosave, recovery, and browser persistence.
 
-The text-edit, Add Text Box, and highlight-family production migrations are
-implemented. The remaining UI migration stays gated in this order:
+The text-edit, Add Text Box, highlight-family, drawing, Ink erasure, and shape
+creation production migrations are implemented. Remaining UI migration gates:
 
-1. Drawing, erasing, and shapes.
-2. Signatures and form-field edits.
-3. Page rotation, deletion, reordering, and insertion.
+1. Signatures and form-field edits.
+2. Page rotation, deletion, reordering, and insertion.
 
 The text gate in `src/engine/__tests__/session-document-editor.test.ts` covers
 native existing-line replacement and styled text-box insertion: direct-operation
@@ -291,15 +300,22 @@ live/reopened replacement pixels and alpha, object identity, failure isolation,
 and overlapping/legacy-edit conflicts. Text-markup coverage includes native byte
 parity and appearance-stream parity after reopening, repeated byte-identical
 creation/removal undo/redo for Highlight, Underline, and StrikeOut, failed staging,
-detached erase previews, and indirect annotation-array restoration.
+detached erase previews, and indirect annotation-array restoration. Drawing
+coverage adds native byte and reopened appearance/geometry parity for opaque
+and translucent Ink, Square, Circle, plain Line, and arrow Line; repeated exact
+creation/Ink-erasure undo/redo; failed drafts with retry; and direct/indirect
+annotation arrays.
 `src/engine/__tests__/session-editor-history.test.ts` covers mixed legacy/session
 ordering, overlay restoration, redo branching, export snapshot replacement,
 text-box baking over legacy and session boundaries, restoration of baked text
 and fonts below preserved redo, and detached resources needed by legacy
 page-deletion undo. The same suite covers byte-identical text-markup toolbar
 boundaries, failed clear with preserved redo, and mixed text-markup/legacy Ink
-erasure without duplicate toolbar steps. Mixed legacy boundaries retain legacy
-snapshot restoration rather than gaining byte-identical guarantees.
+erasure without duplicate toolbar steps. Drawing cases interleave Ink creation,
+each shape, legacy overlay snapshots, and multi-hit Ink/text-markup erasure;
+failed creation and erasure preserve bytes, the toolbar cursor, and redo.
+Mixed legacy boundaries retain legacy snapshot restoration rather than gaining
+byte-identical guarantees.
 
 ## Export
 

@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { interpretPage } from '../content/interpreter';
-import { clearMarkupAnnotationsOnPage, eraseAnnotationsAtPoint } from '../editor/annotation-engine';
+import { addAnnotationToPage, clearMarkupAnnotationsOnPage, createAnnotationDict, eraseAnnotationsAtPoint, type Annotation } from '../editor/annotation-engine';
 import { addHighlightFromLineSelection } from '../editor/highlight';
 import { replaceImageXObject } from '../editor/image-editor';
 import { updatePageContent } from '../editor/stream-compiler';
@@ -8,7 +8,7 @@ import { insertTextRun } from '../editor/text-editor';
 import { applyLineTextEdit, buildDocumentFlow } from '../flow';
 import { getPageContentBytes, parsePDF } from '../parser/parser';
 import { decodeImage } from '../render/image-decoder';
-import { collectMarkupRemovals, previewMarkupRemoval, removeMarkupReferences, SessionDocumentEditor } from '../session/document-edit';
+import { addDrawingAnnotations, collectDrawingRemovals, collectMarkupRemovals, previewMarkupRemoval, removeMarkupReferences, SessionDocumentEditor } from '../session/document-edit';
 import { PDFArray, PDFDict, PDFRef, PDFStream, type PDFDocumentData } from '../types';
 import { applyWatermarks } from '../watermark/watermark-engine';
 import { getNextObjNum, serializeDocument } from '../writer/serializer';
@@ -69,10 +69,119 @@ function textRuns(doc: PDFDocumentData) {
   return interpretPage(getPageContentBytes(page, doc.objects), page, doc.objects).textRuns;
 }
 
+const drawingCases: { name: string; annotation: Annotation }[] = [
+  { name: 'draw stroke', annotation: {
+    type: 'Ink', rect: { x: 18, y: 88, width: 64, height: 24 },
+    color: [0.2, 0.4, 0.8], opacity: 1, lineWidth: 2, inkPaths: [[20, 90, 50, 110, 80, 90]],
+  } },
+  { name: 'freehand highlighter', annotation: {
+    type: 'Ink', rect: { x: 18, y: 88, width: 64, height: 24 },
+    color: [1, 1, 0], opacity: 0.4, lineWidth: 8, inkPaths: [[20, 90, 80, 90]],
+  } },
+  { name: 'rectangle', annotation: {
+    type: 'Square', rect: { x: 20, y: 90, width: 60, height: 30 },
+    color: [0.2, 0.4, 0.8], opacity: 1, lineWidth: 2, fillColor: null,
+  } },
+  { name: 'ellipse', annotation: {
+    type: 'Circle', rect: { x: 20, y: 90, width: 60, height: 30 },
+    color: [0.2, 0.4, 0.8], opacity: 1, lineWidth: 2, fillColor: null,
+  } },
+  ...(['None', 'OpenArrow'] as const).map(endStyle => ({
+    name: endStyle === 'None' ? 'line' : 'arrow',
+    annotation: {
+      type: 'Line' as const, rect: { x: 12, y: 82, width: 76, height: 46 },
+      color: [0.2, 0.4, 0.8] as [number, number, number], opacity: 1, lineWidth: 2,
+      x1: 80, y1: 90, x2: 20, y2: 120, startStyle: 'None' as const, endStyle,
+    },
+  })),
+];
+
 beforeEach(installPNGEnvironment);
 afterEach(() => vi.unstubAllGlobals());
 
 describe('SessionDocumentEditor', () => {
+  it.each(drawingCases)('restores exact $name bytes and isolates failed creation', async ({ annotation }) => {
+    const doc = await parsePDF(textFixture());
+    const direct = await parsePDF(textFixture());
+    const original = await serializeDocument(doc);
+    const editor = new SessionDocumentEditor();
+    const failure = new Error('drawing staging failed');
+    await expect(editor.edit(doc, 'draw', async staged => {
+      addDrawingAnnotations(staged, 0, [annotation]);
+      throw failure;
+    })).rejects.toBe(failure);
+    expect(await serializeDocument(doc)).toEqual(original);
+    expect(editor.canUndo).toBe(false);
+    await editor.edit(doc, 'draw', async staged => { addDrawingAnnotations(staged, 0, [annotation]); });
+    const ref = new PDFRef(getNextObjNum(direct), 0);
+    const { dict } = createAnnotationDict(annotation, ref.objNum, direct.objects);
+    addAnnotationToPage(direct.pages[0].dict, dict, ref, direct.objects);
+    const applied = await serializeDocument(doc);
+    expect(applied).toEqual(await serializeDocument(direct));
+    const reopened = await parsePDF(applied);
+    const annotationDict = (target: PDFDocumentData) =>
+      target.objects.get((target.pages[0].dict.getArray('Annots')!.items[0] as PDFRef).toKey()) as PDFDict;
+    const restoredDict = annotationDict(reopened);
+    expect(restoredDict.getName('Subtype')).toBe(annotation.type);
+    for (const key of ['Rect', 'C', 'CA', 'BS', 'InkList', 'L', 'LE']) {
+      expect(restoredDict.get(key)).toEqual(dict.get(key));
+    }
+    const appearance = (target: PDFDocumentData) =>
+      (target.objects.get(annotationDict(target).getDict('AP')!.getRef('N')!.toKey()) as PDFStream).getBytes();
+    expect(appearance(reopened)).toEqual(appearance(direct));
+    for (let cycle = 0; cycle < 2; cycle++) {
+      expect(await editor.undo(doc)).toBe(true);
+      expect(await serializeDocument(doc)).toEqual(original);
+      expect(await editor.redo(doc)).toBe(true);
+      expect(await serializeDocument(doc)).toEqual(applied);
+    }
+  });
+
+  it.each([false, true])('stages Ink erasure with indirect Annots=%s without publishing previews or failures', async indirect => {
+    const doc = await parsePDF(textFixture());
+    addDrawingAnnotations(doc, 0, [
+      { type: 'Ink', rect: { x: 18, y: 88, width: 64, height: 4 }, color: [0, 0, 0],
+        opacity: 1, lineWidth: 2, inkPaths: [[20, 90, 80, 90]] },
+      { type: 'Ink', rect: { x: 18, y: 88, width: 64, height: 4 }, color: [1, 1, 0],
+        opacity: 0.4, lineWidth: 8, inkPaths: [[20, 90, 80, 90]] },
+      { type: 'Square', rect: { x: 140, y: 140, width: 20, height: 20 }, color: [1, 0, 0],
+        opacity: 1, lineWidth: 2 },
+    ]);
+    const refs = [...doc.pages[0].dict.getArray('Annots')!.items] as PDFRef[];
+    if (indirect) {
+      const arrayRef = new PDFRef(getNextObjNum(doc), 0);
+      doc.objects.set(arrayRef.toKey(), doc.pages[0].dict.getArray('Annots')!);
+      doc.pages[0].dict.set('Annots', arrayRef);
+    }
+    const original = await serializeDocument(doc);
+    const hits = collectDrawingRemovals(doc, 0, (dict, objects) => eraseAnnotationsAtPoint(dict, objects, 25, 90, 4));
+    expect(hits.transactional.map(ref => ref.toKey())).toEqual(refs.slice(0, 2).map(ref => ref.toKey()));
+    expect(hits.legacy).toEqual([]);
+    const preview = previewMarkupRemoval(doc, 0, new Map(hits.transactional.map(ref => [ref.toKey(), ref])));
+    expect(preview.pages[0].dict.getArray('Annots')!.items).toEqual([refs[2]]);
+    expect(await serializeDocument(doc)).toEqual(original);
+    const editor = new SessionDocumentEditor();
+    const failure = new Error('Ink erase failed');
+    await expect(editor.edit(doc, 'erase', async staged => {
+      removeMarkupReferences(staged, 0, hits.transactional);
+      throw failure;
+    })).rejects.toBe(failure);
+    expect(await serializeDocument(doc)).toEqual(original);
+    expect(editor.canUndo).toBe(false);
+    await editor.edit(doc, 'erase', async staged => { removeMarkupReferences(staged, 0, hits.transactional); });
+    const erased = await serializeDocument(doc);
+    const reopened = await parsePDF(erased);
+    const annots = reopened.pages[0].dict.get('Annots');
+    const array = annots instanceof PDFRef ? reopened.objects.get(annots.toKey()) as PDFArray : annots as PDFArray;
+    expect(array.items).toEqual([refs[2]]);
+    for (let cycle = 0; cycle < 2; cycle++) {
+      expect(await editor.undo(doc)).toBe(true);
+      expect(await serializeDocument(doc)).toEqual(original);
+      expect(await editor.redo(doc)).toBe(true);
+      expect(await serializeDocument(doc)).toEqual(erased);
+    }
+  });
+
   it.each(['Highlight', 'Underline', 'StrikeOut'] as const)(
     'commits and removes byte-identical %s appearances without publishing failed drafts',
     async subtype => {

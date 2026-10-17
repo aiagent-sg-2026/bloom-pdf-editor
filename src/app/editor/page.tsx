@@ -24,10 +24,10 @@ import {
   getLineBounds, getOverlayFontFamily, getOverlayFontStyle, getDisplayFontFamily,
 } from './utils';
 import { buildDisplayListIndex, hitTestDisplayList, isSelectableDisplayItem, captureHistoryEntry, restoreAnnotSnapshot, restoreDocumentStructure, parseOverlaySnapshot, deleteObject, visualFontSize, resolveRunStyleFlags, transformObject, applyObjectTransform, distributeTextChangeToSegments, segmentAtIndex, createVisualSignature, hitTestSignature, moveSignature, resizeSignature, rotateSignature, setSignatureOpacity, setSignatureLocked, deleteSignature, updateSignature, visualSignatureToImagePlacement, getSignatureLibrary, DEFAULT_SIGNATURE_SIZE, detectSignatureFieldsOnPage, hitTestSignatureField, createSignatureFieldAtPoint, applySignatureFieldAppearanceAsync, getCertificateManager, signDocumentCryptographic, validateDocumentSignatures, enableLongTermValidation, getLtvStatus, listManagedSignatures, buildRevisionViewer, lockSignaturesAfterSigning, pushRecentSignatureId, orderLibraryByRecent, SIGNATURE_SHORTCUTS } from '@/engine/browser-core';
-import type { QuadTree, SelectableItem, EditableObject, EditorHistoryEntry, PDFRef } from '@/engine/browser-core';
+import type { Annotation, QuadTree, SelectableItem, EditableObject, EditorHistoryEntry, PDFRef } from '@/engine/browser-core';
 import { UnsupportedGlyphsError, SessionDocumentEditor } from '@/engine/browser-core';
 import { SessionEditorHistory } from '@/engine/session/editor-history';
-import { collectMarkupRemovals, previewMarkupRemoval, removeMarkupReferences } from '@/engine/session/document-edit';
+import { addDrawingAnnotations, collectDrawingRemovals, collectMarkupRemovals, previewMarkupRemoval, removeMarkupReferences } from '@/engine/session/document-edit';
 import { findMatchingFlowLine } from './flowLineMatch';
 import { commitThenCleanup } from './commit-after-success';
 
@@ -392,9 +392,9 @@ export default function EditorPage() {
   const lastErasePosRef = useRef<{ x: number; y: number } | null>(null);
   /** True if the current erase gesture removed anything (for one undo step). */
   const eraseChangedRef = useRef(false);
-  /** Text-markup hits commit together at the existing erase-gesture boundary. */
-  const erasedTextMarkupRef = useRef(new Map<string, PDFRef>());
-  const textMarkupErasePendingRef = useRef<Promise<void> | null>(null);
+  /** Text-markup and Ink hits commit together at the existing erase-gesture boundary. */
+  const erasedAnnotationsRef = useRef(new Map<string, PDFRef>());
+  const annotationCommitPendingRef = useRef<Promise<void> | null>(null);
   const [pageLinks, setPageLinks] = useState<import('@/engine/browser-core').PageLinkInfo[]>([]);
   const [selectedLink, setSelectedLink] = useState<import('@/engine/browser-core').PageLinkInfo | null>(null);
   const [linkDraftUrl, setLinkDraftUrl] = useState('');
@@ -1159,7 +1159,7 @@ export default function EditorPage() {
         if (normalizedBytes !== rawBytes) {
           await engine.updatePageContent(editablePage.contentRefs, normalizedBytes, doc!.objects);
         }
-        const renderDoc = previewMarkupRemoval(doc!, currentPage, erasedTextMarkupRef.current);
+        const renderDoc = previewMarkupRemoval(doc!, currentPage, erasedAnnotationsRef.current);
         const result = await engine.renderPage(renderDoc, currentPage, { scale });
         if (cancelled) return;
         setRenderResult(result);
@@ -2078,7 +2078,7 @@ export default function EditorPage() {
     if (!doc || !engineRef.current || historyBusyRef.current) return;
     historyBusyRef.current = true;
     try {
-      await textMarkupErasePendingRef.current;
+      await annotationCommitPendingRef.current;
       const result = await historyRef.current.undo(doc);
       if (result) await applyHistoryEntry(result.entry, result.restoredDocument);
     } catch (e) {
@@ -2093,7 +2093,7 @@ export default function EditorPage() {
     if (!doc || !engineRef.current || historyBusyRef.current) return;
     historyBusyRef.current = true;
     try {
-      await textMarkupErasePendingRef.current;
+      await annotationCommitPendingRef.current;
       const result = await historyRef.current.redo(doc);
       if (result) await applyHistoryEntry(result.entry, result.restoredDocument);
     } catch (e) {
@@ -3056,10 +3056,10 @@ export default function EditorPage() {
         mediaBox.x, mediaBox.y,
       );
       const pdfRadius = eraserRadius / scale;
-      const { textMarkup, legacy } = collectMarkupRemovals(doc, currentPage, (dict, objects) =>
+      const { transactional, legacy } = collectDrawingRemovals(doc, currentPage, (dict, objects) =>
         engineRef.current!.eraseAnnotationsAtPoint(dict, objects, pdfX, pdfY, Math.max(pdfRadius, 4)));
-      const previousHits = erasedTextMarkupRef.current.size;
-      for (const ref of textMarkup) erasedTextMarkupRef.current.set(ref.toKey(), ref);
+      const previousHits = erasedAnnotationsRef.current.size;
+      for (const ref of transactional) erasedAnnotationsRef.current.set(ref.toKey(), ref);
       removeMarkupReferences(doc, currentPage, legacy);
       const removed = legacy.length;
       if (removed > 0) {
@@ -3069,7 +3069,7 @@ export default function EditorPage() {
           setRenderKey(k => k + 1);
         }
       }
-      return removed + erasedTextMarkupRef.current.size - previousHits;
+      return removed + erasedAnnotationsRef.current.size - previousHits;
     }
     return 0;
   }, [eraserSize, doc, currentPage, scale, renderResult]);
@@ -3094,23 +3094,10 @@ export default function EditorPage() {
     return removed;
   }, [applyEraser, eraserSize]);
 
-  // ── Commit drawings, texts, and images to PDF ──
-  const commitDrawingsToPdf = useCallback(async (pathsToCommit?: DrawnPath[], textsToCommit?: FloatingText[], imagesToCommit?: FloatingImage[]) => {
-    await textMarkupErasePendingRef.current;
-    const paths = pathsToCommit || drawnPaths;
-    const fTexts = textsToCommit ?? floatingTextsRef.current;
-    const fImages = imagesToCommit || floatingImages;
-    const signaturePlacements = signaturesRef.current
-      .filter((signature) => signature.pageIndex === currentPage)
-      .map((signature) => visualSignatureToImagePlacement(signature, getSignatureLibrary().get(signature.appearanceId)))
-      .filter((placement): placement is NonNullable<typeof placement> => placement !== null);
-    if (!doc || !engineRef.current || (paths.length === 0 && fTexts.length === 0 && fImages.length === 0 && signaturePlacements.length === 0)) return;
-    const engine = engineRef.current;
+  const buildDrawingAnnotations = useCallback((paths: DrawnPath[]): Annotation[] => {
+    if (!doc) return [];
     const page = doc.pages[currentPage];
-    // Check every floating box before drawings, fonts, images, or overlay cleanup can mutate state.
-    await prepareExportText(fTexts.map(ft => ft.text).join('\n'));
-    let currentObjNum = engine.getNextObjNum(doc);
-
+    const annotations: Annotation[] = [];
     const pageHeight = renderResult?.pageHeight || page.mediaBox.height;
 
     const toPdf = (cx: number, cy: number) => canvasToPdf(
@@ -3125,7 +3112,7 @@ export default function EditorPage() {
       const lw = p.size / scale;
       const rgb = hexToRGB(p.color);
 
-      let annotation: import('@/engine/browser-core').Annotation | null = null;
+      let annotation: Annotation | null = null;
 
       if (kind !== 'freehand' && p.start && p.end) {
         const a = toPdf(p.start.x, p.start.y);
@@ -3198,43 +3185,87 @@ export default function EditorPage() {
         };
       }
 
-      if (!annotation) continue;
-
-      const annotationObjNum = currentObjNum;
-      const { dict } = engine.createAnnotationDict(annotation, annotationObjNum, doc.objects);
-
-      const annotRef = new engine.PDFRef(annotationObjNum, 0);
-      engine.addAnnotationToPage(page.dict, dict, annotRef, doc.objects);
-      currentObjNum = engine.getNextObjNum(doc);
+      if (annotation) annotations.push(annotation);
     }
+    return annotations;
+  }, [doc, currentPage, renderResult, scale]);
 
-    let textSession: SessionDocumentEditor | undefined;
-    let textCommitted = false;
+  const commitDrawPath = useCallback(async (path: DrawnPath, label: string) => {
+    if (!doc || !engineRef.current) return;
+    const preview = [...drawnPathsRef.current, path];
+    drawnPathsRef.current = preview;
+    setDrawnPaths(preview);
+    const editor = new SessionDocumentEditor();
+    const commit = (async () => {
+      try {
+        const annotations = buildDrawingAnnotations([path]);
+        await editor.edit(doc, label, async staged => { addDrawingAnnotations(staged, currentPage, annotations); });
+        const remaining = drawnPathsRef.current.filter(item => item.id !== path.id);
+        drawnPathsRef.current = remaining;
+        setDrawnPaths(remaining);
+        pushEditorHistory(label, { drawnPaths: remaining }, undefined, false, editor);
+        setIsDirty(true);
+        setThumbnailKey(k => k + 1);
+      } catch (error) {
+        // Keep the uncommitted overlay for retry at the existing bake boundary.
+        console.warn('[Editor] Drawing annotation failed:', error);
+        setError(error instanceof Error ? error.message : 'Drawing annotation failed');
+      } finally {
+        annotationCommitPendingRef.current = null;
+        setRenderKey(k => k + 1);
+      }
+    })();
+    annotationCommitPendingRef.current = commit;
+    await commit;
+  }, [doc, currentPage, buildDrawingAnnotations, pushEditorHistory]);
+
+  // ── Commit drawings, texts, and images to PDF ──
+  const commitDrawingsToPdf = useCallback(async (pathsToCommit?: DrawnPath[], textsToCommit?: FloatingText[], imagesToCommit?: FloatingImage[]) => {
+    await annotationCommitPendingRef.current;
+    const paths = pathsToCommit ?? drawnPathsRef.current;
+    const fTexts = textsToCommit ?? floatingTextsRef.current;
+    const fImages = imagesToCommit || floatingImages;
+    const signaturePlacements = signaturesRef.current
+      .filter((signature) => signature.pageIndex === currentPage)
+      .map((signature) => visualSignatureToImagePlacement(signature, getSignatureLibrary().get(signature.appearanceId)))
+      .filter((placement): placement is NonNullable<typeof placement> => placement !== null);
+    if (!doc || !engineRef.current || (paths.length === 0 && fTexts.length === 0 && fImages.length === 0 && signaturePlacements.length === 0)) return;
+    const engine = engineRef.current;
+    const page = doc.pages[currentPage];
+    // Check every floating box before drawings, fonts, images, or overlay cleanup can mutate state.
+    await prepareExportText(fTexts.map(ft => ft.text).join('\n'));
+    let currentObjNum = engine.getNextObjNum(doc);
+
+    const annotations = buildDrawingAnnotations(paths);
+    let nativeSession: SessionDocumentEditor | undefined;
+    let nativeCommitted = false;
     try {
-      let newContentBytes: Uint8Array;
-      if (fTexts.length > 0 || fImages.length > 0 || signaturePlacements.length > 0) {
-        const contentBytes = engine.getPageContentBytes(page, doc.objects);
-        newContentBytes = new Uint8Array(contentBytes);
-    
-        if (fTexts.some(ft => ft.text.trim())) {
-          textSession = new SessionDocumentEditor();
-          await textSession.edit(doc, 'add-text-box', async staged => {
+      if (annotations.length > 0 || fTexts.some(ft => ft.text.trim())) {
+        nativeSession = new SessionDocumentEditor();
+        await nativeSession.edit(doc, annotations.length > 0 ? 'commit-drawings' : 'add-text-box', async staged => {
+          addDrawingAnnotations(staged, currentPage, annotations);
+          if (fTexts.some(ft => ft.text.trim())) {
             const stagedPage = staged.pages[currentPage];
+            let bytes = engine.getPageContentBytes(stagedPage, staged.objects);
             await prepareExportText(fTexts.map(ft => ft.text).join('\n'), undefined, staged);
             for (const ft of fTexts) {
               if (!ft.text.trim()) continue;
-              newContentBytes = engine.insertTextRun(
-                newContentBytes, stagedPage, staged.objects,
+              bytes = engine.insertTextRun(
+                bytes, stagedPage, staged.objects,
                 ft.text, ft.pdfX, ft.pdfY, ft.fontSize, hexToRGB(ft.color),
                 { fontFamily: ft.fontFamily, bold: ft.bold, italic: ft.italic, underline: ft.underline, opacity: ft.opacity, width: ft.pdfWidth },
               );
             }
-            await engine.updatePageContent(stagedPage.contentRefs, newContentBytes, staged.objects);
-          });
-          textCommitted = true;
-          // Font objects allocated by text insertion precede legacy image allocations.
-          currentObjNum = engine.getNextObjNum(doc);
-        }
+            await engine.updatePageContent(stagedPage.contentRefs, bytes, staged.objects);
+          }
+        });
+        nativeCommitted = true;
+        currentObjNum = engine.getNextObjNum(doc);
+      }
+      let newContentBytes: Uint8Array;
+      if (fTexts.length > 0 || fImages.length > 0 || signaturePlacements.length > 0) {
+        const contentBytes = engine.getPageContentBytes(page, doc.objects);
+        newContentBytes = new Uint8Array(contentBytes);
     
         for (const fi of fImages) {
           const { newContentBytes: b } = await engine.insertImageRun(
@@ -3277,6 +3308,7 @@ export default function EditorPage() {
         () => {
           const clearedOverlays = { drawnPaths: [] as DrawnPath[], floatingTexts: [] as FloatingText[], floatingImages: [] as FloatingImage[] };
           setDrawnPaths([]);
+          drawnPathsRef.current = [];
           setFloatingTexts([]);
           floatingTextsRef.current = [];
           setFloatingImages([]);
@@ -3286,19 +3318,19 @@ export default function EditorPage() {
           const remainingSignatures = signaturesRef.current.filter((signature) => !committedSignatureIds.has(signature.id));
           setSignatures(remainingSignatures);
           signaturesRef.current = remainingSignatures;
-          pushEditorHistory('commit-drawings', { ...clearedOverlays, signatures: remainingSignatures }, undefined, true, textSession);
+          pushEditorHistory('commit-drawings', { ...clearedOverlays, signatures: remainingSignatures }, undefined, true, nativeSession);
           setIsDirty(true);
           setRenderKey(k => k + 1);
-          if (textCommitted) setThumbnailKey(k => k + 1);
+          if (nativeCommitted) setThumbnailKey(k => k + 1);
         },
       );
     } catch (error) {
-      // Keep the editable boxes available for retry without inserting them twice.
-      if (textCommitted && textSession) await textSession.undo(doc);
+      // Keep editable overlays available for retry without duplicating native insertions.
+      if (nativeCommitted && nativeSession) await nativeSession.undo(doc);
       throw error;
     }
 
-  }, [doc, currentPage, drawnPaths, floatingTexts, floatingImages, scale, renderResult, pushEditorHistory, prepareExportText]);
+  }, [doc, currentPage, drawnPaths, floatingTexts, floatingImages, pushEditorHistory, prepareExportText, buildDrawingAnnotations]);
 
   const strokeShapePreview = useCallback((
     ctx: CanvasRenderingContext2D,
@@ -3348,7 +3380,7 @@ export default function EditorPage() {
 
   const handleDrawStart = useCallback((e: React.MouseEvent) => {
     if (activeTool !== 'draw' && activeTool !== 'highlight' && activeTool !== 'erase') return;
-    if (activeTool === 'erase' && textMarkupErasePendingRef.current) return;
+    if (annotationCommitPendingRef.current || historyBusyRef.current) return;
     const overlay = overlayRef.current;
     if (!overlay) return;
 
@@ -3467,9 +3499,9 @@ export default function EditorPage() {
     lastErasePosRef.current = null;
 
     if (activeTool === 'erase') {
-      if (textMarkupErasePendingRef.current) return;
+      if (annotationCommitPendingRef.current) return;
       const legacyChanged = eraseChangedRef.current;
-      const pending = erasedTextMarkupRef.current;
+      const pending = erasedAnnotationsRef.current;
       const refs = [...pending.values()];
       eraseChangedRef.current = false;
       if (legacyChanged) pushEditorHistory('erase');
@@ -3483,14 +3515,14 @@ export default function EditorPage() {
             setIsDirty(true);
             setThumbnailKey(k => k + 1);
           } catch (error) {
-            console.warn('[Editor] Text markup erase failed:', error);
+            console.warn('[Editor] Annotation erase failed:', error);
           } finally {
-            if (erasedTextMarkupRef.current === pending) pending.clear();
-            textMarkupErasePendingRef.current = null;
+            if (erasedAnnotationsRef.current === pending) pending.clear();
+            annotationCommitPendingRef.current = null;
             setRenderKey(k => k + 1);
           }
         })();
-        textMarkupErasePendingRef.current = commit;
+        annotationCommitPendingRef.current = commit;
         await commit;
       }
       return;
@@ -3511,12 +3543,7 @@ export default function EditorPage() {
           start,
           end,
         };
-        setDrawnPaths((prev) => {
-          const next = [...prev, newPath];
-          drawnPathsRef.current = next;
-          pushEditorHistory('draw-shape', { drawnPaths: next });
-          return next;
-        });
+        await commitDrawPath(newPath, 'draw-shape');
       }
       shapeStartRef.current = null;
       shapeEndRef.current = null;
@@ -3538,16 +3565,11 @@ export default function EditorPage() {
         points: [...currentDrawPath.current],
       };
 
-      setDrawnPaths((prev) => {
-        const next = [...prev, newPath];
-        drawnPathsRef.current = next;
-        pushEditorHistory(activeTool === 'highlight' ? 'highlight-stroke' : 'draw-stroke', { drawnPaths: next });
-        return next;
-      });
+      await commitDrawPath(newPath, activeTool === 'highlight' ? 'highlight-stroke' : 'draw-stroke');
     }
     currentDrawPath.current = [];
     drawDraggedRef.current = false;
-  }, [isDrawing, activeTool, drawMode, drawColor, drawSize, highlightColor, highlightSize, pushEditorHistory, doc, currentPage]);
+  }, [isDrawing, activeTool, drawMode, drawColor, drawSize, highlightColor, highlightSize, pushEditorHistory, doc, currentPage, commitDrawPath]);
 
   const openLinkHover = useCallback((link: import('@/engine/browser-core').PageLinkInfo) => {
     if (linkHoverTimerRef.current) {
@@ -4569,7 +4591,7 @@ export default function EditorPage() {
     try {
       setIsSaving(true);
       setGlyphWarning(null);
-      await textMarkupErasePendingRef.current;
+      await annotationCommitPendingRef.current;
       const result = await engineRef.current.exportDocument(doc, {
         mode: saveMode,
         prepare: () => prepareExportText(floatingTextsRef.current.map(ft => ft.text).join('\n')),
@@ -4606,7 +4628,7 @@ export default function EditorPage() {
       setIsSaving(true);
       setError(null);
       setGlyphWarning(null);
-      await textMarkupErasePendingRef.current;
+      await annotationCommitPendingRef.current;
       await prepareExportText(floatingTextsRef.current.map(ft => ft.text).join('\n'));
       if (editingLineRef.current && !await handleEditSubmit()) return;
       // Capture pending overlays before committing them; compare exportable
@@ -5137,7 +5159,7 @@ export default function EditorPage() {
         onClearPaths={async () => {
           let editor: SessionDocumentEditor | undefined;
           try {
-            await textMarkupErasePendingRef.current;
+            await annotationCommitPendingRef.current;
             if (doc && engineRef.current) {
               const { textMarkup, legacy } = collectMarkupRemovals(doc, currentPage, engineRef.current.clearMarkupAnnotationsOnPage);
               if (textMarkup.length > 0) {
@@ -5170,7 +5192,7 @@ export default function EditorPage() {
         isSearchOpen={isSearchOpen}
         onToggleSearch={() => setIsSearchOpen(!isSearchOpen)}
         onExport={async () => {
-          await textMarkupErasePendingRef.current;
+          await annotationCommitPendingRef.current;
           setShowExportPanel(true);
         }}
         doc={doc}
