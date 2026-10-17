@@ -216,6 +216,23 @@ in addition to legacy snapshots, so the 50-entry limit is not a memory-size limi
 - Watermark removal, initial text normalization,
   export/compression, autosave, recovery, and browser persistence.
 
+The remaining UI migration is gated in this order; none of these steps has
+completed the passing-test gate:
+
+1. Text edits and Add Text Box.
+2. Highlight, underline, and strikeout.
+3. Drawing, erasing, and shapes.
+4. Signatures and form-field edits.
+5. Page rotation, deletion, reordering, and insertion.
+
+The text gate has tests-first cases in
+`src/engine/__tests__/session-document-editor.test.ts` for native existing-line
+replacement and styled text-box insertion: direct-operation byte parity,
+live/reopened text, repeated byte-identical undo/redo, and isolation after a
+staged edit throws. These added cases have not been executed. They exercise the
+native bridge, not the page's legacy text handlers; no production text path has
+been migrated. Keep every path above unchanged until its ordered gate passes.
+
 Contract coverage is in `src/engine/__tests__/document-session.test.ts`.
 `src/engine/__tests__/session-document-editor.test.ts` covers native watermark
 parity, byte-identical text/image watermark and image-replacement undo/redo,
