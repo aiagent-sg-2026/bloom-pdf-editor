@@ -99,6 +99,22 @@ export async function decodeImage(
 
 // ─── Soft masks ─────────────────────────────────────────────────────────────
 
+/** Matte components are in the base colour space, not the mask's DeviceGray. */
+function getRGBMatte(dict: PDFDict, mask: PDFDict, objects: Map<string, PDFObject>): number[] | null {
+  const entry = mask.get('Matte');
+  if (!entry || (dict.getBool('ImageMask') ?? dict.getBool('IM') ?? false)) return null;
+  const csEntry = dict.get('ColorSpace') ?? dict.get('CS');
+  const cs = csEntry ? resolveRef(csEntry, objects) : undefined;
+  // Unblending converted RGB is unsafe for Indexed, ICC, and other colour spaces.
+  if (!(cs instanceof PDFName) || (cs.name !== 'DeviceRGB' && cs.name !== 'RGB')) return null;
+  const array = resolveRef(entry, objects);
+  if (!(array instanceof PDFArray) || array.length !== 3) return null;
+  const matte = array.asNumbers();
+  if (matte.some(value => !Number.isFinite(value) || value < 0 || value > 1)) return null;
+  for (let c = 0; c < 3; c++) matte[c] *= 255;
+  return matte;
+}
+
 function applySoftMask(
   image: DecodedImage | null,
   dict: PDFDict,
@@ -128,6 +144,7 @@ function applySoftMask(
   const src = smask.getBytes();
   const scaleX = maskWidth / image.width;
   const scaleY = maskHeight / image.height;
+  const matte = getRGBMatte(dict, smask.dict, objects);
 
   // Sample directly into RGBA: no intermediate unpacked or resized mask buffer.
   for (let y = 0, k = 3; y < image.height; y++) {
@@ -143,7 +160,17 @@ function applySoftMask(
       const sample = bpc === 16
         ? src[byteOffset] * 256 + src[byteOffset + 1]
         : (src[byteOffset] >> (8 - bpc - (bitOffset & 7))) & maxSample;
-      image.data[k] = Math.round(alphaOffset + sample * alphaScale);
+      const alphaByte = alphaOffset + sample * alphaScale;
+      image.data[k] = Math.round(alphaByte);
+      if (matte && alphaByte > 0 && alphaByte < 255) {
+        // ISO 32000-1 §11.6.5.3: c = m + (c' - m) / alpha.
+        // Use unrounded mask alpha; Uint8ClampedArray clamps recovered RGB.
+        const inverseAlpha = 255 / alphaByte;
+        for (let c = 0; c < 3; c++) {
+          const index = k - 3 + c;
+          image.data[index] = Math.round(matte[c] + (image.data[index] - matte[c]) * inverseAlpha);
+        }
+      }
     }
   }
 
