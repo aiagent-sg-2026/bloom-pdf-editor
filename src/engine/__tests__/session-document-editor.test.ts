@@ -1,13 +1,15 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { interpretPage } from '../content/interpreter';
+import { clearMarkupAnnotationsOnPage, eraseAnnotationsAtPoint } from '../editor/annotation-engine';
+import { addHighlightFromLineSelection } from '../editor/highlight';
 import { replaceImageXObject } from '../editor/image-editor';
 import { updatePageContent } from '../editor/stream-compiler';
 import { insertTextRun } from '../editor/text-editor';
 import { applyLineTextEdit, buildDocumentFlow } from '../flow';
 import { getPageContentBytes, parsePDF } from '../parser/parser';
 import { decodeImage } from '../render/image-decoder';
-import { SessionDocumentEditor } from '../session/document-edit';
-import { PDFStream, type PDFDocumentData } from '../types';
+import { collectMarkupRemovals, previewMarkupRemoval, removeMarkupReferences, SessionDocumentEditor } from '../session/document-edit';
+import { PDFArray, PDFDict, PDFRef, PDFStream, type PDFDocumentData } from '../types';
 import { applyWatermarks } from '../watermark/watermark-engine';
 import { getNextObjNum, serializeDocument } from '../writer/serializer';
 import { installPNGEnvironment, rawPDF, tinyPNG } from './audit-p1-fixtures';
@@ -71,6 +73,96 @@ beforeEach(installPNGEnvironment);
 afterEach(() => vi.unstubAllGlobals());
 
 describe('SessionDocumentEditor', () => {
+  it.each(['Highlight', 'Underline', 'StrikeOut'] as const)(
+    'commits and removes byte-identical %s appearances without publishing failed drafts',
+    async subtype => {
+      const doc = await parsePDF(textFixture());
+      const direct = await parsePDF(textFixture());
+      const original = await serializeDocument(doc);
+      const line = buildDocumentFlow(textRuns(doc)).lines[0];
+      const add = (target: PDFDocumentData) =>
+        addHighlightFromLineSelection(target, 0, line, 0, line.text.length, [1, 1, 0], subtype);
+      const editor = new SessionDocumentEditor();
+      const failure = new Error('markup staging failed');
+      await expect(editor.edit(doc, subtype, async staged => {
+        add(staged);
+        throw failure;
+      })).rejects.toBe(failure);
+      expect(await serializeDocument(doc)).toEqual(original);
+      expect(editor.canUndo).toBe(false);
+      await editor.edit(doc, subtype, async staged => { add(staged); });
+      add(direct);
+      const applied = await serializeDocument(doc);
+      expect(applied).toEqual(await serializeDocument(direct));
+      const appearance = (target: PDFDocumentData) => {
+        const annots = target.pages[0].dict.get('Annots') as PDFArray;
+        const annot = target.objects.get((annots.items[0] as PDFRef).toKey()) as PDFDict;
+        expect(annot.getName('Subtype')).toBe(subtype);
+        const ap = target.objects.get(annot.getDict('AP')!.getRef('N')!.toKey()) as PDFStream;
+        return ap.getBytes();
+      };
+      expect(appearance(await parsePDF(applied))).toEqual(appearance(doc));
+      for (let cycle = 0; cycle < 2; cycle++) {
+        expect(await editor.undo(doc)).toBe(true);
+        expect(await serializeDocument(doc)).toEqual(original);
+        expect(await editor.redo(doc)).toBe(true);
+        expect(await serializeDocument(doc)).toEqual(applied);
+      }
+      for (const operation of [
+        (dict: PDFDict, objects: PDFDocumentData['objects']) => eraseAnnotationsAtPoint(dict, objects, 25, 140, 4),
+        clearMarkupAnnotationsOnPage,
+      ]) {
+        const { textMarkup, legacy } = collectMarkupRemovals(doc, 0, operation);
+        expect(textMarkup.map(ref => ref.toKey())).toEqual(
+          (doc.pages[0].dict.get('Annots') as PDFArray).items.map(ref => (ref as PDFRef).toKey()),
+        );
+        expect(legacy).toEqual([]);
+        const preview = previewMarkupRemoval(doc, 0, new Map(textMarkup.map(ref => [ref.toKey(), ref])));
+        expect(preview.pages[0].dict.getArray('Annots')!.items).toEqual([]);
+        expect(await serializeDocument(doc)).toEqual(applied);
+        const removal = new SessionDocumentEditor();
+        await expect(removal.edit(doc, 'erase', async staged => {
+          removeMarkupReferences(staged, 0, textMarkup);
+          throw failure;
+        })).rejects.toBe(failure);
+        expect(await serializeDocument(doc)).toEqual(applied);
+        expect(removal.canUndo).toBe(false);
+        await removal.edit(doc, 'erase', async staged => { removeMarkupReferences(staged, 0, textMarkup); });
+        const removed = await serializeDocument(doc);
+        expect((await parsePDF(removed)).pages[0].dict.get('Annots')).toEqual(new PDFArray());
+        expect(await removal.undo(doc)).toBe(true);
+        expect(await serializeDocument(doc)).toEqual(applied);
+        expect(await removal.redo(doc)).toBe(true);
+        expect(await serializeDocument(doc)).toEqual(removed);
+        await removal.undo(doc);
+      }
+    },
+  );
+
+  it('restores an indirect annotation array after transactional erasure', async () => {
+    const doc = await parsePDF(textFixture());
+    const line = buildDocumentFlow(textRuns(doc)).lines[0];
+    const ref = addHighlightFromLineSelection(doc, 0, line, 0, line.text.length, [1, 1, 0], 'Underline')!;
+    const annots = doc.pages[0].dict.getArray('Annots')!;
+    const arrayRef = new PDFRef(getNextObjNum(doc), 0);
+    doc.objects.set(arrayRef.toKey(), annots);
+    doc.pages[0].dict.set('Annots', arrayRef);
+    const original = await serializeDocument(doc);
+    const hit = collectMarkupRemovals(doc, 0, (dict, objects) => eraseAnnotationsAtPoint(dict, objects, 25, 140, 4));
+    expect(hit.textMarkup.map(item => item.toKey())).toEqual([ref.toKey()]);
+    expect(await serializeDocument(doc)).toEqual(original);
+    const editor = new SessionDocumentEditor();
+    await editor.edit(doc, 'erase', async staged => { removeMarkupReferences(staged, 0, hit.textMarkup); });
+    const erased = await serializeDocument(doc);
+    const reopened = await parsePDF(erased);
+    expect((reopened.objects.get(arrayRef.toKey()) as PDFArray).items).toEqual([]);
+    expect(reopened.pages[0].dict.getRef('Annots')!.toKey()).toBe(arrayRef.toKey());
+    expect(await editor.undo(doc)).toBe(true);
+    expect(await serializeDocument(doc)).toEqual(original);
+    expect(await editor.redo(doc)).toBe(true);
+    expect(await serializeDocument(doc)).toEqual(erased);
+  });
+
   it.each<TextEditKind>(['existing-line', 'add-text-box'])(
     'restores byte-identical %s revisions without changing native output',
     async kind => {
