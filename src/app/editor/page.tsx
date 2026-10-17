@@ -24,9 +24,10 @@ import {
   getLineBounds, getOverlayFontFamily, getOverlayFontStyle, getDisplayFontFamily,
 } from './utils';
 import { buildDisplayListIndex, hitTestDisplayList, isSelectableDisplayItem, captureHistoryEntry, restoreAnnotSnapshot, restoreDocumentStructure, parseOverlaySnapshot, deleteObject, visualFontSize, resolveRunStyleFlags, transformObject, applyObjectTransform, distributeTextChangeToSegments, segmentAtIndex, createVisualSignature, hitTestSignature, moveSignature, resizeSignature, rotateSignature, setSignatureOpacity, setSignatureLocked, deleteSignature, updateSignature, visualSignatureToImagePlacement, getSignatureLibrary, DEFAULT_SIGNATURE_SIZE, detectSignatureFieldsOnPage, hitTestSignatureField, createSignatureFieldAtPoint, applySignatureFieldAppearanceAsync, getCertificateManager, signDocumentCryptographic, validateDocumentSignatures, enableLongTermValidation, getLtvStatus, listManagedSignatures, buildRevisionViewer, lockSignaturesAfterSigning, pushRecentSignatureId, orderLibraryByRecent, SIGNATURE_SHORTCUTS } from '@/engine/browser-core';
-import type { QuadTree, SelectableItem, EditableObject, EditorHistoryEntry } from '@/engine/browser-core';
+import type { QuadTree, SelectableItem, EditableObject, EditorHistoryEntry, PDFRef } from '@/engine/browser-core';
 import { UnsupportedGlyphsError, SessionDocumentEditor } from '@/engine/browser-core';
 import { SessionEditorHistory } from '@/engine/session/editor-history';
+import { collectMarkupRemovals, previewMarkupRemoval, removeMarkupReferences } from '@/engine/session/document-edit';
 import { findMatchingFlowLine } from './flowLineMatch';
 import { commitThenCleanup } from './commit-after-success';
 
@@ -391,6 +392,9 @@ export default function EditorPage() {
   const lastErasePosRef = useRef<{ x: number; y: number } | null>(null);
   /** True if the current erase gesture removed anything (for one undo step). */
   const eraseChangedRef = useRef(false);
+  /** Text-markup hits commit together at the existing erase-gesture boundary. */
+  const erasedTextMarkupRef = useRef(new Map<string, PDFRef>());
+  const textMarkupErasePendingRef = useRef<Promise<void> | null>(null);
   const [pageLinks, setPageLinks] = useState<import('@/engine/browser-core').PageLinkInfo[]>([]);
   const [selectedLink, setSelectedLink] = useState<import('@/engine/browser-core').PageLinkInfo | null>(null);
   const [linkDraftUrl, setLinkDraftUrl] = useState('');
@@ -1155,7 +1159,8 @@ export default function EditorPage() {
         if (normalizedBytes !== rawBytes) {
           await engine.updatePageContent(editablePage.contentRefs, normalizedBytes, doc!.objects);
         }
-        const result = await engine.renderPage(doc!, currentPage, { scale });
+        const renderDoc = previewMarkupRemoval(doc!, currentPage, erasedTextMarkupRef.current);
+        const result = await engine.renderPage(renderDoc, currentPage, { scale });
         if (cancelled) return;
         setRenderResult(result);
 
@@ -2073,6 +2078,7 @@ export default function EditorPage() {
     if (!doc || !engineRef.current || historyBusyRef.current) return;
     historyBusyRef.current = true;
     try {
+      await textMarkupErasePendingRef.current;
       const result = await historyRef.current.undo(doc);
       if (result) await applyHistoryEntry(result.entry, result.restoredDocument);
     } catch (e) {
@@ -2087,6 +2093,7 @@ export default function EditorPage() {
     if (!doc || !engineRef.current || historyBusyRef.current) return;
     historyBusyRef.current = true;
     try {
+      await textMarkupErasePendingRef.current;
       const result = await historyRef.current.redo(doc);
       if (result) await applyHistoryEntry(result.entry, result.restoredDocument);
     } catch (e) {
@@ -2836,19 +2843,23 @@ export default function EditorPage() {
       if (hit && hit.runs[0] && engineRef.current && doc) {
         setSelectedLine(hit);
         try {
-          const [r, g, b] = hexToRGB(highlightColor);
-          engineRef.current.addHighlightFromLineSelection(
-            doc,
-            currentPage,
-            hit,
-            0,
-            hit.text.length,
-            [r, g, b],
-            'Highlight',
-          );
-          pushEditorHistory('highlight');
+          const engine = engineRef.current;
+          await sessionEditorRef.current.edit(doc, 'highlight', async staged => {
+            engine.addHighlightFromLineSelection(
+              staged,
+              currentPage,
+              hit,
+              0,
+              hit.text.length,
+              hexToRGB(highlightColor),
+              'Highlight',
+            );
+          });
+          pushEditorHistory('highlight', undefined, undefined, false, sessionEditorRef.current);
+          sessionEditorRef.current = new SessionDocumentEditor();
           setIsDirty(true);
           setRenderKey(k => k + 1);
+          setThumbnailKey(k => k + 1);
         } catch (err) {
           console.warn('[Editor] Highlight annotation failed:', err);
         }
@@ -3045,13 +3056,12 @@ export default function EditorPage() {
         mediaBox.x, mediaBox.y,
       );
       const pdfRadius = eraserRadius / scale;
-      const removed = engineRef.current.eraseAnnotationsAtPoint(
-        page.dict,
-        doc.objects,
-        pdfX,
-        pdfY,
-        Math.max(pdfRadius, 4),
-      );
+      const { textMarkup, legacy } = collectMarkupRemovals(doc, currentPage, (dict, objects) =>
+        engineRef.current!.eraseAnnotationsAtPoint(dict, objects, pdfX, pdfY, Math.max(pdfRadius, 4)));
+      const previousHits = erasedTextMarkupRef.current.size;
+      for (const ref of textMarkup) erasedTextMarkupRef.current.set(ref.toKey(), ref);
+      removeMarkupReferences(doc, currentPage, legacy);
+      const removed = legacy.length;
       if (removed > 0) {
         eraseChangedRef.current = true;
         if (!opts?.deferAnnotRender) {
@@ -3059,7 +3069,7 @@ export default function EditorPage() {
           setRenderKey(k => k + 1);
         }
       }
-      return removed;
+      return removed + erasedTextMarkupRef.current.size - previousHits;
     }
     return 0;
   }, [eraserSize, doc, currentPage, scale, renderResult]);
@@ -3086,6 +3096,7 @@ export default function EditorPage() {
 
   // ── Commit drawings, texts, and images to PDF ──
   const commitDrawingsToPdf = useCallback(async (pathsToCommit?: DrawnPath[], textsToCommit?: FloatingText[], imagesToCommit?: FloatingImage[]) => {
+    await textMarkupErasePendingRef.current;
     const paths = pathsToCommit || drawnPaths;
     const fTexts = textsToCommit ?? floatingTextsRef.current;
     const fImages = imagesToCommit || floatingImages;
@@ -3337,6 +3348,7 @@ export default function EditorPage() {
 
   const handleDrawStart = useCallback((e: React.MouseEvent) => {
     if (activeTool !== 'draw' && activeTool !== 'highlight' && activeTool !== 'erase') return;
+    if (activeTool === 'erase' && textMarkupErasePendingRef.current) return;
     const overlay = overlayRef.current;
     if (!overlay) return;
 
@@ -3352,8 +3364,7 @@ export default function EditorPage() {
       lastErasePosRef.current = { x, y };
       const removed = applyEraserStroke(null, { x, y });
       if (removed > 0) {
-        eraseChangedRef.current = true;
-        setIsDirty(true);
+        if (eraseChangedRef.current) setIsDirty(true);
         setRenderKey(k => k + 1);
       }
     } else if (activeTool === 'draw' && drawMode !== 'freehand') {
@@ -3382,8 +3393,7 @@ export default function EditorPage() {
       const removed = applyEraserStroke(lastErasePosRef.current, { x, y });
       lastErasePosRef.current = { x, y };
       if (removed > 0) {
-        eraseChangedRef.current = true;
-        setIsDirty(true);
+        if (eraseChangedRef.current) setIsDirty(true);
         setRenderKey(k => k + 1);
       }
       return;
@@ -3451,16 +3461,37 @@ export default function EditorPage() {
     }
   }, [isDrawing, activeTool, drawMode, drawColor, drawSize, highlightColor, highlightSize, applyEraserStroke, strokeShapePreview, drawOverlay]);
 
-  const handleDrawEnd = useCallback(() => {
+  const handleDrawEnd = useCallback(async () => {
     if (!isDrawing) return;
     setIsDrawing(false);
     lastErasePosRef.current = null;
 
     if (activeTool === 'erase') {
-      if (eraseChangedRef.current) {
-        // Also capture overlay path erasures via current drawnPaths state
-        pushEditorHistory('erase');
-        eraseChangedRef.current = false;
+      if (textMarkupErasePendingRef.current) return;
+      const legacyChanged = eraseChangedRef.current;
+      const pending = erasedTextMarkupRef.current;
+      const refs = [...pending.values()];
+      eraseChangedRef.current = false;
+      if (legacyChanged) pushEditorHistory('erase');
+      if (doc && refs.length > 0) {
+        const editor = new SessionDocumentEditor();
+        const commit = (async () => {
+          try {
+            await editor.edit(doc, 'erase', async staged => { removeMarkupReferences(staged, currentPage, refs); });
+            // Append to the legacy gesture rather than introducing a second undo step.
+            pushEditorHistory('erase', undefined, undefined, legacyChanged, editor);
+            setIsDirty(true);
+            setThumbnailKey(k => k + 1);
+          } catch (error) {
+            console.warn('[Editor] Text markup erase failed:', error);
+          } finally {
+            if (erasedTextMarkupRef.current === pending) pending.clear();
+            textMarkupErasePendingRef.current = null;
+            setRenderKey(k => k + 1);
+          }
+        })();
+        textMarkupErasePendingRef.current = commit;
+        await commit;
       }
       return;
     }
@@ -3516,7 +3547,7 @@ export default function EditorPage() {
     }
     currentDrawPath.current = [];
     drawDraggedRef.current = false;
-  }, [isDrawing, activeTool, drawMode, drawColor, drawSize, highlightColor, highlightSize, pushEditorHistory]);
+  }, [isDrawing, activeTool, drawMode, drawColor, drawSize, highlightColor, highlightSize, pushEditorHistory, doc, currentPage]);
 
   const openLinkHover = useCallback((link: import('@/engine/browser-core').PageLinkInfo) => {
     if (linkHoverTimerRef.current) {
@@ -4538,6 +4569,7 @@ export default function EditorPage() {
     try {
       setIsSaving(true);
       setGlyphWarning(null);
+      await textMarkupErasePendingRef.current;
       const result = await engineRef.current.exportDocument(doc, {
         mode: saveMode,
         prepare: () => prepareExportText(floatingTextsRef.current.map(ft => ft.text).join('\n')),
@@ -4574,6 +4606,7 @@ export default function EditorPage() {
       setIsSaving(true);
       setError(null);
       setGlyphWarning(null);
+      await textMarkupErasePendingRef.current;
       await prepareExportText(floatingTextsRef.current.map(ft => ft.text).join('\n'));
       if (editingLineRef.current && !await handleEditSubmit()) return;
       // Capture pending overlays before committing them; compare exportable
@@ -5101,23 +5134,45 @@ export default function EditorPage() {
         onZoomOut={zoomOut}
         onUndo={handleUndo}
         onRedo={handleRedo}
-        onClearPaths={() => {
-          setDrawnPaths([]);
-          drawnPathsRef.current = [];
-          if (doc && engineRef.current) {
-            const page = doc.pages[currentPage];
-            engineRef.current.clearMarkupAnnotationsOnPage(page.dict, doc.objects);
+        onClearPaths={async () => {
+          let editor: SessionDocumentEditor | undefined;
+          try {
+            await textMarkupErasePendingRef.current;
+            if (doc && engineRef.current) {
+              const { textMarkup, legacy } = collectMarkupRemovals(doc, currentPage, engineRef.current.clearMarkupAnnotationsOnPage);
+              if (textMarkup.length > 0) {
+                editor = new SessionDocumentEditor();
+                await editor.edit(doc, 'clear-markup', async staged => { removeMarkupReferences(staged, currentPage, textMarkup); });
+              }
+              removeMarkupReferences(doc, currentPage, legacy);
+              setDrawnPaths([]);
+              drawnPathsRef.current = [];
+              pushEditorHistory('clear-markup', { drawnPaths: [] }, undefined, false, editor);
+              // The byte boundary covers text markup; keep legacy clear redo coverage.
+              if (editor && (legacy.length > 0 || drawnPaths.length > 0)) {
+                pushEditorHistory('clear-markup', { drawnPaths: [] }, undefined, true);
+              }
+              if (editor) setThumbnailKey(k => k + 1);
+            } else {
+              setDrawnPaths([]);
+              drawnPathsRef.current = [];
+              pushEditorHistory('clear-markup', { drawnPaths: [] });
+            }
+            setIsDirty(true);
+            setRenderKey(k => k + 1);
+          } catch (error) {
+            console.warn('[Editor] Clear markup failed:', error);
           }
-          pushEditorHistory('clear-markup', { drawnPaths: [] });
-          setIsDirty(true);
-          setRenderKey(k => k + 1);
         }}
         onDownload={handleDownload}
         saveMode={saveMode}
         onSaveModeChange={setSaveMode}
         isSearchOpen={isSearchOpen}
         onToggleSearch={() => setIsSearchOpen(!isSearchOpen)}
-        onExport={() => setShowExportPanel(true)}
+        onExport={async () => {
+          await textMarkupErasePendingRef.current;
+          setShowExportPanel(true);
+        }}
         doc={doc}
         onCompressedDownload={handleCompressedDownload}
       />

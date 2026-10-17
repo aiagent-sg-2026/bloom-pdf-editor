@@ -1,13 +1,17 @@
 import { describe, expect, it } from 'vitest';
 import { interpretPage } from '../content/interpreter';
+import { addAnnotationToPage, clearMarkupAnnotationsOnPage, createAnnotationDict, eraseAnnotationsAtPoint } from '../editor/annotation-engine';
+import { addHighlightFromLineSelection } from '../editor/highlight';
 import { captureHistoryEntry, restoreDocumentStructure } from '../editing/editor-history';
 import { updatePageContent } from '../editor/stream-compiler';
 import { insertTextRun } from '../editor/text-editor';
+import { buildDocumentFlow } from '../flow';
 import { getPageContentBytes, parsePDF } from '../parser/parser';
-import { SessionDocumentEditor } from '../session/document-edit';
+import { collectMarkupRemovals, removeMarkupReferences, SessionDocumentEditor } from '../session/document-edit';
 import { SessionEditorHistory } from '../session/editor-history';
 import { deletePage } from '../writer/page-operations';
-import { serializeDocument } from '../writer/serializer';
+import { PDFRef } from '../types';
+import { getNextObjNum, serializeDocument } from '../writer/serializer';
 import { rawPDF } from './audit-p1-fixtures';
 
 const overlays = { drawnPaths: [], floatingTexts: [], floatingImages: [], signatures: [] };
@@ -56,6 +60,98 @@ async function setup() {
 }
 
 describe('SessionEditorHistory', () => {
+  it.each(['Highlight', 'Underline', 'StrikeOut'] as const)(
+    'orders %s creation and mixed legacy erasure without consuming failed edits',
+    async subtype => {
+      const { doc, history, capture, textBox, move } = await setup();
+      await textBox('Markup');
+      history.seed(capture('initial'));
+      const original = await serializeDocument(doc);
+      const page = doc.pages[0];
+      const line = buildDocumentFlow(interpretPage(
+        getPageContentBytes(page, doc.objects), page, doc.objects,
+      ).textRuns).lines[0];
+      const editor = new SessionDocumentEditor();
+      await editor.edit(doc, subtype, async staged => {
+        addHighlightFromLineSelection(staged, 0, line, 0, line.text.length, [1, 1, 0], subtype);
+      });
+      history.push(capture(subtype), editor);
+      const marked = await serializeDocument(doc);
+      const clearEditor = new SessionDocumentEditor();
+      const clearRefs = collectMarkupRemovals(doc, 0, clearMarkupAnnotationsOnPage).textMarkup;
+      await clearEditor.edit(doc, 'clear-markup', async staged => { removeMarkupReferences(staged, 0, clearRefs); });
+      history.push(capture('clear-markup'), clearEditor);
+      const cleared = await serializeDocument(doc);
+      for (let cycle = 0; cycle < 2; cycle++) {
+        expect((await move('undo'))?.label).toBe(subtype);
+        expect(await serializeDocument(doc)).toEqual(marked);
+        expect((await move('undo'))?.label).toBe('initial');
+        expect(await serializeDocument(doc)).toEqual(original);
+        expect((await move('redo'))?.label).toBe(subtype);
+        expect(await serializeDocument(doc)).toEqual(marked);
+        expect((await move('redo'))?.label).toBe('clear-markup');
+        expect(await serializeDocument(doc)).toEqual(cleared);
+      }
+      await move('undo');
+      const clearFailure = new Error('clear failed');
+      await expect(clearEditor.edit(doc, 'clear-markup', async staged => {
+        removeMarkupReferences(staged, 0, clearRefs);
+        throw clearFailure;
+      })).rejects.toBe(clearFailure);
+      expect(await serializeDocument(doc)).toEqual(marked);
+      expect(history.canRedo()).toBe(true);
+      expect((await move('redo'))?.label).toBe('clear-markup');
+      expect(await serializeDocument(doc)).toEqual(cleared);
+      await move('undo');
+      const inkRef = new PDFRef(getNextObjNum(doc), 0);
+      const { dict } = createAnnotationDict({
+        type: 'Ink', rect: { x: 20, y: 85, width: 60, height: 20 },
+        color: [0, 0, 0], opacity: 1, inkPaths: [[20, 90, 80, 90]], lineWidth: 2,
+      }, inkRef.objNum, doc.objects);
+      addAnnotationToPage(doc.pages[0].dict, dict, inkRef, doc.objects);
+      history.push(capture('draw-stroke'));
+      const mixed = await serializeDocument(doc);
+      const { textMarkup, legacy } = collectMarkupRemovals(doc, 0, (dict, objects) =>
+        eraseAnnotationsAtPoint(dict, objects, 25, 90, 4));
+      expect(legacy.map(ref => ref.toKey())).toEqual([inkRef.toKey()]);
+      expect(textMarkup.map(ref => ref.toKey())).toEqual(capture('probe').annotSnapshot.annotRefKeys.slice(0, 1));
+      removeMarkupReferences(doc, 0, legacy);
+      history.push(capture('erase'));
+      const beforeFailure = await serializeDocument(doc);
+      const removal = new SessionDocumentEditor();
+      const failure = new Error('erase failed');
+      await expect(removal.edit(doc, 'erase', async staged => {
+        removeMarkupReferences(staged, 0, textMarkup);
+        throw failure;
+      })).rejects.toBe(failure);
+      expect(await serializeDocument(doc)).toEqual(beforeFailure);
+      expect(history.peek()?.label).toBe('erase');
+      await removal.edit(doc, 'erase', async staged => { removeMarkupReferences(staged, 0, textMarkup); });
+      history.replace(capture('erase'), true, removal);
+      for (let cycle = 0; cycle < 2; cycle++) {
+        expect((await move('undo'))?.label).toBe('draw-stroke');
+        expect(capture('restored').annotSnapshot.annotRefKeys).toEqual(
+          (await parsePDF(mixed)).pages[0].dict.getArray('Annots')!.items.map(ref => (ref as PDFRef).toKey()),
+        );
+        expect((await move('undo'))?.label).toBe(subtype);
+        expect(capture('restored').annotSnapshot.annotRefKeys).toEqual(textMarkup.map(ref => ref.toKey()));
+        expect((await move('undo'))?.label).toBe('initial');
+        expect(await serializeDocument(doc)).toEqual(original);
+        expect(history.canUndo()).toBe(false);
+        expect((await move('redo'))?.label).toBe(subtype);
+        expect(await serializeDocument(doc)).toEqual(marked);
+        expect((await move('redo'))?.label).toBe('draw-stroke');
+        expect((await move('redo'))?.label).toBe('erase');
+        expect(capture('erased').annotSnapshot.annotRefKeys).toEqual([]);
+        expect(history.canRedo()).toBe(false);
+      }
+      await move('undo');
+      const clear = collectMarkupRemovals(doc, 0, clearMarkupAnnotationsOnPage);
+      expect(clear.textMarkup.map(ref => ref.toKey())).toEqual(textMarkup.map(ref => ref.toKey()));
+      expect(clear.legacy.map(ref => ref.toKey())).toEqual([inkRef.toKey()]);
+    },
+  );
+
   it('keeps legacy text, overlays, and session edits in one chronological history', async () => {
     const { doc, history, capture, content, sessionEdit, move } = await setup();
     await content('BT (first) Tj ET\n');

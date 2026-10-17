@@ -1,7 +1,7 @@
 import { clonePDFObject } from '../editing/editor-history';
 import { bindPageContentRefs } from '../editor/stream-compiler';
 import { parsePDF } from '../parser/parser';
-import { PDFArray, PDFDict, PDFStream, type PDFDocumentData, type PDFObject } from '../types';
+import { PDFArray, PDFDict, PDFRef, PDFStream, type PDFDocumentData, type PDFObject } from '../types';
 import { serializeDocument } from '../writer/serializer';
 import { DocumentSession } from './document-session';
 import type { EditTransaction } from './edit-transaction';
@@ -17,6 +17,74 @@ async function serializeSessionBytes(doc: PDFDocumentData): Promise<Uint8Array> 
     decryptedFromEncrypted: false,
     xref: { ...doc.xref, trailerDict },
   });
+}
+
+/** Probe the existing eraser/clear geometry without mutating the live graph.
+ * Only the three migrated text-markup subtypes belong to a byte transaction.
+ */
+export function collectMarkupRemovals(
+  doc: PDFDocumentData,
+  pageIndex: number,
+  remove: (pageDict: PDFDict, objects: Map<string, PDFObject>) => number,
+): { textMarkup: PDFRef[]; legacy: PDFRef[] } {
+  const annots = doc.pages[pageIndex].dict.get('Annots');
+  const array = annots instanceof PDFRef ? doc.objects.get(annots.toKey()) : annots;
+  const textMarkup: PDFRef[] = [];
+  const legacy: PDFRef[] = [];
+  if (!(array instanceof PDFArray)) return { textMarkup, legacy };
+  const probe = new PDFDict();
+  probe.set('Annots', new PDFArray([...array.items]));
+  const objects = new Map<string, PDFObject>();
+  for (const item of array.items) {
+    if (!(item instanceof PDFRef)) continue;
+    const annotation = doc.objects.get(item.toKey());
+    if (annotation) objects.set(item.toKey(), annotation);
+  }
+  remove(probe, objects);
+  for (const item of array.items) {
+    if (!(item instanceof PDFRef) || objects.has(item.toKey())) continue;
+    const annotation = doc.objects.get(item.toKey());
+    if (!(annotation instanceof PDFDict)) continue;
+    const subtype = annotation.getName('Subtype');
+    if (subtype === 'Highlight' || subtype === 'Underline' || subtype === 'StrikeOut') textMarkup.push(item);
+    else legacy.push(item);
+  }
+  return { textMarkup, legacy };
+}
+
+/** Apply previously hit-tested references to either a draft or the legacy graph. */
+export function removeMarkupReferences(doc: PDFDocumentData, pageIndex: number, refs: readonly PDFRef[]): void {
+  const pageDict = doc.pages[pageIndex].dict;
+  const annots = pageDict.get('Annots');
+  const array = annots instanceof PDFRef ? doc.objects.get(annots.toKey()) : annots;
+  if (!(array instanceof PDFArray) || refs.length === 0) return;
+  const removed = new Set(refs.map(ref => ref.toKey()));
+  const remaining = array.items.filter(item => {
+    if (!(item instanceof PDFRef) || !removed.has(item.toKey())) return true;
+    doc.objects.delete(item.toKey());
+    return false;
+  });
+  if (annots instanceof PDFRef) doc.objects.set(annots.toKey(), new PDFArray(remaining));
+  else pageDict.set('Annots', new PDFArray(remaining));
+}
+
+/** Render an in-progress text-markup erase without publishing a partial gesture. */
+export function previewMarkupRemoval(
+  doc: PDFDocumentData,
+  pageIndex: number,
+  removed: ReadonlyMap<string, PDFRef>,
+): PDFDocumentData {
+  if (removed.size === 0) return doc;
+  const page = doc.pages[pageIndex];
+  const annots = page.dict.get('Annots');
+  const array = annots instanceof PDFRef ? doc.objects.get(annots.toKey()) : annots;
+  if (!(array instanceof PDFArray)) return doc;
+  const dict = new PDFDict([...page.dict.entries()]);
+  dict.set('Annots', new PDFArray(array.items.filter(item =>
+    !(item instanceof PDFRef && removed.has(item.toKey())))));
+  const pages = [...doc.pages];
+  pages[pageIndex] = { ...page, dict };
+  return { ...doc, pages };
 }
 
 /** Reconcile the draft into existing objects, preserving stream identity and
@@ -110,9 +178,17 @@ export class SessionDocumentEditor {
         const encrypt = doc.objects.get(encryptRef.toKey());
         if (encrypt) restored.objects.set(encryptRef.toKey(), encrypt);
       }
-      // Legacy page-delete history still needs detached page/content objects.
-      // They stay unreachable from the restored roots and are omitted on save.
-      for (const [key, object] of restored.objects) doc.objects.set(key, object);
+      // The parser reads xref-number order, not physical snapshot order.
+      // Restore file order so reinserted annotations and their /Annots arrays
+      // serialize byte-identically; retain detached objects for legacy history.
+      const orderedObjects = [...restored.objects].sort(([left], [right]) =>
+        (restored.xref.entries.get(left)?.offset ?? Number.MAX_SAFE_INTEGER) -
+        (restored.xref.entries.get(right)?.offset ?? Number.MAX_SAFE_INTEGER));
+      for (const [key, object] of doc.objects) {
+        if (!restored.objects.has(key)) orderedObjects.push([key, object]);
+      }
+      doc.objects.clear();
+      for (const [key, object] of orderedObjects) doc.objects.set(key, object);
       doc.catalog = restored.catalog;
       doc.pages = restored.pages;
       doc.xref.trailerDict = restored.xref.trailerDict;
