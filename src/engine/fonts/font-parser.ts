@@ -48,6 +48,12 @@ export interface FontData {
   isComposite: boolean;
   /** Encoding name (StandardEncoding, WinAnsiEncoding, etc.) */
   encoding: string;
+  /** Encoding CMap controls source-code boundaries, independently of ToUnicode. */
+  codeSpaceRanges?: CMapData['codeSpaceRanges'];
+  encodingCMap?: CMapData;
+  unicodeCMap?: CMapData;
+  /** Source character code → descendant CID. */
+  toCID?: Map<number, number>;
   /** Encoding differences array: charCode → glyphName */
   differences: Map<number, string>;
   /** Character code → Unicode mapping */
@@ -242,6 +248,17 @@ function loadEncoding(
     return;
   }
 
+  if (fontData.isComposite && resolved instanceof PDFStream) {
+    const cmap = parseCMap(resolved.getBytes());
+    fontData.encoding = cmap.name;
+    fontData.encodingCMap = cmap;
+    fontData.codeSpaceRanges = cmap.codeSpaceRanges;
+    fontData.toCID = cmap.toCID;
+    fontData.toUnicode = cmap.toUnicode;
+    fontData.unicodeCMap = cmap;
+    return;
+  }
+
   if (resolved instanceof PDFDict) {
     // Encoding dictionary with optional Differences array
     const baseName = resolved.getName('BaseEncoding');
@@ -279,6 +296,7 @@ function loadToUnicode(
 
   const cmapData = parseCMap(toUnicodeObj.getBytes());
   fontData.toUnicode = cmapData.toUnicode;
+  fontData.unicodeCMap = cmapData;
 }
 
 // ─── Simple font widths ─────────────────────────────────────────────────────
@@ -563,7 +581,11 @@ function buildCSSFont(fontData: FontData): string {
  *   3. Standard encoding
  *   4. Direct mapping (Latin-1)
  */
-export function charCodeToUnicode(charCode: number, fontData: FontData): string {
+export function charCodeToUnicode(charCode: number, fontData: FontData, codeLength?: number): string {
+  if (fontData.isComposite && codeLength !== undefined) {
+    const mapped = fontData.unicodeCMap?.toUnicodeByLength.get(codeLength)?.get(charCode);
+    if (mapped !== undefined) return mapped;
+  }
   // ZapfDingbats: never trust Latin ToUnicode ("x"/"l" for bullets)
   if (isZapfDingbatsFont(fontData.baseFont)) {
     const dingbat = zapfDingbatsCharToUnicode(charCode, fontData.differences);

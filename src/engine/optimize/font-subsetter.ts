@@ -31,6 +31,7 @@ import { resolveRef } from '../parser/parser';
 import { applyFilters } from '../parser/filters';
 import { flateEncode } from '../parser/filters';
 import { isTrueTypeFontData, parseTTF, type TTFFont, type TTFTable } from '../fonts/truetype-parser';
+import { getCharCodeLength, parseCMap, readCharCode, type CMapData } from '../fonts/cmap-parser';
 
 export interface FontSubsetResult {
   /** Number of fonts that were subsetted */
@@ -105,6 +106,7 @@ interface FontInfo {
   fontDict: PDFDict;
   /** Whether this is a composite (Type0/CID) font */
   isComposite: boolean;
+  encodingCMap?: CMapData;
   /** Raw embedded TrueType bytes (null if not embedded or not TrueType) */
   ttfData: Uint8Array | null;
   /** Object key for the font file stream */
@@ -153,6 +155,7 @@ function findPageFonts(page: PDFPageInfo, objects: Map<string, PDFObject>): Font
     const encodingObj = font.get('Encoding');
     if (encodingObj) {
       const enc = resolveRef(encodingObj, objects);
+      if (isComposite && enc instanceof PDFStream) info.encodingCMap = parseCMap(enc.getBytes());
       if (enc instanceof PDFDict) {
         const diffs = enc.getArray('Differences');
         if (diffs) {
@@ -341,7 +344,7 @@ function scanContentForGlyphs(
     const font = getFontAt(match.index);
     if (font !== fontInfo.resourceName) continue;
     const raw = match[1];
-    const codes = decodePDFStringBytes(raw, fontInfo.isComposite);
+    const codes = decodePDFStringBytes(raw, fontInfo);
     addCharCodes(codes);
   }
 
@@ -350,7 +353,7 @@ function scanContentForGlyphs(
     const font = getFontAt(match.index);
     if (font !== fontInfo.resourceName) continue;
     const hex = match[1].replace(/\s/g, '');
-    const codes = decodeHexBytes(hex, fontInfo.isComposite);
+    const codes = decodeHexBytes(hex, fontInfo);
     addCharCodes(codes);
   }
 
@@ -364,19 +367,18 @@ function scanContentForGlyphs(
     const strHexPattern = /<([0-9a-fA-F\s]*)>/g;
     let sm: RegExpExecArray | null;
     while ((sm = strLitPattern.exec(arrayContent)) !== null) {
-      const codes = decodePDFStringBytes(sm[1], fontInfo.isComposite);
+      const codes = decodePDFStringBytes(sm[1], fontInfo);
       addCharCodes(codes);
     }
     while ((sm = strHexPattern.exec(arrayContent)) !== null) {
       const hex = sm[1].replace(/\s/g, '');
-      const codes = decodeHexBytes(hex, fontInfo.isComposite);
+      const codes = decodeHexBytes(hex, fontInfo);
       addCharCodes(codes);
     }
   }
 }
 
-function decodePDFStringBytes(raw: string, isComposite: boolean): number[] {
-  const codes: number[] = [];
+function decodePDFStringBytes(raw: string, fontInfo: FontInfo): number[] {
   // Decode escape sequences
   let i = 0;
   const bytes: number[] = [];
@@ -412,36 +414,24 @@ function decodePDFStringBytes(raw: string, isComposite: boolean): number[] {
     }
   }
 
-  if (isComposite) {
-    // 2-byte character codes for CID fonts
-    for (let j = 0; j + 1 < bytes.length; j += 2) {
-      codes.push((bytes[j] << 8) | bytes[j + 1]);
-    }
-  } else {
-    // 1-byte character codes
-    for (const b of bytes) codes.push(b);
-  }
-  return codes;
+  return decodeFontCodes(bytes, fontInfo);
 }
 
-function decodeHexBytes(hex: string, isComposite: boolean): number[] {
-  const codes: number[] = [];
-  // Pad odd-length with trailing 0
+function decodeHexBytes(hex: string, fontInfo: FontInfo): number[] {
   const padded = hex.length % 2 === 1 ? hex + '0' : hex;
+  const bytes = new Uint8Array(padded.length / 2);
+  for (let i = 0; i < bytes.length; i++) bytes[i] = parseInt(padded.substring(i * 2, i * 2 + 2), 16);
+  return decodeFontCodes(bytes, fontInfo);
+}
 
-  if (isComposite) {
-    // 2-byte pairs for CID
-    for (let i = 0; i + 3 < padded.length; i += 4) {
-      codes.push(parseInt(padded.substring(i, i + 4), 16));
-    }
-    // Handle remaining 2-byte pair
-    if (padded.length % 4 === 2) {
-      codes.push(parseInt(padded.substring(padded.length - 2), 16));
-    }
-  } else {
-    for (let i = 0; i < padded.length; i += 2) {
-      codes.push(parseInt(padded.substring(i, i + 2), 16));
-    }
+function decodeFontCodes(bytes: ArrayLike<number>, fontInfo: FontInfo): number[] {
+  const codes: number[] = [];
+  const cmap = fontInfo.encodingCMap;
+  for (let offset = 0; offset < bytes.length;) {
+    const length = fontInfo.isComposite ? getCharCodeLength(bytes, offset, cmap?.codeSpaceRanges) : 1;
+    const code = readCharCode(bytes, offset, length);
+    codes.push(cmap?.toCIDByLength.get(length)?.get(code) ?? cmap?.toCID.get(code) ?? code);
+    offset += length;
   }
   return codes;
 }

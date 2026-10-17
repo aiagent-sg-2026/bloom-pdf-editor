@@ -11,7 +11,7 @@
  */
 
 import { parseContentStream, type CSInstruction } from './operator-lexer';
-import { parseCMap } from '../fonts/cmap-parser';
+import { getCharCodeLength, parseCMap, readCharCode, type CMapData } from '../fonts/cmap-parser';
 import {
   PDFArray,
   PDFDict,
@@ -263,6 +263,9 @@ export interface FontInfo {
   subtype: string; // Type1, TrueType, Type0, CIDFontType2, etc.
   encoding: string;
   isComposite: boolean;
+  codeSpaceRanges?: CMapData['codeSpaceRanges'];
+  encodingCMap?: CMapData;
+  unicodeCMap?: CMapData;
   /** Maps char code → Unicode string */
   toUnicode: Map<number, string> | null;
   /** Maps char code → CID for composite fonts */
@@ -1186,21 +1189,9 @@ function showTextString(
   let idx = 0;
 
   while (idx < rawBytes.length) {
-    let charCode: number;
-
-    if (isComposite) {
-      // Composite fonts use 2-byte character codes
-      if (idx + 1 < rawBytes.length) {
-        charCode = (rawBytes[idx] << 8) | rawBytes[idx + 1];
-        idx += 2;
-      } else {
-        charCode = rawBytes[idx];
-        idx += 1;
-      }
-    } else {
-      charCode = rawBytes[idx];
-      idx += 1;
-    }
+    const codeLength = isComposite ? getCharCodeLength(rawBytes, idx, font?.codeSpaceRanges) : 1;
+    const charCode = readCharCode(rawBytes, idx, codeLength);
+    idx += codeLength;
 
     // Map to Unicode.
     // Differences→AGL often matches the drawn glyph better than a broken ToUnicode
@@ -1209,7 +1200,8 @@ function showTextString(
     let unicode: string;
     const diffName = !isComposite ? font?.differences?.get(charCode) : undefined;
     const fromDiff = diffName ? glyphNameToUnicode(diffName) : '';
-    const fromToUnicode = font?.toUnicode?.get(charCode);
+    const fromToUnicode = font?.unicodeCMap?.toUnicodeByLength.get(codeLength)?.get(charCode) ??
+      font?.toUnicode?.get(charCode);
 
     // ZapfDingbats: PDF viewers always use the dingbat encoding for this font.
     // Broken ToUnicode often maps bullets to Latin "x"/"l" — ignore those.
@@ -1287,9 +1279,7 @@ function showTextString(
 
     // Get glyph width (in 1/1000 units of font size)
     const widthKey = isComposite
-      ? (font?.encoding !== 'Identity-H' && font?.toCID?.has(charCode)
-          ? font.toCID.get(charCode)!
-          : charCode)
+      ? font?.encodingCMap?.toCIDByLength.get(codeLength)?.get(charCode) ?? font?.toCID?.get(charCode) ?? charCode
       : charCode;
     let glyphWidth1000 = font?.widths.get(widthKey);
     if (glyphWidth1000 === undefined && isComposite) {
@@ -1328,8 +1318,8 @@ function showTextString(
 
     // Advance text position
     let advance = (glyphWidth1000 / 1000) * fontSize + gs.charSpacing;
-    // Word spacing applies only to single-byte code 32, not an Identity-H CID.
-    if (charCode === 32 && !isComposite) advance += gs.wordSpacing;
+    // Word spacing applies to one-byte code 32, including composite encodings.
+    if (charCode === 32 && codeLength === 1) advance += gs.wordSpacing;
     advance *= hScale;
 
     totalWidth += advance;
@@ -1651,15 +1641,18 @@ function parseFontDict(
 
   // Parse ToUnicode CMap
   let toUnicode: Map<number, string> | null = null;
+  let unicodeCMap: CMapData | undefined;
   const toUnicodeRef = dict.get('ToUnicode');
   if (toUnicodeRef) {
     const toUnicodeObj = resolveRef(toUnicodeRef, objects);
     if (toUnicodeObj instanceof PDFStream) {
-      toUnicode = parseToUnicodeCMap(toUnicodeObj.getBytes());
+      unicodeCMap = parseCMap(toUnicodeObj.getBytes());
+      toUnicode = unicodeCMap.toUnicode;
     }
   }
 
   let toCID: Map<number, number> | null = null;
+  let encodingCMap: CMapData | undefined;
 
   // Parse encoding for simple fonts
   let encoding = 'StandardEncoding';
@@ -1670,10 +1663,12 @@ function parseFontDict(
     if (resolved instanceof PDFName) {
       encoding = resolved.name;
     } else if (resolved instanceof PDFStream) {
-      const cmap = parseCMap(resolved.getBytes());
-      toCID = cmap.toCID;
-      if (!toUnicode && cmap.toUnicode.size > 0) {
-        toUnicode = cmap.toUnicode;
+      encodingCMap = parseCMap(resolved.getBytes());
+      encoding = encodingCMap.name;
+      toCID = encodingCMap.toCID;
+      if (!toUnicode && encodingCMap.toUnicode.size > 0) {
+        toUnicode = encodingCMap.toUnicode;
+        unicodeCMap = encodingCMap;
       }
     } else if (resolved instanceof PDFDict) {
       encoding = resolved.getName('BaseEncoding') ?? 'WinAnsiEncoding';
@@ -1710,6 +1705,9 @@ function parseFontDict(
     isComposite,
     toUnicode,
     toCID,
+    codeSpaceRanges: encodingCMap?.codeSpaceRanges,
+    encodingCMap,
+    unicodeCMap,
     widths,
     defaultWidth,
     firstChar,
@@ -1828,81 +1826,6 @@ function parseCIDWidths(wArray: PDFArray, widths: Map<number, number>): void {
       i++;
     }
   }
-}
-
-// ─── ToUnicode CMap parser ──────────────────────────────────────────────────
-
-/**
- * Parse a ToUnicode CMap stream to build a charCode → Unicode mapping.
- * Handles beginbfchar and beginbfrange sections.
- */
-function parseToUnicodeCMap(data: Uint8Array): Map<number, string> {
-  const map = new Map<number, string>();
-  const text = new TextDecoder('latin1').decode(data);
-
-  // Parse beginbfchar ... endbfchar
-  const bfcharRegex = /beginbfchar\s*([\s\S]*?)endbfchar/g;
-  let match: RegExpExecArray | null;
-
-  while ((match = bfcharRegex.exec(text)) !== null) {
-    const block = match[1];
-    const lineRegex = /<([0-9a-fA-F]+)>\s*<([0-9a-fA-F]+)>/g;
-    let lineMatch: RegExpExecArray | null;
-    while ((lineMatch = lineRegex.exec(block)) !== null) {
-      const charCode = parseInt(lineMatch[1], 16);
-      const unicode = hexToUnicodeString(lineMatch[2]);
-      map.set(charCode, unicode);
-    }
-  }
-
-  // Parse beginbfrange ... endbfrange
-  const bfrangeRegex = /beginbfrange\s*([\s\S]*?)endbfrange/g;
-
-  while ((match = bfrangeRegex.exec(text)) !== null) {
-    const block = match[1];
-    // Two formats:
-    // <start> <end> <unicodeStart>
-    // <start> <end> [<u1> <u2> ...]
-    const rangeRegex = /<([0-9a-fA-F]+)>\s*<([0-9a-fA-F]+)>\s*(?:<([0-9a-fA-F]+)>|\[([\s\S]*?)\])/g;
-    let rangeMatch: RegExpExecArray | null;
-
-    while ((rangeMatch = rangeRegex.exec(block)) !== null) {
-      const startCode = parseInt(rangeMatch[1], 16);
-      const endCode = parseInt(rangeMatch[2], 16);
-
-      if (rangeMatch[3]) {
-        // <start> <end> <unicodeStart> — sequential mapping
-        let unicodeStart = parseInt(rangeMatch[3], 16);
-        for (let code = startCode; code <= endCode; code++) {
-          map.set(code, String.fromCodePoint(unicodeStart++));
-        }
-      } else if (rangeMatch[4]) {
-        // <start> <end> [<u1> <u2> ...] — explicit array
-        const arrayContent = rangeMatch[4];
-        const hexValues = arrayContent.match(/<([0-9a-fA-F]+)>/g) ?? [];
-        for (let j = 0; j < hexValues.length && startCode + j <= endCode; j++) {
-          const hex = hexValues[j].replace(/[<>]/g, '');
-          map.set(startCode + j, hexToUnicodeString(hex));
-        }
-      }
-    }
-  }
-
-  return map;
-}
-
-function hexToUnicodeString(hex: string): string {
-  let result = '';
-  // Each pair of 4 hex digits is a Unicode code point
-  for (let i = 0; i < hex.length; i += 4) {
-    if (i + 4 <= hex.length) {
-      result += String.fromCodePoint(parseInt(hex.substring(i, i + 4), 16));
-    } else {
-      // Remaining 2 digits — single byte
-      result += String.fromCodePoint(parseInt(hex.substring(i), 16));
-    }
-  }
-  return result;
 }
 
 // ─── Extended Graphics State ────────────────────────────────────────────────
