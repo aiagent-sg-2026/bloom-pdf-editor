@@ -1,8 +1,9 @@
 import { clonePDFObject } from '../editing/editor-history';
+import { addAnnotationToPage, createAnnotationDict, type Annotation } from '../editor/annotation-engine';
 import { bindPageContentRefs } from '../editor/stream-compiler';
 import { parsePDF } from '../parser/parser';
 import { PDFArray, PDFDict, PDFRef, PDFStream, type PDFDocumentData, type PDFObject } from '../types';
-import { serializeDocument } from '../writer/serializer';
+import { getNextObjNum, serializeDocument } from '../writer/serializer';
 import { DocumentSession } from './document-session';
 import type { EditTransaction } from './edit-transaction';
 
@@ -52,6 +53,32 @@ export function collectMarkupRemovals(
   return { textMarkup, legacy };
 }
 
+/** Add native draw/shape annotations to a transaction's detached document. */
+export function addDrawingAnnotations(doc: PDFDocumentData, pageIndex: number, annotations: readonly Annotation[]): void {
+  for (const annotation of annotations) {
+    const ref = new PDFRef(getNextObjNum(doc), 0);
+    const { dict } = createAnnotationDict(annotation, ref.objNum, doc.objects);
+    addAnnotationToPage(doc.pages[pageIndex].dict, dict, ref, doc.objects);
+  }
+}
+
+/** Ink and text markup share an eraser transaction; other removals stay legacy. */
+export function collectDrawingRemovals(
+  doc: PDFDocumentData,
+  pageIndex: number,
+  remove: (pageDict: PDFDict, objects: Map<string, PDFObject>) => number,
+): { transactional: PDFRef[]; legacy: PDFRef[] } {
+  const hits = collectMarkupRemovals(doc, pageIndex, remove);
+  const transactional = [...hits.textMarkup];
+  const legacy: PDFRef[] = [];
+  for (const ref of hits.legacy) {
+    const annotation = doc.objects.get(ref.toKey());
+    if (annotation instanceof PDFDict && annotation.getName('Subtype') === 'Ink') transactional.push(ref);
+    else legacy.push(ref);
+  }
+  return { transactional, legacy };
+}
+
 /** Apply previously hit-tested references to either a draft or the legacy graph. */
 export function removeMarkupReferences(doc: PDFDocumentData, pageIndex: number, refs: readonly PDFRef[]): void {
   const pageDict = doc.pages[pageIndex].dict;
@@ -68,7 +95,7 @@ export function removeMarkupReferences(doc: PDFDocumentData, pageIndex: number, 
   else pageDict.set('Annots', new PDFArray(remaining));
 }
 
-/** Render an in-progress text-markup erase without publishing a partial gesture. */
+/** Render an in-progress transactional annotation erase without publishing a partial gesture. */
 export function previewMarkupRemoval(
   doc: PDFDocumentData,
   pageIndex: number,

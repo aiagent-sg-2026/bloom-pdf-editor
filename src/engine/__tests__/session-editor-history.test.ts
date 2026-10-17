@@ -1,13 +1,13 @@
 import { describe, expect, it } from 'vitest';
 import { interpretPage } from '../content/interpreter';
-import { addAnnotationToPage, clearMarkupAnnotationsOnPage, createAnnotationDict, eraseAnnotationsAtPoint } from '../editor/annotation-engine';
+import { addAnnotationToPage, clearMarkupAnnotationsOnPage, createAnnotationDict, eraseAnnotationsAtPoint, type Annotation } from '../editor/annotation-engine';
 import { addHighlightFromLineSelection } from '../editor/highlight';
 import { captureHistoryEntry, restoreDocumentStructure } from '../editing/editor-history';
 import { updatePageContent } from '../editor/stream-compiler';
 import { insertTextRun } from '../editor/text-editor';
 import { buildDocumentFlow } from '../flow';
 import { getPageContentBytes, parsePDF } from '../parser/parser';
-import { collectMarkupRemovals, removeMarkupReferences, SessionDocumentEditor } from '../session/document-edit';
+import { addDrawingAnnotations, collectDrawingRemovals, collectMarkupRemovals, removeMarkupReferences, SessionDocumentEditor } from '../session/document-edit';
 import { SessionEditorHistory } from '../session/editor-history';
 import { deletePage } from '../writer/page-operations';
 import { PDFRef } from '../types';
@@ -60,6 +60,116 @@ async function setup() {
 }
 
 describe('SessionEditorHistory', () => {
+  it.each(['rectangle', 'ellipse', 'line', 'arrow'] as const)(
+    'orders Ink, %s, legacy snapshots, and one mixed Ink erase transaction',
+    async kind => {
+      const { doc, history, capture, textBox, move } = await setup();
+      await textBox('Markup');
+      history.seed(capture('initial'));
+      history.push(capture('legacy-overlay', [{ text: 'keep overlay' }]));
+      const beforeInk = await serializeDocument(doc);
+      const ink: Annotation = {
+        type: 'Ink', rect: { x: 18, y: 88, width: 64, height: 4 }, color: [0, 0, 0],
+        opacity: 1, lineWidth: 2, inkPaths: [[20, 90, 80, 90]],
+      };
+      const drawing = new SessionDocumentEditor();
+      await drawing.edit(doc, 'draw-stroke', async staged => {
+        addDrawingAnnotations(staged, 0, [ink, { ...ink, opacity: 0.4 }]);
+      });
+      history.push(capture('draw-stroke'), drawing);
+      const drawn = await serializeDocument(doc);
+      history.push(capture('legacy-overlay-2', [{ text: 'second overlay' }]));
+      const shape: Annotation = kind === 'rectangle' || kind === 'ellipse'
+        ? { type: kind === 'rectangle' ? 'Square' : 'Circle',
+          rect: { x: 140, y: 140, width: 30, height: 20 }, color: [1, 0, 0], opacity: 1, lineWidth: 3 }
+        : { type: 'Line', rect: { x: 132, y: 132, width: 46, height: 36 },
+          color: [1, 0, 0], opacity: 1, lineWidth: 3,
+          x1: 140, y1: 140, x2: 170, y2: 160, startStyle: 'None',
+          endStyle: kind === 'arrow' ? 'OpenArrow' : 'None' };
+      const shapes = new SessionDocumentEditor();
+      await shapes.edit(doc, 'draw-shape', async staged => { addDrawingAnnotations(staged, 0, [shape]); });
+      history.push(capture('draw-shape'), shapes);
+      const shaped = await serializeDocument(doc);
+      // Existing text markup shares the Ink gesture's single transaction.
+      const page = doc.pages[0];
+      const line = buildDocumentFlow(interpretPage(getPageContentBytes(page, doc.objects), page, doc.objects).textRuns).lines[0];
+      const markup = new SessionDocumentEditor();
+      await markup.edit(doc, 'highlight', async staged => {
+        addHighlightFromLineSelection(staged, 0, line, 0, line.text.length, [1, 1, 0], 'Underline');
+      });
+      history.push(capture('highlight'), markup);
+      const beforeErase = await serializeDocument(doc);
+      const hits = collectDrawingRemovals(doc, 0, (dict, objects) => eraseAnnotationsAtPoint(dict, objects, 25, 90, 4));
+      expect(hits.transactional.map(ref => ref.toKey()).sort()).toEqual(
+        capture('probe').annotSnapshot.annotRefKeys.filter((_, index) => index !== 2).sort(),
+      );
+      expect(hits.legacy).toEqual([]);
+      const removal = new SessionDocumentEditor();
+      const failure = new Error('erase staging failed');
+      await expect(removal.edit(doc, 'erase', async staged => {
+        removeMarkupReferences(staged, 0, hits.transactional);
+        throw failure;
+      })).rejects.toBe(failure);
+      expect(await serializeDocument(doc)).toEqual(beforeErase);
+      expect(history.peek()?.label).toBe('highlight');
+      await removal.edit(doc, 'erase', async staged => { removeMarkupReferences(staged, 0, hits.transactional); });
+      history.push(capture('erase'), removal);
+      const erased = await serializeDocument(doc);
+      expect(capture('erased').annotSnapshot.annotRefKeys).toEqual(
+        (await parsePDF(shaped)).pages[0].dict.getArray('Annots')!.items.slice(2).map(ref => (ref as PDFRef).toKey()),
+      );
+      for (let cycle = 0; cycle < 2; cycle++) {
+        expect((await move('undo'))?.label).toBe('highlight');
+        expect(await serializeDocument(doc)).toEqual(beforeErase);
+        expect((await move('undo'))?.label).toBe('draw-shape');
+        expect(await serializeDocument(doc)).toEqual(shaped);
+        expect((await move('undo'))?.label).toBe('legacy-overlay-2');
+        expect(await serializeDocument(doc)).toEqual(drawn);
+        expect((await move('undo'))?.overlays.floatingTextsJson).toBe('[]');
+        expect((await move('undo'))?.label).toBe('legacy-overlay');
+        expect(await serializeDocument(doc)).toEqual(beforeInk);
+        expect((await move('undo'))?.label).toBe('initial');
+        expect(history.canUndo()).toBe(false);
+        expect((await move('redo'))?.overlays.floatingTextsJson).toBe('[{"text":"keep overlay"}]');
+        expect((await move('redo'))?.label).toBe('draw-stroke');
+        expect(await serializeDocument(doc)).toEqual(drawn);
+        expect((await move('redo'))?.label).toBe('legacy-overlay-2');
+        expect((await move('redo'))?.label).toBe('draw-shape');
+        expect(await serializeDocument(doc)).toEqual(shaped);
+        expect((await move('redo'))?.label).toBe('highlight');
+        expect(await serializeDocument(doc)).toEqual(beforeErase);
+        expect((await move('redo'))?.label).toBe('erase');
+        expect(await serializeDocument(doc)).toEqual(erased);
+        expect(history.canRedo()).toBe(false);
+      }
+      await move('undo');
+      const failedErase = new SessionDocumentEditor();
+      await expect(failedErase.edit(doc, 'erase', async staged => {
+        removeMarkupReferences(staged, 0, hits.transactional);
+        throw failure;
+      })).rejects.toBe(failure);
+      expect(await serializeDocument(doc)).toEqual(beforeErase);
+      expect(history.peek()?.label).toBe('highlight');
+      expect(history.canRedo()).toBe(true);
+      const failedBranch = new SessionDocumentEditor();
+      await expect(failedBranch.edit(doc, 'draw-shape', async staged => {
+        addDrawingAnnotations(staged, 0, [shape]);
+        throw failure;
+      })).rejects.toBe(failure);
+      expect(await serializeDocument(doc)).toEqual(beforeErase);
+      expect(history.peek()?.label).toBe('highlight');
+      expect(history.canRedo()).toBe(true);
+      expect((await move('redo'))?.label).toBe('erase');
+      expect(await serializeDocument(doc)).toEqual(erased);
+      await move('undo');
+      await failedBranch.edit(doc, 'draw-shape', async staged => { addDrawingAnnotations(staged, 0, [shape]); });
+      history.push(capture('draw-shape'), failedBranch);
+      expect(history.canRedo()).toBe(false);
+      expect((await move('undo'))?.label).toBe('highlight');
+      expect(await serializeDocument(doc)).toEqual(beforeErase);
+    },
+  );
+
   it.each(['Highlight', 'Underline', 'StrikeOut'] as const)(
     'orders %s creation and mixed legacy erasure without consuming failed edits',
     async subtype => {
