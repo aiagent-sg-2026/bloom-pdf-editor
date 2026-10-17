@@ -48,7 +48,22 @@ custom positions.
 
 ## Image soft masks
 
-`src/engine/render/image-decoder.ts` applies image `/SMask` alpha to decoded RGBA, including browser-decoded JPEG base images. DeviceGray masks support 1-, 2-, 4-, 8-, and 16-bit samples with byte-padded rows, `/Decode` mapping, and nearest-neighbour resizing to the decoded base image dimensions. Images without a mask retain their existing opacity. `/Matte` unpremultiplication is not implemented.
+`src/engine/render/image-decoder.ts` applies image `/SMask` alpha to decoded RGBA, including browser-decoded JPEG base images. DeviceGray masks support 1-, 2-, 4-, 8-, and 16-bit samples with byte-padded rows, `/Decode` mapping, and nearest-neighbour resizing to the decoded base image dimensions. Images without a mask retain their existing opacity.
+
+For explicit `/DeviceRGB` (or `/RGB`) base images, a valid three-component
+`/Matte` on the soft-mask stream is removed before compositing, per ISO 32000-1
+§11.6.5.3: `c = m + (c' - m) / alpha`. Correction uses mapped, unrounded mask
+alpha; recovered components are rounded and clamped to 8-bit RGB. Opaque pixels
+are unchanged; zero-alpha pixels retain their RGB bytes and remain transparent.
+Absent, malformed, non-finite, out-of-range, or wrong-length matte arrays are
+ignored. Indexed and non-RGB colour spaces, including Gray, CMYK, calibrated,
+and ICC-based spaces, retain their existing decoded colours and soft-mask alpha;
+unblending those spaces after conversion to RGB would be incorrect.
+
+The shared decoder covers editor page canvases and thumbnails through
+`renderer.ts::drawImage`, PNG/JPEG and raster-backed SVG export through
+`src/app/editor/export-formats.ts`, and embedded-image recompression and page
+rasterization through `src/engine/optimize/image-compress.ts`.
 
 Synthetic public-decoder regressions: `npm test -- src/engine/__tests__/image-decoder.test.ts`.
 
