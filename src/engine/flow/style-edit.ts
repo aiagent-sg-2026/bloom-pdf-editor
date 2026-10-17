@@ -51,6 +51,7 @@ import {
   visualFontSize,
 } from './metrics';
 import { charCodeToUnicode, type FontData } from '../fonts/font-parser';
+import { getCharCodeLength, readCharCode } from '../fonts/cmap-parser';
 
 export interface TextStylePatch {
   fontSize?: number;
@@ -892,6 +893,21 @@ function resolveTextShowingIndex(
   return sorted[0] ?? 0;
 }
 
+/** Byte offsets at UTF-16 text boundaries; -1 marks a boundary inside one code. */
+function encodedUnicodeCuts(bytes: Uint8Array, fontData: FontData | null): number[] {
+  const cuts = [0];
+  let offset = 0;
+  while (offset < bytes.length) {
+    const length = fontData?.isComposite ? getCharCodeLength(bytes, offset, fontData.codeSpaceRanges) : 1;
+    const code = readCharCode(bytes, offset, length);
+    const unicodeLength = fontData ? charCodeToUnicode(code, fontData, length).length || 1 : 1;
+    offset += length;
+    for (let i = 1; i < unicodeLength; i++) cuts.push(-1);
+    cuts.push(offset);
+  }
+  return cuts;
+}
+
 /**
  * Wrap already-encoded Tj/TJ string bytes in a TJ array, inserting space
  * advances without re-encoding letter CIDs.
@@ -915,9 +931,8 @@ function tjFromEncodedWithSpaceAdvances(
     return buildTJWithSpaceAdvances(text, fontData, false);
   }
 
-  const isComposite = !!fontData?.isComposite;
-  const bpc = isComposite ? 2 : 1;
-  if (bytes.length < text.length * bpc) {
+  const cuts = encodedUnicodeCuts(bytes, fontData);
+  if (cuts.length !== text.length + 1) {
     return buildTJWithSpaceAdvances(text, fontData, false);
   }
 
@@ -934,7 +949,6 @@ function tjFromEncodedWithSpaceAdvances(
   };
 
   const items: PDFObject[] = [];
-  let bytePos = 0;
   let i = 0;
   const supplemental = spaceSupplementalTJ(fontData, false);
   while (i < text.length) {
@@ -942,22 +956,19 @@ function tjFromEncodedWithSpaceAdvances(
       let j = i;
       while (j < text.length && text[j] === ' ') j++;
       const n = j - i;
-      const byteLen = n * bpc;
-      items.push(toPdfString(bytePos, bytePos + byteLen));
+      if (cuts[i] < 0 || cuts[j] < 0) return buildTJWithSpaceAdvances(text, fontData, false);
+      items.push(toPdfString(cuts[i], cuts[j]));
       if (supplemental > 0) {
         const advChars = Math.min(n, SPACE_TJ_MAX_CHARS);
         items.push(new PDFNumber(-Math.round(advChars * supplemental)));
       }
-      bytePos += byteLen;
       i = j;
       continue;
     }
     let j = i;
     while (j < text.length && text[j] !== ' ') j++;
-    const n = j - i;
-    const byteLen = n * bpc;
-    items.push(toPdfString(bytePos, bytePos + byteLen));
-    bytePos += byteLen;
+    if (cuts[i] < 0 || cuts[j] < 0) return buildTJWithSpaceAdvances(text, fontData, false);
+    items.push(toPdfString(cuts[i], cuts[j]));
     i = j;
   }
   if (items.length === 0) {
@@ -1001,18 +1012,10 @@ function splitEncodedByUnicodeIndex(
     return null;
   }
 
-  const isComposite = !!fontData?.isComposite;
-  const cuts: number[] = [0]; // byte offsets at unicode boundaries
-  let idx = 0;
-  let charCount = 0;
-  while (idx < bytes.length && charCount < totalChars) {
-    if (isComposite && idx + 1 < bytes.length) idx += 2;
-    else idx += 1;
-    charCount++;
-    cuts.push(idx);
-  }
-  if (charCount < totalChars || midEnd > charCount) return null;
+  const cuts = encodedUnicodeCuts(bytes, fontData);
+  if (cuts.length - 1 < totalChars || midEnd >= cuts.length) return null;
   if (midStart < 0 || midStart > midEnd) return null;
+  if (cuts[midStart] < 0 || cuts[midEnd] < 0 || cuts[totalChars] < 0) return null;
 
   const b0 = cuts[midStart] ?? 0;
   const b1 = cuts[midEnd] ?? bytes.length;
@@ -1205,20 +1208,25 @@ function applyWholeRunFontPatch(
 ): void {
   const range2 = findBtEtRange(instructions, textIndex) ?? range;
 
-  // Swapping a composite (Identity-H subset) font for a WinAnsi Standard14 face:
-  // the 2-byte CIDs would be read as garbage, so re-encode the shown text.
+  // Composite source codes must be decoded before switching to a WinAnsi face.
   if (fontKey && fontData?.isComposite) {
     const inst = instructions[textIndex];
     const reencode = (o: PDFObject): PDFObject => {
       if (!(o instanceof PDFString || o instanceof PDFHexString)) return o;
       const b = o.toBytes();
       let t = '';
-      for (let i = 0; i + 1 < b.length; i += 2) t += charCodeToUnicode((b[i] << 8) | b[i + 1], fontData) || ' ';
+      for (let i = 0; i < b.length;) {
+        const length = getCharCodeLength(b, i, fontData.codeSpaceRanges);
+        t += charCodeToUnicode(readCharCode(b, i, length), fontData, length) || ' ';
+        i += length;
+      }
       assertTextEncodable(t, null, false);
       return encodeTextWinAnsi(t).pdfString;
     };
-    if (inst && inst.operator === 'Tj') {
+    if (inst && (inst.operator === 'Tj' || inst.operator === "'")) {
       inst.operands = [reencode(inst.operands[0])];
+    } else if (inst?.operator === '"') {
+      inst.operands = [inst.operands[0], inst.operands[1], reencode(inst.operands[2])];
     } else if (inst && inst.operator === 'TJ' && inst.operands[0] instanceof PDFArray) {
       const arr = inst.operands[0] as PDFArray;
       const out = new PDFArray();

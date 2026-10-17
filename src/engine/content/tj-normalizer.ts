@@ -1,6 +1,6 @@
 import { parseContentStream, type CSInstruction } from './operator-lexer';
 import { compileInstructions } from '../editor/text-editor';
-import { interpretPage, type Matrix } from './interpreter';
+import { interpretPage, type FontInfo, type Matrix } from './interpreter';
 import {
   PDFArray,
   PDFName,
@@ -10,6 +10,7 @@ import {
   PDFHexString,
 } from '../types';
 import type { PDFPageInfo } from '../types';
+import { getCharCodeLength } from '../fonts/cmap-parser';
 
 /** Shared with flow column detection: smaller gaps are kerning/word spacing. */
 export const COLUMN_GUTTER_FACTOR = 1.35;
@@ -39,15 +40,20 @@ function translation(tx: number, ty: number): Matrix {
   return { a: 1, b: 0, c: 0, d: 1, e: tx, f: ty };
 }
 
-function countGlyphs(obj: PDFObject, composite: boolean): number {
+function countGlyphs(obj: PDFObject, font: FontInfo | undefined): number {
   if (obj instanceof PDFArray) {
     let count = 0;
-    for (const item of obj.items) count += countGlyphs(item, composite);
+    for (const item of obj.items) count += countGlyphs(item, font);
     return count;
   }
   if (obj instanceof PDFString || obj instanceof PDFHexString) {
-    // Match showTextString: empty strings emit no glyphs, CID codes use two bytes.
-    return Math.ceil(obj.toBytes().length / (composite ? 2 : 1));
+    const bytes = obj.toBytes();
+    if (!font?.isComposite) return bytes.length;
+    let count = 0;
+    for (let offset = 0; offset < bytes.length; count++) {
+      offset += getCharCodeLength(bytes, offset, font.codeSpaceRanges);
+    }
+    return count;
   }
   return 0;
 }
@@ -82,10 +88,18 @@ export function explodeTJGaps(
   let rise = 0;
   let leading = 0;
   const ctmStack: Matrix[] = [];
+  let fontName = '';
+  const fontStack: string[] = [];
+  const sourceFonts: Array<FontInfo | undefined> = [];
   let dirtyLineMatrix: { absolute: Matrix; original: Matrix } | undefined;
 
   for (let i = 0; i < instructions.length; i++) {
     const inst = instructions[i];
+    if (inst.operator === 'q') fontStack.push(fontName);
+    else if (inst.operator === 'Q' && fontStack.length) fontName = fontStack.pop()!;
+    else if (inst.operator === 'Tf' && inst.operands[0] instanceof PDFName) fontName = inst.operands[0].name;
+    const font = original.fonts.get(fontName);
+    sourceFonts[i] = font;
     // An exploded piece replaces both the text and line matrices. Keep that
     // replacement until the original stream moves to another line; text-show
     // operators only advance the text matrix and must not trigger restoration.
@@ -134,14 +148,13 @@ export function explodeTJGaps(
     const arr = inst.operands[0];
     const run = original.textRuns.find(r => r.sourceInstructionIndices?.includes(i));
     if (!run) { out.push(inst); continue; }
-    const composite = original.fonts.get(run.fontName)?.isComposite ?? false;
     // interpretPage merges adjacent shows, even across Tf. Piece starts are
     // local to this TJ, so skip glyphs belonging to earlier shows in the run.
     let glyphCount = 0;
     for (const sourceIndex of run.sourceInstructionIndices ?? []) {
       if (sourceIndex === i) break;
       for (const operand of instructions[sourceIndex].operands) {
-        glyphCount += countGlyphs(operand, composite);
+        glyphCount += countGlyphs(operand, sourceFonts[sourceIndex]);
       }
     }
     const pieces: PDFObject[][] = [[]];
@@ -159,7 +172,7 @@ export function explodeTJGaps(
         }
       } else {
         pieces[pieces.length - 1].push(item);
-        glyphCount += countGlyphs(item, composite);
+        glyphCount += countGlyphs(item, font);
       }
     }
     if (!split || pieces.some((p, n) => n > 0 && !p.some(o => o instanceof PDFString || o instanceof PDFHexString))) {

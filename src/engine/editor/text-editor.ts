@@ -34,6 +34,7 @@ import {
 } from '../types';
 import { resolveRef, resolvePageResources } from '../parser/parser';
 import { loadFont, type FontData, charCodeToUnicode } from '../fonts/font-parser';
+import { getCharCodeLength, getCodeBytes, isCodeInCodeSpace, readCharCode } from '../fonts/cmap-parser';
 import { ensureFallbackFont, registerFontObject } from '../fonts/font-augmentation';
 import { ensureBuiltInFallbackFont, getBuiltInFallbackGlyph } from '../fonts/symbol-fallback';
 import { UnsupportedGlyphsError } from '../fonts/unsupported-glyphs';
@@ -1072,15 +1073,10 @@ function extractStringText(
   let idx = 0;
 
   while (idx < bytes.length) {
-    let charCode: number;
-    if (isComposite && idx + 1 < bytes.length) {
-      charCode = (bytes[idx] << 8) | bytes[idx + 1];
-      idx += 2;
-    } else {
-      charCode = bytes[idx];
-      idx += 1;
-    }
-    text += charCodeToUnicode(charCode, fontData);
+    const length = isComposite ? getCharCodeLength(bytes, idx, fontData.codeSpaceRanges) : 1;
+    const charCode = readCharCode(bytes, idx, length);
+    idx += length;
+    text += charCodeToUnicode(charCode, fontData, length);
   }
 
   return text;
@@ -1106,18 +1102,39 @@ export function encodeTextForFont(text: string, fontData: FontData | null): Enco
   const missing: number[] = [];
 
   if (fontData.isComposite) {
-    // Composite font: build reverse ToUnicode map
-    const reverseMap = buildReverseUnicodeMap(fontData);
+    const reverse = new Map<string, string>();
+    const ranges = fontData.codeSpaceRanges;
+    const addCode = (unicode: string, code: number, sourceLength?: number) => {
+      const length = sourceLength && ranges?.length ? sourceLength
+        : getCodeBytes(code, fontData, 2);
+      if (ranges?.length && !isCodeInCodeSpace(code, length, ranges)) return;
+      if (ranges?.length) {
+        for (let prefixLength = 1; prefixLength < length; prefixLength++) {
+          const prefix = Math.floor(code / 256 ** (length - prefixLength));
+          if (isCodeInCodeSpace(prefix, prefixLength, ranges)) return;
+        }
+      }
+      const cid = fontData.encodingCMap?.toCIDByLength.get(length)?.get(code) ?? fontData.toCID?.get(code) ?? code;
+      if (cid === 0) return;
+      const hexCode = code.toString(16).padStart(length * 2, '0');
+      if (hexCode.length !== length * 2) return;
+      reverse.set(unicode, hexCode);
+    };
+    if (fontData.unicodeCMap) {
+      for (const [length, mappings] of fontData.unicodeCMap.toUnicodeByLength) {
+        for (const [code, unicode] of mappings) addCode(unicode, code, length);
+      }
+    } else {
+      for (const [unicode, code] of buildReverseUnicodeMap(fontData)) addCode(unicode, code);
+    }
     let hex = '';
-
     for (const char of text) {
-      const code = reverseMap.get(char);
-      if (code !== undefined && code !== 0) {
-        hex += code.toString(16).padStart(4, '0');
+      const code = reverse.get(char);
+      if (code !== undefined) {
+        hex += code;
       } else {
-        // Character not in subset — do NOT write CID 0 (.notdef / invisible)
         missing.push(char.codePointAt(0)!);
-        // Keep hex length aligned so caller can detect lossiness; real bytes replaced via fallback
+        // Callers replace missing characters through the existing fallback path.
         hex += '0000';
       }
     }
@@ -1288,8 +1305,10 @@ export function measureUnicodeExportText(
       let advance: number;
       if (!isEncodingLossy(ch, encoded, font)) {
         const bytes = encoded.pdfString.toBytes();
-        const code = font?.isComposite ? (bytes[0] << 8) | bytes[1] : bytes[0];
-        advance = font?.widths.get(code) ?? font?.defaultWidth ?? getStandardFontCharWidth('Helvetica', code);
+        const length = font?.isComposite ? getCharCodeLength(bytes, 0, font.codeSpaceRanges) : 1;
+        const code = readCharCode(bytes, 0, length);
+        const cid = font?.encodingCMap?.toCIDByLength.get(length)?.get(code) ?? font?.toCID?.get(code) ?? code;
+        advance = font?.widths.get(cid) ?? font?.defaultWidth ?? getStandardFontCharWidth('Helvetica', code);
       } else if (unsupportedFallbackCodePoints(ch, font, encoded).length) {
         advance = unicodeGlyphWidth(objects, cp, fontId);
       } else {
@@ -1424,13 +1443,6 @@ function isEncodingLossy(
   if (!text) return false;
   if (encoded.missing.length > 0) return true;
   if (!fontData) return false;
-
-  if (fontData.isComposite && encoded.pdfString instanceof PDFHexString) {
-    const hex = encoded.pdfString.hex.replace(/\s/g, '');
-    for (let i = 0; i + 3 < hex.length; i += 4) {
-      if (hex.slice(i, i + 4) === '0000') return true;
-    }
-  }
 
   if (encoded.pdfString instanceof PDFString) {
     const out = encoded.pdfString.value;

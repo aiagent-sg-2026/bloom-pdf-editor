@@ -308,6 +308,47 @@ or any failure must not mark it clean. Compression, autosave, page splitting,
 and navigation keep their existing paths. This first extraction deliberately
 keeps the shared, UI-coupled overlay implementation in `page.tsx`.
 
+### Type0 Encoding CMaps
+
+Type0 source strings use the **Encoding** CMap's codespace ranges, not the
+ToUnicode CMap's ranges, to determine code boundaries (PDF 32000-1 §9.7.6.2).
+The shared reader matches each byte against validated 1–4-byte ranges and
+consumes the shortest complete match, independently of range declaration order.
+Extraction, text-operand matching, edited text encoding, partial style slicing,
+TJ normalization, and optimization glyph collection use these boundaries.
+Width-qualified Unicode and CID maps distinguish codes such as `<41>` and
+`<0041>`. Re-encoding retains the source-code width rather than padding every
+Type0 code to two bytes; CID widths and optimizer glyph lookup use the Encoding
+CMap's source-code-to-CID mapping.
+CID ranges retain the source hex width (including leading zeros) and assign
+the same sequential CID to the numeric and width-qualified maps, incrementing
+once per source code through the inclusive endpoint.
+
+One-byte code 32 receives word spacing even in a composite font. Two-byte
+Identity-H code 32 does not. Binary CIDToGIDMap entries remain two-byte GIDs;
+their storage width is independent of source-code width.
+
+Synthetic in-memory regression source:
+`src/engine/__tests__/type0-codespace.test.ts`. Cases cover one-byte and mixed
+codespaces, shared/overlapping prefixes, leading-zero code collisions, three-
+and four-byte codes, Identity-H, literal and hex editing, quote operators,
+style changes, TJ positions, serialized/reopened edits, malformed ranges,
+truncation, word spacing, and optimized font outline retention.
+
+Known gaps:
+
+- Named predefined CMaps other than the existing Identity behavior, and
+  `usecmap` / `/UseCMap` inheritance chains, are not resolved. This change does
+  not add inheritance support.
+- Missing or entirely invalid codespaces retain the legacy two-byte fallback.
+  Unmatched codes also consume two bytes, bounded by the remaining input.
+  Invalid ranges are ignored; malformed input is not repaired.
+- Ambiguous short/long prefixes use the shortest complete match. Re-encoding
+  rejects a longer code shadowed by a shorter codespace instead of emitting
+  bytes that would decode differently.
+- Unicode recovery without ToUnicode still depends on the existing font
+  fallback coverage. Vertical layout remains unsupported.
+
 ### Unsupported glyphs and on-demand Unicode font embedding
 
 Floating text and existing-run edits have an asynchronous preparation stage
