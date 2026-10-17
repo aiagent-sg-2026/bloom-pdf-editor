@@ -1,6 +1,8 @@
 import { describe, expect, it } from 'vitest';
+import { interpretPage } from '../content/interpreter';
 import { captureHistoryEntry, restoreDocumentStructure } from '../editing/editor-history';
 import { updatePageContent } from '../editor/stream-compiler';
+import { insertTextRun } from '../editor/text-editor';
 import { getPageContentBytes, parsePDF } from '../parser/parser';
 import { SessionDocumentEditor } from '../session/document-edit';
 import { SessionEditorHistory } from '../session/editor-history';
@@ -31,13 +33,26 @@ async function setup() {
     ));
     history.push(capture(label, floatingTexts), editor);
   };
+  const textBox = async (text: string, fontFamily = 'Courier') => {
+    const editor = new SessionDocumentEditor();
+    await editor.edit(doc, 'add-text-box', async staged => {
+      const page = staged.pages[0];
+      const bytes = insertTextRun(
+        getPageContentBytes(page, staged.objects), page, staged.objects,
+        text, 20, 90, 14, [0.8, 0.1, 0.2],
+        { fontFamily, bold: true, italic: true, underline: true, opacity: 0.5, width: 150 },
+      );
+      await updatePageContent(page.contentRefs, bytes, staged.objects);
+    });
+    return editor;
+  };
   const move = async (direction: 'undo' | 'redo') => {
     const result = await history[direction](doc);
     if (result && !result.restoredDocument) await restoreDocumentStructure(doc, result.entry, updatePageContent);
     return result?.entry;
   };
   history.seed(capture('initial'));
-  return { doc, history, capture, content, sessionEdit, move };
+  return { doc, history, capture, content, sessionEdit, textBox, move };
 }
 
 describe('SessionEditorHistory', () => {
@@ -115,6 +130,49 @@ describe('SessionEditorHistory', () => {
     expect(history.canRedo()).toBe(true);
     await move('redo');
     expect(await serializeDocument(doc)).toEqual(applied);
+  });
+
+  it.each([false, true])('bakes text into a single toolbar boundary with an existing session: %s', async withSession => {
+    const { doc, history, capture, content, sessionEdit, textBox, move } = await setup();
+    const original = await serializeDocument(doc);
+    history.push(capture('add-text-box', [{ text: 'Box' }]));
+    if (withSession) await sessionEdit('watermark', 'q Q\n', [{ text: 'Box' }]);
+    else await content('0 0 10 10 re f\n'); // Legacy drawing flattened before text.
+    const editor = await textBox('Box');
+    history.replace(capture('commit-drawings'), true, editor);
+    const exported = await serializeDocument(doc);
+    const reopened = await parsePDF(exported);
+    expect(interpretPage(getPageContentBytes(reopened.pages[0], reopened.objects), reopened.pages[0], reopened.objects)
+      .textRuns.map(run => run.text)).toEqual(['Box']);
+    for (let cycle = 0; cycle < 2; cycle++) {
+      const undone = await move('undo');
+      expect(undone?.label).toBe(withSession ? 'add-text-box' : 'initial');
+      expect(undone?.overlays.floatingTextsJson).toBe(withSession ? '[{"text":"Box"}]' : '[]');
+      expect(getPageContentBytes(doc.pages[0], doc.objects)).toEqual(new Uint8Array());
+      if (withSession) expect(await serializeDocument(doc)).toEqual(original);
+      expect((await move('redo'))?.overlays.floatingTextsJson).toBe('[]');
+      expect(await serializeDocument(doc)).toEqual(exported);
+      expect(history.canRedo()).toBe(false);
+    }
+  });
+
+  it('restores baked text and font objects when undoing preserved session redo', async () => {
+    const { doc, history, capture, textBox, move } = await setup();
+    history.push(capture('add-text-box', [{ text: 'Box' }]));
+    const later = await textBox('Later', 'Helvetica');
+    history.push(capture('text-edit', [{ text: 'Box' }]), later);
+    const laterBytes = await serializeDocument(doc);
+    await move('undo');
+    const baked = await textBox('Box', 'Courier');
+    history.replace(capture('commit-drawings'), true, baked);
+    const exported = await serializeDocument(doc);
+    expect(history.canRedo()).toBe(true);
+    for (let cycle = 0; cycle < 2; cycle++) {
+      expect((await move('redo'))?.overlays.floatingTextsJson).toBe('[{"text":"Box"}]');
+      expect(await serializeDocument(doc)).toEqual(laterBytes);
+      expect((await move('undo'))?.overlays.floatingTextsJson).toBe('[]');
+      expect(await serializeDocument(doc)).toEqual(exported);
+    }
   });
 
   it('preserves detached legacy page resources across session restoration', async () => {

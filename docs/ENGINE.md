@@ -177,6 +177,17 @@ Migrated native call paths in `src/app/editor/page.tsx`:
 - **Replace embedded image:** stage `replaceImageXObject`, commit, then add one
   `replace-image` toolbar entry, mark dirty, clear selection, and refresh the
   canvas and thumbnails.
+- **Existing-line text commit:** stage the text rewrite, font preparation and
+  augmentation, movement, queued selection styles, and residual-gap correction
+  together. Await content updates before adding one `text-edit` toolbar entry.
+  Failed staging leaves the live graph and pending styles available for retry.
+  Refresh the canvas and thumbnails after commit.
+- **Add Text Box native insertion:** retain the editable floating-box preview and
+  its existing overlay history. When navigation or export bakes the boxes, stage
+  `insertTextRun` with the same text, position, font, styling, opacity, and width,
+  then await the content update. Attach that transaction to the replaced toolbar
+  snapshot without adding an export-only undo step. If later legacy overlay
+  processing fails, undo the insertion and retain the editable boxes for retry.
 
 `SessionEditorHistory` in `src/engine/session/editor-history.ts` is the page's
 single ordered toolbar stack (50 post-edit states, including the initial state).
@@ -184,9 +195,14 @@ Each migrated entry retains an isolated bridge/session containing its before and
 after bytes. The page starts a fresh bridge after publishing that entry. This
 avoids exposing the bridge's internal legacy checkpoints as duplicate undo steps
 or desynchronizing two independent cursors when legacy and migrated edits mix.
-Availability delegates to the boundary session's `canUndo`/`canRedo`; crossing
-that boundary calls its `undo()`/`redo()`. Legacy entries still restore their
-existing content/annotation/page-tree snapshots. All entries restore React
+Availability delegates to the boundary sessions' `canUndo`/`canRedo`; crossing
+that boundary calls `undo()` in reverse commit order or `redo()` in commit order.
+Text-box baking can append a session to the current entry without replacing an
+earlier watermark, image, or text boundary. When undo returns to a baked state
+below preserved redo, `restoreCurrent()` reapplies its text/font bytes before
+restoring its legacy snapshot. Legacy entries still restore their existing
+content/annotation/page-tree snapshots; baking does not upgrade their undo coverage.
+All entries restore React
 overlays and page selection in chronological order. New edits discard the whole
 redo branch; overlay flattening can replace the current snapshot without clearing
 redo or losing its session boundary. Undo/redo marks dirty, clears stale native
@@ -198,15 +214,17 @@ Loading or unlocking a document seeds a new ordered history.
 edit types. Legacy mutations retain their existing history coverage and restore
 semantics, including edits that never recorded a toolbar entry. Only migrated
 boundaries restore complete byte revisions; legacy entries are not upgraded to
-byte-identical restoration. Each migrated boundary retains two full byte buffers,
-in addition to legacy snapshots, so the 50-entry limit is not a memory-size limit.
+byte-identical restoration. Each retained transaction holds two full byte buffers,
+in addition to legacy snapshots; text-box baking can retain another transaction
+on the same toolbar entry, so the 50-entry limit is not a memory-size limit.
 
 **Not yet migrated** (keep their existing edit and history behavior):
 
-- Existing-line text commits, direct/queued style changes, duplicated lines,
+- Direct style changes outside an existing-line commit, duplicated lines,
   table row/column insertion, find/replace, and OCR text insertion.
-- Drawing/highlight/erase/clear-markup operations; floating text/image insertion,
-  editing, movement, replacement, deletion, and overlay flattening.
+- Drawing/highlight/erase/clear-markup operations; floating text preview editing,
+  movement and deletion; floating image insertion, editing, movement, replacement
+  and deletion; non-text overlay flattening.
 - Embedded-image movement/resizing/deletion and other selected-object transforms.
 - Form value edits and flattening; links and annotations.
 - Visual signatures, signature fields/appearances, cryptographic signing,
@@ -216,22 +234,21 @@ in addition to legacy snapshots, so the 50-entry limit is not a memory-size limi
 - Watermark removal, initial text normalization,
   export/compression, autosave, recovery, and browser persistence.
 
-The remaining UI migration is gated in this order; none of these steps has
-completed the passing-test gate:
+The text-edit and Add Text Box production migration is implemented. The remaining
+UI migration stays gated in this order:
 
-1. Text edits and Add Text Box.
-2. Highlight, underline, and strikeout.
-3. Drawing, erasing, and shapes.
-4. Signatures and form-field edits.
-5. Page rotation, deletion, reordering, and insertion.
+1. Highlight, underline, and strikeout.
+2. Drawing, erasing, and shapes.
+3. Signatures and form-field edits.
+4. Page rotation, deletion, reordering, and insertion.
 
-The text gate has tests-first cases in
-`src/engine/__tests__/session-document-editor.test.ts` for native existing-line
-replacement and styled text-box insertion: direct-operation byte parity,
-live/reopened text, repeated byte-identical undo/redo, and isolation after a
-staged edit throws. These added cases have not been executed. They exercise the
-native bridge, not the page's legacy text handlers; no production text path has
-been migrated. Keep every path above unchanged until its ordered gate passes.
+The text gate in `src/engine/__tests__/session-document-editor.test.ts` covers
+native existing-line replacement and styled text-box insertion: direct-operation
+byte parity, live/reopened text, repeated byte-identical undo/redo, and isolation
+after a staged edit throws. The production handlers now use that bridge. The
+floating-box UI remains a preview until its existing native commit point; only
+the text insertion at that boundary is transactional. Other overlay operations
+retain their legacy paths.
 
 Contract coverage is in `src/engine/__tests__/document-session.test.ts`.
 `src/engine/__tests__/session-document-editor.test.ts` covers native watermark
@@ -239,8 +256,10 @@ parity, byte-identical text/image watermark and image-replacement undo/redo,
 live/reopened replacement pixels and alpha, object identity, failure isolation,
 and overlapping/legacy-edit conflicts.
 `src/engine/__tests__/session-editor-history.test.ts` covers mixed legacy/session
-ordering, overlay restoration, redo branching, export snapshot replacement, and
-detached resources needed by legacy page-deletion undo.
+ordering, overlay restoration, redo branching, export snapshot replacement,
+text-box baking over legacy and session boundaries, restoration of baked text
+and fonts below preserved redo, and detached resources needed by legacy
+page-deletion undo.
 
 ## Export
 
