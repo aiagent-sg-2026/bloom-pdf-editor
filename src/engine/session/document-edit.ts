@@ -85,12 +85,17 @@ export class SessionDocumentEditor {
     return this.restore(doc, 'redo');
   }
 
-  private async restore(doc: PDFDocumentData, direction: 'undo' | 'redo'): Promise<boolean> {
+  /** Reapply a baked toolbar state after crossing a neighbouring session boundary. */
+  async restoreCurrent(doc: PDFDocumentData): Promise<boolean> {
+    return this.restore(doc, 'current');
+  }
+
+  private async restore(doc: PDFDocumentData, direction: 'undo' | 'redo' | 'current'): Promise<boolean> {
     if (this.editing) throw new Error('An edit transaction is already active');
     const session = this.session;
     if (!session) return false;
     this.editing = true;
-    const bytes = session[direction]();
+    const bytes = direction === 'current' ? session.getBytes() : session[direction]();
     if (!bytes) {
       this.editing = false;
       return false;
@@ -117,7 +122,7 @@ export class SessionDocumentEditor {
     } catch (error) {
       // Failed parsing must not consume a toolbar history step.
       if (direction === 'undo') session.redo();
-      else session.undo();
+      else if (direction === 'redo') session.undo();
       throw error;
     } finally {
       this.editing = false;

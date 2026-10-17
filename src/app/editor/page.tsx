@@ -627,7 +627,7 @@ export default function EditorPage() {
       },
       label,
     );
-    if (replaceCurrent) historyRef.current.replace(entry, true);
+    if (replaceCurrent) historyRef.current.replace(entry, true, sessionEditor);
     else historyRef.current.push(entry, sessionEditor);
     syncTxState();
   }, [doc, currentPage, syncTxState]);
@@ -1760,15 +1760,15 @@ export default function EditorPage() {
     }
   }, [doc, currentPage, setEditingLine, renderResult, strokePaths, detectedTables]);
 
-  const prepareExportText = useCallback(async (text: string, fontNames?: string[]) => {
+  const prepareExportText = useCallback(async (text: string, fontNames?: string[], targetDoc = doc) => {
     const engine = engineRef.current;
-    if (!doc || !engine) return;
-    const page = doc.pages[currentPage];
-    const runs = (fontNames?.length ? fontNames.map(name => engine.loadFontForName(name, page, doc.objects)) : [null])
+    if (!targetDoc || !engine) return;
+    const page = targetDoc.pages[currentPage];
+    const runs = (fontNames?.length ? fontNames.map(name => engine.loadFontForName(name, page, targetDoc.objects)) : [null])
       .map(fontData => ({ text, fontData }));
     // Coverage in another subset does not imply the contextual font has that CID.
     setLoadingFont(true);
-    try { await engine.prepareTextForExport(doc.objects, runs); }
+    try { await engine.prepareTextForExport(targetDoc.objects, runs); }
     finally { setLoadingFont(false); }
   }, [doc, currentPage]);
 
@@ -1806,218 +1806,220 @@ export default function EditorPage() {
     try {
       setIsSaving(true);
       const engine = engineRef.current;
-      const page = doc.pages[currentPage];
-      const targetLine = editAnchorLineRef.current ?? editingLine;
-      const snapshot = undoSnapshotRef.current;
-      let bytes = snapshot?.pageIndex === currentPage
-        ? new Uint8Array(snapshot.contentBytes)
-        : engine.getPageContentBytes(page, doc.objects);
-
-      const fontSizeOverrides = pendingStyles
-        .filter(p => p.patch.fontSize != null && p.end > p.start)
-        .map(p => ({
-          start: p.start,
-          end: p.end,
-          fontSize: p.patch.fontSize as number,
-        }));
-
-      if (textChanged) {
-        let commitText = editTextRef.current || editText;
-        let caretAfter = editSelRef.current.end;
-        await prepareExportText(commitText, targetLine.runs.map(run => run.fontName));
-        // Do NOT collapse multi-spaces on commit — live overlay gaps were real
-        // inserts, and smashing them made spaces vanish on click-away.
-        const editResult = engine.applyLineTextEdit(
-          bytes,
-          page,
-          doc.objects,
-          targetLine,
-          commitText,
-          renderResult?.documentFlow,
-          {
-            oldText: initialRunTextRef.current || targetLine.text,
-            caretAfter,
-            skipResidualCorrection: pendingStyles.some(p => p.patch.fontSize != null),
-            fontSizeOverrides: fontSizeOverrides.length > 0 ? fontSizeOverrides : undefined,
-          },
-        );
-
-        if (editResult.needsFontAugmentation) {
-          try {
-            const missing = String.fromCharCode(
-              ...editResult.missingCharCodes.filter(c => c < 0x10000),
+      await sessionEditorRef.current.edit(doc, 'text-edit', async doc => {
+        const page = doc.pages[currentPage];
+        const targetLine = editAnchorLineRef.current ?? editingLine;
+        const snapshot = undoSnapshotRef.current;
+        let bytes = snapshot?.pageIndex === currentPage
+          ? new Uint8Array(snapshot.contentBytes)
+          : engine.getPageContentBytes(page, doc.objects);
+      
+        const fontSizeOverrides = pendingStyles
+          .filter(p => p.patch.fontSize != null && p.end > p.start)
+          .map(p => ({
+            start: p.start,
+            end: p.end,
+            fontSize: p.patch.fontSize as number,
+          }));
+      
+        if (textChanged) {
+          let commitText = editTextRef.current || editText;
+          let caretAfter = editSelRef.current.end;
+          await prepareExportText(commitText, targetLine.runs.map(run => run.fontName), doc);
+          // Do NOT collapse multi-spaces on commit — live overlay gaps were real
+          // inserts, and smashing them made spaces vanish on click-away.
+          const editResult = engine.applyLineTextEdit(
+            bytes,
+            page,
+            doc.objects,
+            targetLine,
+            commitText,
+            renderResult?.documentFlow,
+            {
+              oldText: initialRunTextRef.current || targetLine.text,
+              caretAfter,
+              skipResidualCorrection: pendingStyles.some(p => p.patch.fontSize != null),
+              fontSizeOverrides: fontSizeOverrides.length > 0 ? fontSizeOverrides : undefined,
+            },
+          );
+      
+          if (editResult.needsFontAugmentation) {
+            try {
+              const missing = String.fromCharCode(
+                ...editResult.missingCharCodes.filter(c => c < 0x10000),
+              );
+              engine.augmentFontsForMissingGlyphs(doc, currentPage, missing);
+            } catch (augErr) {
+              console.warn('[Editor] Font augmentation failed:', augErr);
+            }
+          }
+          bytes = editResult.newContentBytes;
+        }
+      
+        if (moved) {
+          const shifts = targetLine.runs.map(run => ({ run, dx: pdfDx, dy: pdfDy }));
+          bytes = engine.applyRunPositionShifts(bytes, shifts);
+          // underline strokes are separate paths — carry them with the text
+          bytes = engine.moveUnderlinesWithRuns(bytes, targetLine.runs, pdfDx, pdfDy);
+        }
+      
+        await engine.updatePageContent(page.contentRefs, bytes, doc.objects);
+      
+        if (hasPendingStyles) {
+          const commitText = editTextRef.current || editText;
+          // Merge adjacent identical patches so we don't split the same run repeatedly
+          const raw = [...pendingStyles]
+            .filter(p => p.end > p.start)
+            .sort((a, b) => a.start - b.start || a.end - b.end);
+          let queued: typeof raw = [];
+          for (const item of raw) {
+            const prev = queued[queued.length - 1];
+            const samePatch = prev && JSON.stringify(prev.patch) === JSON.stringify(item.patch);
+            if (samePatch && prev.end >= item.start) {
+              prev.end = Math.max(prev.end, item.end);
+            } else {
+              queued.push({ ...item, patch: { ...item.patch } });
+            }
+          }
+          // Bridge fontSize-only holes left by spaces (not committed as fontSize)
+          queued = coalesceFontSizePatches(queued, commitText);
+          queued = expandFontSizePatchesThroughSpaces(queued, commitText);
+          // Re-interpret so selection ranges map onto the updated line text/runs
+          let styleLine: TextLine = targetLine;
+          const normalizeDashes = (t: string) => t.replace(/[\u2013\u2014\u2212]/g, '-');
+          const commitNorm = normalizeDashes(commitText);
+          const refreshStyleLine = () => {
+            try {
+              const freshBytes = engine.getPageContentBytes(page, doc.objects);
+              const interpreted = engine.interpretPage(freshBytes, page, doc.objects);
+              const flow = engine.buildDocumentFlow(interpreted.textRuns);
+              styleLine =
+                flow.lines.find((l: TextLine) => l.text === commitText) ??
+                flow.lines.find((l: TextLine) => normalizeDashes(l.text) === commitNorm) ??
+                findMatchingFlowLine(targetLine, flow.lines) ??
+                styleLine;
+            } catch (reErr) {
+              console.warn('[Editor] Re-interpret for styles failed:', reErr);
+            }
+          };
+          refreshStyleLine();
+      
+          // Path underlines don't move when text grows — expand insert-only
+          // underline patches to the full destination run so the stroke covers
+          // the whole title after commit.
+          for (const item of queued) {
+            if (item.patch.underline !== true) continue;
+            const onlyUl = Object.keys(item.patch).every(
+              k => k === 'underline' || (item.patch as Record<string, unknown>)[k] == null,
             );
-            engine.augmentFontsForMissingGlyphs(doc, currentPage, missing);
-          } catch (augErr) {
-            console.warn('[Editor] Font augmentation failed:', augErr);
-          }
-        }
-        bytes = editResult.newContentBytes;
-      }
-
-      if (moved) {
-        const shifts = targetLine.runs.map(run => ({ run, dx: pdfDx, dy: pdfDy }));
-        bytes = engine.applyRunPositionShifts(bytes, shifts);
-        // underline strokes are separate paths — carry them with the text
-        bytes = engine.moveUnderlinesWithRuns(bytes, targetLine.runs, pdfDx, pdfDy);
-      }
-
-      await engine.updatePageContent(page.contentRefs, bytes, doc.objects);
-
-      if (hasPendingStyles) {
-        const commitText = editTextRef.current || editText;
-        // Merge adjacent identical patches so we don't split the same run repeatedly
-        const raw = [...pendingStyles]
-          .filter(p => p.end > p.start)
-          .sort((a, b) => a.start - b.start || a.end - b.end);
-        let queued: typeof raw = [];
-        for (const item of raw) {
-          const prev = queued[queued.length - 1];
-          const samePatch = prev && JSON.stringify(prev.patch) === JSON.stringify(item.patch);
-          if (samePatch && prev.end >= item.start) {
-            prev.end = Math.max(prev.end, item.end);
-          } else {
-            queued.push({ ...item, patch: { ...item.patch } });
-          }
-        }
-        // Bridge fontSize-only holes left by spaces (not committed as fontSize)
-        queued = coalesceFontSizePatches(queued, commitText);
-        queued = expandFontSizePatchesThroughSpaces(queued, commitText);
-        pendingStylesRef.current = [];
-        // Re-interpret so selection ranges map onto the updated line text/runs
-        let styleLine: TextLine = targetLine;
-        const normalizeDashes = (t: string) => t.replace(/[\u2013\u2014\u2212]/g, '-');
-        const commitNorm = normalizeDashes(commitText);
-        const refreshStyleLine = () => {
-          try {
-            const freshBytes = engine.getPageContentBytes(page, doc.objects);
-            const interpreted = engine.interpretPage(freshBytes, page, doc.objects);
-            const flow = engine.buildDocumentFlow(interpreted.textRuns);
-            styleLine =
-              flow.lines.find((l: TextLine) => l.text === commitText) ??
-              flow.lines.find((l: TextLine) => normalizeDashes(l.text) === commitNorm) ??
-              findMatchingFlowLine(targetLine, flow.lines) ??
-              styleLine;
-          } catch (reErr) {
-            console.warn('[Editor] Re-interpret for styles failed:', reErr);
-          }
-        };
-        refreshStyleLine();
-
-        // Path underlines don't move when text grows — expand insert-only
-        // underline patches to the full destination run so the stroke covers
-        // the whole title after commit.
-        for (const item of queued) {
-          if (item.patch.underline !== true) continue;
-          const onlyUl = Object.keys(item.patch).every(
-            k => k === 'underline' || (item.patch as Record<string, unknown>)[k] == null,
-          );
-          if (!onlyUl) continue;
-          for (const seg of styleLine.segments) {
-            if (item.end > seg.startIndex && item.start < seg.endIndex) {
-              item.start = Math.min(item.start, seg.startIndex);
-              item.end = Math.max(item.end, seg.endIndex);
-            }
-          }
-        }
-
-        // Batched fontSize trailing only (no post-style residual). Residual after
-        // Tf splits re-chained widths and shoved trailers; batched growth tracks
-        // selection enlarge only.
-        // Skip when text-edit already reserved large-font width via fontSizeOverrides
-        // — stacking both invents a river after the enlarged insert.
-        if (textChanged && fontSizeOverrides.length === 0) {
-          const fsRanges = queued
-            .filter(q => q.patch.fontSize != null)
-            .map(q => ({
-              start: Math.max(0, Math.min(q.start, styleLine.text.length)),
-              end: Math.max(0, Math.min(q.end, styleLine.text.length)),
-              fontSize: q.patch.fontSize as number,
-            }))
-            .filter(r => r.end > r.start);
-          if (fsRanges.length > 0) {
-            const batched = engine.collectBatchedFontSizeTrailingShifts(styleLine, fsRanges);
-            if (batched.shifts.length > 0) {
-              let styleBytes = engine.getPageContentBytes(page, doc.objects);
-              styleBytes = engine.applyRunPositionShifts(
-                styleBytes,
-                batched.shifts,
-                styleLine.runs,
-              );
-              await engine.updatePageContent(page.contentRefs, styleBytes, doc.objects);
-            }
-          }
-        }
-
-        for (let qi = 0; qi < queued.length; qi++) {
-          const item = queued[qi];
-          const style: Record<string, unknown> = {};
-          if (item.patch.fontSize != null) style.fontSize = item.patch.fontSize;
-          if (item.patch.fontFamily != null) style.fontFamily = item.patch.fontFamily;
-          if (item.patch.color != null) style.color = hexToRGB(item.patch.color);
-          if (item.patch.bold != null) style.bold = item.patch.bold;
-          if (item.patch.italic != null) style.italic = item.patch.italic;
-          if (item.patch.underline != null) style.underline = item.patch.underline;
-          if (item.patch.align != null) style.align = item.patch.align;
-          if (Object.keys(style).length === 0) continue;
-          // Clamp to the committed line length
-          const start = Math.max(0, Math.min(item.start, styleLine.text.length));
-          const end = Math.max(start, Math.min(item.end, styleLine.text.length));
-          if (end <= start) continue;
-          await engine.applyStyleToSelectionOnPage(
-            doc,
-            currentPage,
-            styleLine,
-            start,
-            end,
-            style,
-            textChanged ? { skipTrailingFontSizeShifts: true } : undefined,
-          );
-          // Splits invalidate sourceInstructionIndices — refresh before next patch
-          if (qi < queued.length - 1) refreshStyleLine();
-        }
-      } else if (textChanged) {
-        // No pending styles — pack measured gaps after the text rewrite only.
-        // Skip when spaces were inserted: TJ space advances inflate measured
-        // widths and residual packing then pulls trailers left, collapsing
-        // live gaps and truncating the line.
-        const commitText = editTextRef.current || editText;
-        const oldTextForPack = initialRunTextRef.current || targetLine.text;
-        const packDeltaSpaces =
-          (commitText.match(/\s/g) || []).length - (oldTextForPack.match(/\s/g) || []).length;
-        if (packDeltaSpaces <= 0) {
-          try {
-            let packBytes = engine.getPageContentBytes(page, doc.objects);
-            const interpreted = engine.interpretPage(packBytes, page, doc.objects);
-            const flow = engine.buildDocumentFlow(interpreted.textRuns);
-            const normalizeDashes = (t: string) => t.replace(/[\u2013\u2014\u2212]/g, '-');
-            const commitNorm = normalizeDashes(commitText);
-            const packLine =
-              flow.lines.find((l: TextLine) => l.text === commitText) ??
-              flow.lines.find((l: TextLine) => normalizeDashes(l.text) === commitNorm) ??
-              findMatchingFlowLine(targetLine, flow.lines) ??
-              null;
-            // A cell that grew into its column gutter is re-detected as one line together with
-            // its right neighbour; packing that merged line would drag the neighbour next to it.
-            // Only pack when the matched line is still just the edited text.
-            const mergedWithNeighbour = packLine != null && packLine.text.length > commitText.length;
-            if (packLine && !mergedWithNeighbour && packLine.segments.length > 1) {
-              const packed = engine.correctLineResidualGaps(
-                packBytes, page, doc.objects, packLine,
-                { gapSourceLine: targetLine },
-              );
-              if (packed.corrections.length > 0) {
-                await engine.updatePageContent(page.contentRefs, packed.bytes, doc.objects);
+            if (!onlyUl) continue;
+            for (const seg of styleLine.segments) {
+              if (item.end > seg.startIndex && item.start < seg.endIndex) {
+                item.start = Math.min(item.start, seg.startIndex);
+                item.end = Math.max(item.end, seg.endIndex);
               }
             }
-          } catch (packErr) {
-            console.warn('[Editor] Post-text residual pack failed:', packErr);
+          }
+      
+          // Batched fontSize trailing only (no post-style residual). Residual after
+          // Tf splits re-chained widths and shoved trailers; batched growth tracks
+          // selection enlarge only.
+          // Skip when text-edit already reserved large-font width via fontSizeOverrides
+          // — stacking both invents a river after the enlarged insert.
+          if (textChanged && fontSizeOverrides.length === 0) {
+            const fsRanges = queued
+              .filter(q => q.patch.fontSize != null)
+              .map(q => ({
+                start: Math.max(0, Math.min(q.start, styleLine.text.length)),
+                end: Math.max(0, Math.min(q.end, styleLine.text.length)),
+                fontSize: q.patch.fontSize as number,
+              }))
+              .filter(r => r.end > r.start);
+            if (fsRanges.length > 0) {
+              const batched = engine.collectBatchedFontSizeTrailingShifts(styleLine, fsRanges);
+              if (batched.shifts.length > 0) {
+                let styleBytes = engine.getPageContentBytes(page, doc.objects);
+                styleBytes = engine.applyRunPositionShifts(
+                  styleBytes,
+                  batched.shifts,
+                  styleLine.runs,
+                );
+                await engine.updatePageContent(page.contentRefs, styleBytes, doc.objects);
+              }
+            }
+          }
+      
+          for (let qi = 0; qi < queued.length; qi++) {
+            const item = queued[qi];
+            const style: Record<string, unknown> = {};
+            if (item.patch.fontSize != null) style.fontSize = item.patch.fontSize;
+            if (item.patch.fontFamily != null) style.fontFamily = item.patch.fontFamily;
+            if (item.patch.color != null) style.color = hexToRGB(item.patch.color);
+            if (item.patch.bold != null) style.bold = item.patch.bold;
+            if (item.patch.italic != null) style.italic = item.patch.italic;
+            if (item.patch.underline != null) style.underline = item.patch.underline;
+            if (item.patch.align != null) style.align = item.patch.align;
+            if (Object.keys(style).length === 0) continue;
+            // Clamp to the committed line length
+            const start = Math.max(0, Math.min(item.start, styleLine.text.length));
+            const end = Math.max(start, Math.min(item.end, styleLine.text.length));
+            if (end <= start) continue;
+            await engine.applyStyleToSelectionOnPage(
+              doc,
+              currentPage,
+              styleLine,
+              start,
+              end,
+              style,
+              textChanged ? { skipTrailingFontSizeShifts: true } : undefined,
+            );
+            // Splits invalidate sourceInstructionIndices — refresh before next patch
+            if (qi < queued.length - 1) refreshStyleLine();
+          }
+        } else if (textChanged) {
+          // No pending styles — pack measured gaps after the text rewrite only.
+          // Skip when spaces were inserted: TJ space advances inflate measured
+          // widths and residual packing then pulls trailers left, collapsing
+          // live gaps and truncating the line.
+          const commitText = editTextRef.current || editText;
+          const oldTextForPack = initialRunTextRef.current || targetLine.text;
+          const packDeltaSpaces =
+            (commitText.match(/\s/g) || []).length - (oldTextForPack.match(/\s/g) || []).length;
+          if (packDeltaSpaces <= 0) {
+            try {
+              let packBytes = engine.getPageContentBytes(page, doc.objects);
+              const interpreted = engine.interpretPage(packBytes, page, doc.objects);
+              const flow = engine.buildDocumentFlow(interpreted.textRuns);
+              const normalizeDashes = (t: string) => t.replace(/[\u2013\u2014\u2212]/g, '-');
+              const commitNorm = normalizeDashes(commitText);
+              const packLine =
+                flow.lines.find((l: TextLine) => l.text === commitText) ??
+                flow.lines.find((l: TextLine) => normalizeDashes(l.text) === commitNorm) ??
+                findMatchingFlowLine(targetLine, flow.lines) ??
+                null;
+              // A cell that grew into its column gutter is re-detected as one line together with
+              // its right neighbour; packing that merged line would drag the neighbour next to it.
+              // Only pack when the matched line is still just the edited text.
+              const mergedWithNeighbour = packLine != null && packLine.text.length > commitText.length;
+              if (packLine && !mergedWithNeighbour && packLine.segments.length > 1) {
+                const packed = engine.correctLineResidualGaps(
+                  packBytes, page, doc.objects, packLine,
+                  { gapSourceLine: targetLine },
+                );
+                if (packed.corrections.length > 0) {
+                  await engine.updatePageContent(page.contentRefs, packed.bytes, doc.objects);
+                }
+              }
+            } catch (packErr) {
+              console.warn('[Editor] Post-text residual pack failed:', packErr);
+            }
           }
         }
-      }
+      });
 
 
-      pushEditorHistory('text-edit');
+      pushEditorHistory('text-edit', undefined, undefined, false, sessionEditorRef.current);
+      sessionEditorRef.current = new SessionDocumentEditor();
       editAnchorLineRef.current = null;
       undoSnapshotRef.current = null;
       editingBlockIdRef.current = null;
@@ -2032,6 +2034,7 @@ export default function EditorPage() {
         setSelectedLine(null);
       }
       setRenderKey(k => k + 1);
+      setThumbnailKey(k => k + 1);
       setGlyphWarning(null);
       return true;
     } catch (e) {
@@ -2043,7 +2046,7 @@ export default function EditorPage() {
     } finally {
       setIsSaving(false);
     }
-  }, [editingLine, editText, editOffsetCss, scale, doc, currentPage, setEditingLine, renderResult, pushEditorHistory, applyStyle, showUnsupportedGlyphWarning, prepareExportText]);
+  }, [editingLine, editText, editOffsetCss, scale, doc, currentPage, setEditingLine, renderResult, pushEditorHistory, showUnsupportedGlyphWarning, prepareExportText]);
 
   // ── Edit cancel — discard overlay only; PDF untouched until commit ──
   const handleEditCancel = useCallback(async () => {
@@ -3194,76 +3197,95 @@ export default function EditorPage() {
       currentObjNum = engine.getNextObjNum(doc);
     }
 
-    let newContentBytes: Uint8Array;
-    if (fTexts.length > 0 || fImages.length > 0 || signaturePlacements.length > 0) {
-      const contentBytes = engine.getPageContentBytes(page, doc.objects);
-      newContentBytes = new Uint8Array(contentBytes);
-
-      for (const ft of fTexts) {
-        if (!ft.text.trim()) continue;
-        const rgb = hexToRGB(ft.color);
-
-        newContentBytes = engine.insertTextRun(
-          newContentBytes, page, doc.objects,
-          ft.text, ft.pdfX, ft.pdfY, ft.fontSize, rgb
-          , { fontFamily: ft.fontFamily, bold: ft.bold, italic: ft.italic, underline: ft.underline, opacity: ft.opacity, width: ft.pdfWidth }
-        );
-      }
-
-      for (const fi of fImages) {
-        const { newContentBytes: b } = await engine.insertImageRun(
-          newContentBytes, page, doc.objects,
-          fi.dataUrl, fi.pdfX, fi.pdfY, fi.pdfWidth, fi.pdfHeight,
-          () => {
-            const num = currentObjNum;
-            currentObjNum++;
-            return num;
-          }
-        );
-        newContentBytes = b;
-      }
-
-      // Visual signatures are overlay state until export. Their model uses a
-      // lower-left PDF bbox, while insertImageRun accepts the top edge as y.
-      for (const signature of signaturePlacements) {
-        const { newContentBytes: b } = await engine.insertImageRun(
-          newContentBytes, page, doc.objects, signature.imageDataUrl,
-          signature.x, signature.y + signature.height, signature.width, signature.height,
-          () => {
-            const num = currentObjNum;
-            currentObjNum++;
-            return num;
-          },
-          { rotationDegrees: signature.rotation, opacity: signature.opacity },
-        );
-        newContentBytes = b;
-      }
-
-    }
-
-    await commitThenCleanup(
-      async () => {
-        if (fTexts.length > 0 || fImages.length > 0 || signaturePlacements.length > 0) {
-          // Must finish before the caller saves — otherwise Download exports without the new text/images.
-          await engine.updatePageContent(page.contentRefs, newContentBytes, doc.objects);
+    let textSession: SessionDocumentEditor | undefined;
+    let textCommitted = false;
+    try {
+      let newContentBytes: Uint8Array;
+      if (fTexts.length > 0 || fImages.length > 0 || signaturePlacements.length > 0) {
+        const contentBytes = engine.getPageContentBytes(page, doc.objects);
+        newContentBytes = new Uint8Array(contentBytes);
+    
+        if (fTexts.some(ft => ft.text.trim())) {
+          textSession = new SessionDocumentEditor();
+          await textSession.edit(doc, 'add-text-box', async staged => {
+            const stagedPage = staged.pages[currentPage];
+            await prepareExportText(fTexts.map(ft => ft.text).join('\n'), undefined, staged);
+            for (const ft of fTexts) {
+              if (!ft.text.trim()) continue;
+              newContentBytes = engine.insertTextRun(
+                newContentBytes, stagedPage, staged.objects,
+                ft.text, ft.pdfX, ft.pdfY, ft.fontSize, hexToRGB(ft.color),
+                { fontFamily: ft.fontFamily, bold: ft.bold, italic: ft.italic, underline: ft.underline, opacity: ft.opacity, width: ft.pdfWidth },
+              );
+            }
+            await engine.updatePageContent(stagedPage.contentRefs, newContentBytes, staged.objects);
+          });
+          textCommitted = true;
+          // Font objects allocated by text insertion precede legacy image allocations.
+          currentObjNum = engine.getNextObjNum(doc);
         }
-      },
-      () => {
-        const clearedOverlays = { drawnPaths: [] as DrawnPath[], floatingTexts: [] as FloatingText[], floatingImages: [] as FloatingImage[] };
-        setDrawnPaths([]);
-        setFloatingTexts([]);
-        setFloatingImages([]);
-        setActiveFloatingTextId(null);
-        setActiveFloatingImageId(null);
-        const committedSignatureIds = new Set(signaturePlacements.map((signature) => signature.signatureId));
-        const remainingSignatures = signaturesRef.current.filter((signature) => !committedSignatureIds.has(signature.id));
-        setSignatures(remainingSignatures);
-        signaturesRef.current = remainingSignatures;
-        pushEditorHistory('commit-drawings', { ...clearedOverlays, signatures: remainingSignatures }, undefined, true);
-        setIsDirty(true);
-        setRenderKey(k => k + 1);
-      },
-    );
+    
+        for (const fi of fImages) {
+          const { newContentBytes: b } = await engine.insertImageRun(
+            newContentBytes, page, doc.objects,
+            fi.dataUrl, fi.pdfX, fi.pdfY, fi.pdfWidth, fi.pdfHeight,
+            () => {
+              const num = currentObjNum;
+              currentObjNum++;
+              return num;
+            }
+          );
+          newContentBytes = b;
+        }
+    
+        // Visual signatures are overlay state until export. Their model uses a
+        // lower-left PDF bbox, while insertImageRun accepts the top edge as y.
+        for (const signature of signaturePlacements) {
+          const { newContentBytes: b } = await engine.insertImageRun(
+            newContentBytes, page, doc.objects, signature.imageDataUrl,
+            signature.x, signature.y + signature.height, signature.width, signature.height,
+            () => {
+              const num = currentObjNum;
+              currentObjNum++;
+              return num;
+            },
+            { rotationDegrees: signature.rotation, opacity: signature.opacity },
+          );
+          newContentBytes = b;
+        }
+    
+      }
+    
+      await commitThenCleanup(
+        async () => {
+          if (fTexts.length > 0 || fImages.length > 0 || signaturePlacements.length > 0) {
+            // Must finish before the caller saves — otherwise Download exports without the new text/images.
+            await engine.updatePageContent(page.contentRefs, newContentBytes, doc.objects);
+          }
+        },
+        () => {
+          const clearedOverlays = { drawnPaths: [] as DrawnPath[], floatingTexts: [] as FloatingText[], floatingImages: [] as FloatingImage[] };
+          setDrawnPaths([]);
+          setFloatingTexts([]);
+          floatingTextsRef.current = [];
+          setFloatingImages([]);
+          setActiveFloatingTextId(null);
+          setActiveFloatingImageId(null);
+          const committedSignatureIds = new Set(signaturePlacements.map((signature) => signature.signatureId));
+          const remainingSignatures = signaturesRef.current.filter((signature) => !committedSignatureIds.has(signature.id));
+          setSignatures(remainingSignatures);
+          signaturesRef.current = remainingSignatures;
+          pushEditorHistory('commit-drawings', { ...clearedOverlays, signatures: remainingSignatures }, undefined, true, textSession);
+          setIsDirty(true);
+          setRenderKey(k => k + 1);
+          if (textCommitted) setThumbnailKey(k => k + 1);
+        },
+      );
+    } catch (error) {
+      // Keep the editable boxes available for retry without inserting them twice.
+      if (textCommitted && textSession) await textSession.undo(doc);
+      throw error;
+    }
 
   }, [doc, currentPage, drawnPaths, floatingTexts, floatingImages, scale, renderResult, pushEditorHistory, prepareExportText]);
 
