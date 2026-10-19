@@ -140,7 +140,8 @@ function walkField(
     widgets.push(buildWidget(obj, fieldRef, fullName || partial, ft, resolvePageRef(obj, objects), objects));
   }
 
-  const kidsArr = obj.get('Kids');
+  const kidsEntry = obj.get('Kids');
+  const kidsArr = kidsEntry ? resolveRef(kidsEntry, objects) : undefined;
   if (kidsArr instanceof PDFArray) {
     for (let i = 0; i < kidsArr.length; i++) {
       const kidRef = kidsArr.get(i);
@@ -197,7 +198,8 @@ export function parseAcroFormCatalog(doc: PDFDocumentData): AcroFormCatalog | nu
   if (!(acro instanceof PDFDict)) return null;
 
   const fields: AcroFormField[] = [];
-  const fieldsArr = acro.get('Fields');
+  const fieldsEntry = acro.get('Fields');
+  const fieldsArr = fieldsEntry ? resolveRef(fieldsEntry, doc.objects) : undefined;
   if (fieldsArr instanceof PDFArray) {
     for (let i = 0; i < fieldsArr.length; i++) {
       const ref = fieldsArr.get(i);

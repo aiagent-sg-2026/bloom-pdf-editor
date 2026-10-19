@@ -23,11 +23,13 @@ import {
   hitTestTextLine, findNearestTextLine, caretIndexFromLineX,
   getLineBounds, getOverlayFontFamily, getOverlayFontStyle, getDisplayFontFamily,
 } from './utils';
-import { buildDisplayListIndex, hitTestDisplayList, isSelectableDisplayItem, captureHistoryEntry, restoreAnnotSnapshot, restoreDocumentStructure, parseOverlaySnapshot, deleteObject, visualFontSize, resolveRunStyleFlags, transformObject, applyObjectTransform, distributeTextChangeToSegments, segmentAtIndex, createVisualSignature, hitTestSignature, moveSignature, resizeSignature, rotateSignature, setSignatureOpacity, setSignatureLocked, deleteSignature, updateSignature, visualSignatureToImagePlacement, getSignatureLibrary, DEFAULT_SIGNATURE_SIZE, detectSignatureFieldsOnPage, hitTestSignatureField, createSignatureFieldAtPoint, applySignatureFieldAppearanceAsync, getCertificateManager, signDocumentCryptographic, validateDocumentSignatures, enableLongTermValidation, getLtvStatus, listManagedSignatures, buildRevisionViewer, lockSignaturesAfterSigning, pushRecentSignatureId, orderLibraryByRecent, SIGNATURE_SHORTCUTS } from '@/engine/browser-core';
+import { buildDisplayListIndex, hitTestDisplayList, isSelectableDisplayItem, captureHistoryEntry, restoreAnnotSnapshot, restoreDocumentStructure, parseOverlaySnapshot, deleteObject, visualFontSize, resolveRunStyleFlags, transformObject, applyObjectTransform, distributeTextChangeToSegments, segmentAtIndex, createVisualSignature, hitTestSignature, moveSignature, resizeSignature, rotateSignature, setSignatureOpacity, setSignatureLocked, deleteSignature, updateSignature, getSignatureLibrary, DEFAULT_SIGNATURE_SIZE, detectSignatureFieldsOnPage, hitTestSignatureField, createSignatureFieldAtPoint, applySignatureFieldAppearanceAsync, getCertificateManager, signDocumentCryptographic, validateDocumentSignatures, enableLongTermValidation, getLtvStatus, listManagedSignatures, buildRevisionViewer, lockSignaturesAfterSigning, pushRecentSignatureId, orderLibraryByRecent, SIGNATURE_SHORTCUTS } from '@/engine/browser-core';
 import type { Annotation, QuadTree, SelectableItem, EditableObject, EditorHistoryEntry, PDFRef } from '@/engine/browser-core';
 import { UnsupportedGlyphsError, SessionDocumentEditor } from '@/engine/browser-core';
 import { SessionEditorHistory } from '@/engine/session/editor-history';
 import { addDrawingAnnotations, collectDrawingRemovals, collectMarkupRemovals, previewMarkupRemoval, removeMarkupReferences } from '@/engine/session/document-edit';
+import { findVisualSignatureRefs, placeVisualSignature, removeVisualSignature } from '@/engine/session/signature-edit';
+import { PDFDict, PDFString } from '@/engine/types';
 import { findMatchingFlowLine } from './flowLineMatch';
 import { commitThenCleanup } from './commit-after-success';
 
@@ -481,6 +483,7 @@ export default function EditorPage() {
   const historyRef = useRef(new SessionEditorHistory());
   const sessionEditorRef = useRef(new SessionDocumentEditor());
   const historyBusyRef = useRef(false);
+  const nativeEditPendingRef = useRef<Promise<void>>(Promise.resolve());
   const [canUndo, setCanUndo] = useState(false);
   const [canRedo, setCanRedo] = useState(false);
   const undoSnapshotRef = useRef<{ pageIndex: number; contentBytes: Uint8Array } | null>(null);
@@ -539,7 +542,7 @@ export default function EditorPage() {
   const [searchBusy, setSearchBusy] = useState(false);
   const [showExportPanel, setShowExportPanel] = useState(false);
 
-  // Visual signatures (Phases 1–3) — overlay only, no PDF write
+  // Editable signature overlays backed by transactional native appearances.
   const [signatures, setSignatures] = useState<VisualSignature[]>([]);
   const [selectedSignatureId, setSelectedSignatureId] = useState<string | null>(null);
   const [signatureLibraryEntries, setSignatureLibraryEntries] = useState<SignatureLibraryEntry[]>([]);
@@ -636,6 +639,51 @@ export default function EditorPage() {
     syncTxState();
   }, [doc, currentPage, syncTxState]);
 
+  // Keep rapid field input and signature gestures in chronological order.
+  const queueNativeEdit = useCallback((apply: () => Promise<void>): Promise<void> => {
+    const pending = nativeEditPendingRef.current.then(async () => {
+      await annotationCommitPendingRef.current;
+      await apply();
+    });
+    nativeEditPendingRef.current = pending.catch(() => {});
+    return pending;
+  }, []);
+
+  const commitSignatureChange = useCallback(async (
+    update: (current: VisualSignature[]) => VisualSignature[],
+    label: string,
+  ) => {
+    if (!doc) return false;
+    try {
+      await queueNativeEdit(async () => {
+        const previous = signaturesRef.current;
+        const next = update(previous);
+        const editor = new SessionDocumentEditor();
+        await editor.edit(doc, label, async staged => {
+          for (const signature of previous) {
+            if (!next.some(item => item.id === signature.id)) removeVisualSignature(staged, signature.id);
+          }
+          for (const signature of next) {
+            if (previous.includes(signature)) continue;
+            const entry = getSignatureLibrary().get(signature.appearanceId);
+            if (!entry) throw new Error('Signature appearance is unavailable');
+            await placeVisualSignature(staged, signature, entry.imageDataUrl);
+          }
+        });
+        signaturesRef.current = next;
+        setSignatures(next);
+        pushEditorHistory(label, { signatures: next }, undefined, false, editor);
+        setIsDirty(true);
+        setRenderKey(k => k + 1);
+        setThumbnailKey(k => k + 1);
+      });
+      return true;
+    } catch (error) {
+      setError(error instanceof Error ? error.message : 'Signature edit failed');
+      return false;
+    }
+  }, [doc, pushEditorHistory, queueNativeEdit]);
+
   const pushSignatureSnapshot = useCallback((next: VisualSignature[], label: string) => {
     setSignatures(next);
     signaturesRef.current = next;
@@ -670,6 +718,9 @@ export default function EditorPage() {
     setSelectedSignatureId(null);
     setSelectedDisplayItem(null);
     setSelectedLine(null);
+    setSelectedFormField(null);
+    setFormFieldDraft('');
+    setSelectedPdfSigFieldId(null);
     setTotalPages(doc.pages.length);
     setIsDirty(true);
     const stablePageIndex = entry.pageKey ? doc.pages.findIndex((page) => page.ref.toKey() === entry.pageKey) : entry.pageIndex;
@@ -1159,7 +1210,11 @@ export default function EditorPage() {
         if (normalizedBytes !== rawBytes) {
           await engine.updatePageContent(editablePage.contentRefs, normalizedBytes, doc!.objects);
         }
-        const renderDoc = previewMarkupRemoval(doc!, currentPage, erasedAnnotationsRef.current);
+        const hidden = new Map(erasedAnnotationsRef.current);
+        for (const ref of findVisualSignatureRefs(doc!, new Set(signaturesRef.current.map(sig => sig.id))).values()) {
+          hidden.set(ref.toKey(), ref);
+        }
+        const renderDoc = previewMarkupRemoval(doc!, currentPage, hidden);
         const result = await engine.renderPage(renderDoc, currentPage, { scale });
         if (cancelled) return;
         setRenderResult(result);
@@ -1242,7 +1297,6 @@ export default function EditorPage() {
             if (selectedFormField) {
               const still = fields.find(f => f.ref.toKey() === selectedFormField.ref.toKey());
               setSelectedFormField(still ?? null);
-              setFormFieldDraft(still && typeof still.value === 'string' ? still.value : '');
             }
           }
         } catch {
@@ -2079,6 +2133,7 @@ export default function EditorPage() {
     historyBusyRef.current = true;
     try {
       await annotationCommitPendingRef.current;
+      await nativeEditPendingRef.current;
       const result = await historyRef.current.undo(doc);
       if (result) await applyHistoryEntry(result.entry, result.restoredDocument);
     } catch (e) {
@@ -2094,6 +2149,7 @@ export default function EditorPage() {
     historyBusyRef.current = true;
     try {
       await annotationCommitPendingRef.current;
+      await nativeEditPendingRef.current;
       const result = await historyRef.current.redo(doc);
       if (result) await applyHistoryEntry(result.entry, result.restoredDocument);
     } catch (e) {
@@ -2124,16 +2180,6 @@ export default function EditorPage() {
       return;
     }
     try {
-      await applySignatureFieldAppearanceAsync(doc, field.ref, {
-        width: field.rect.width,
-        height: field.rect.height,
-        imageDataUrl: entry.imageDataUrl,
-        typedName: entry.typedText || entry.name,
-        date: new Date().toLocaleDateString(),
-        backgroundColor: [1, 1, 1],
-        borderWidth: 1,
-        borderColor: [0.2, 0.25, 0.35],
-      });
       // Also keep a visual overlay aligned to the field for immediate feedback
       const overlay = createVisualSignature({
         pageIndex: field.pageIndex,
@@ -2145,25 +2191,49 @@ export default function EditorPage() {
         width: field.rect.width,
         height: field.rect.height,
       });
-      const withoutOverlapping = signaturesRef.current.filter(
-        (s) =>
-          !(
+      await queueNativeEdit(async () => {
+        const withoutOverlapping = signaturesRef.current.filter(
+          s => !(
             s.pageIndex === field.pageIndex &&
             Math.abs(s.x - overlay.x) < 2 &&
             Math.abs(s.y - overlay.y) < 2
           ),
-      );
-      pushSignatureSnapshot([...withoutOverlapping, overlay], 'place-in-field');
+        );
+        const editor = new SessionDocumentEditor();
+        await editor.edit(doc, 'place-in-field', async staged => {
+          for (const previous of signaturesRef.current) {
+            if (!withoutOverlapping.includes(previous)) removeVisualSignature(staged, previous.id);
+          }
+          await applySignatureFieldAppearanceAsync(staged, field.ref, {
+            width: field.rect.width,
+            height: field.rect.height,
+            imageDataUrl: entry.imageDataUrl,
+            typedName: entry.typedText || entry.name,
+            date: new Date().toLocaleDateString(),
+            backgroundColor: [1, 1, 1],
+            borderWidth: 1,
+            borderColor: [0.2, 0.25, 0.35],
+          });
+          const widget = staged.objects.get(field.ref.toKey());
+          if (!(widget instanceof PDFDict)) throw new Error('Signature field is unavailable');
+          widget.set('PaperloomSignatureId', new PDFString(overlay.id));
+        });
+        const next = [...withoutOverlapping, overlay];
+        signaturesRef.current = next;
+        setSignatures(next);
+        pushEditorHistory('place-in-field', { signatures: next }, undefined, false, editor);
+      });
       setPdfSignatureFields(detectSignatureFieldsOnPage(doc, currentPage));
       setSelectedPdfSigFieldId(field.id);
       setActiveLibraryId(entry.id);
       setIsDirty(true);
       setRenderKey((k) => k + 1);
+      setThumbnailKey(k => k + 1);
     } catch (err) {
       console.error('[Editor] Place signature in field failed:', err);
       setError(`Place signature failed: ${err instanceof Error ? err.message : String(err)}`);
     }
-  }, [doc, activeLibraryId, currentPage, pushSignatureSnapshot]);
+  }, [doc, activeLibraryId, currentPage, pushEditorHistory, queueNativeEdit]);
 
   const refreshCertificateIdentities = useCallback(() => {
     const mgr = getCertificateManager();
@@ -2201,6 +2271,7 @@ export default function EditorPage() {
       return;
     }
 
+    await nativeEditPendingRef.current;
     let field = pdfSignatureFields.find((f) => f.id === selectedPdfSigFieldId);
     if (!field) {
       const unsigned = pdfSignatureFields.find((f) => !f.signed);
@@ -2211,12 +2282,22 @@ export default function EditorPage() {
         const px = placedSig ? placedSig.x : 100;
         const py = placedSig ? placedSig.y : 100;
         try {
-          const created = createSignatureFieldAtPoint(doc, currentPage, px, py, {
-            withPlaceholderAppearance: true,
+          let createdId = '';
+          await queueNativeEdit(async () => {
+            const editor = new SessionDocumentEditor();
+            await editor.edit(doc, 'create-form-field', async staged => {
+              createdId = createSignatureFieldAtPoint(staged, currentPage, px, py, {
+                withPlaceholderAppearance: true,
+              }).id;
+            });
+            pushEditorHistory('create-form-field', undefined, undefined, false, editor);
+            setIsDirty(true);
+            setRenderKey(k => k + 1);
+            setThumbnailKey(k => k + 1);
           });
           const fieldsOnPage = detectSignatureFieldsOnPage(doc, currentPage);
           setPdfSignatureFields(fieldsOnPage);
-          field = fieldsOnPage.find((f) => f.id === created.id);
+          field = fieldsOnPage.find(f => f.id === createdId);
         } catch (err) {
           console.error('[Editor] Auto-create sig field failed:', err);
         }
@@ -2266,7 +2347,7 @@ export default function EditorPage() {
     } finally {
       setCryptoSignBusy(false);
     }
-  }, [doc, selectedPdfSigFieldId, pdfSignatureFields, selectedCertificateId, currentPage, enableTimestamp, pushSignatureSnapshot, activeLibraryId]);
+  }, [doc, selectedPdfSigFieldId, pdfSignatureFields, selectedCertificateId, currentPage, enableTimestamp, pushSignatureSnapshot, activeLibraryId, pushEditorHistory, queueNativeEdit]);
 
   const refreshMultiSigPanel = useCallback(() => {
     if (!doc) {
@@ -2310,29 +2391,38 @@ export default function EditorPage() {
     }
   }, [doc, refreshMultiSigPanel]);
 
-  const handleFormFieldChange = useCallback((value: string) => {
+  const handleFormFieldChange = useCallback(async (value: string) => {
     setFormFieldDraft(value);
     if (!doc || !selectedFormField || !engineRef.current) return;
     const engine = engineRef.current;
-    if (selectedFormField.fieldType === 'Btn') {
-      const checked = value === 'true' || value === 'Yes' || value === 'On';
-      engine.setButtonFieldValue(doc, selectedFormField, checked);
-      setFormFields(prev => prev.map(f =>
-        f.ref.toKey() === selectedFormField.ref.toKey() ? { ...f, value: checked } : f,
-      ));
-    } else if (selectedFormField.fieldType === 'Ch') {
-      engine.setChoiceFieldValue(doc, selectedFormField, value);
-      setFormFields(prev => prev.map(f =>
-        f.ref.toKey() === selectedFormField.ref.toKey() ? { ...f, value } : f,
-      ));
-    } else {
-      engine.setFormFieldValue(doc, selectedFormField, value);
-      setFormFields(prev => prev.map(f =>
-        f.ref.toKey() === selectedFormField.ref.toKey() ? { ...f, value } : f,
-      ));
+    const key = selectedFormField.ref.toKey();
+    try {
+      await queueNativeEdit(async () => {
+        const editor = new SessionDocumentEditor();
+        await editor.edit(doc, 'form-value', async staged => {
+          const widget = engine.detectFormFieldsOnPage(staged, currentPage).find(field => field.ref.toKey() === key);
+          if (!widget) throw new Error('Form field is unavailable');
+          if (widget.fieldType === 'Btn') {
+            engine.setButtonFieldValue(staged, widget, value === 'true' || value === 'Yes' || value === 'On');
+          } else if (widget.fieldType === 'Ch') {
+            engine.setChoiceFieldValue(staged, widget, value);
+          } else {
+            engine.setFormFieldValue(staged, widget, value);
+          }
+        });
+        pushEditorHistory('form-value', undefined, undefined, false, editor);
+        const fields = engine.detectFormFieldsOnPage(doc, currentPage);
+        setFormFields(fields);
+        setSelectedFormField(selected => selected?.ref.toKey() === key
+          ? fields.find(field => field.ref.toKey() === key) ?? null : selected);
+        setIsDirty(true);
+        setRenderKey(k => k + 1);
+        setThumbnailKey(k => k + 1);
+      });
+    } catch (error) {
+      setError(error instanceof Error ? error.message : 'Form value edit failed');
     }
-    setIsDirty(true);
-  }, [doc, selectedFormField]);
+  }, [doc, selectedFormField, currentPage, pushEditorHistory, queueNativeEdit]);
 
   // ── Document-wide search effect ──
   useEffect(() => {
@@ -2520,8 +2610,15 @@ export default function EditorPage() {
     try {
       setIsSaving(true);
       const engine = engineRef.current;
-      await engine.flattenFormFieldsOnPage(doc, currentPage, formFields);
-      pushEditorHistory('flatten-forms');
+      await queueNativeEdit(async () => {
+        const editor = new SessionDocumentEditor();
+        await editor.edit(doc, 'flatten-forms', async staged => {
+          await engine.flattenFormFieldsOnPage(staged, currentPage, engine.detectFormFieldsOnPage(staged, currentPage));
+        });
+        pushEditorHistory('flatten-forms', undefined, undefined, false, editor);
+      });
+      setIsDirty(true);
+      setThumbnailKey(k => k + 1);
       setFormFields([]);
       setSelectedFormField(null);
       setFormFieldDraft('');
@@ -2532,7 +2629,7 @@ export default function EditorPage() {
     } finally {
       setIsSaving(false);
     }
-  }, [doc, currentPage, formFields, pushEditorHistory]);
+  }, [doc, currentPage, formFields, pushEditorHistory, queueNativeEdit]);
 
   const handleDuplicateLineBelow = useCallback(async () => {
     const line = editAnchorLineRef.current ?? selectedLine ?? editingLine;
@@ -2932,7 +3029,7 @@ export default function EditorPage() {
     }
   }, [renderResult, doc, currentPage, scale, activeTool, editingLine, handleEditSubmit, beginEditSession]);
 
-  const handleSignatureDrop = useCallback((e: React.DragEvent) => {
+  const handleSignatureDrop = useCallback(async (e: React.DragEvent) => {
     e.preventDefault();
     const signatureId =
       e.dataTransfer.getData('application/x-signature-id') ||
@@ -2974,11 +3071,11 @@ export default function EditorPage() {
       height: h,
     });
 
-    pushSignatureSnapshot([...signaturesRef.current, sig], 'add-signature');
+    if (!await commitSignatureChange(current => [...current, sig], 'add-signature')) return;
     setSelectedSignatureId(sig.id);
     setActiveLibraryId(entry.id);
     pushRecentSignatureId(entry.id);
-  }, [doc, renderResult, currentPage, scale, pushSignatureSnapshot]);
+  }, [doc, renderResult, currentPage, scale, commitSignatureChange]);
 
   const applyEraser = useCallback((x: number, y: number, opts?: { deferAnnotRender?: boolean }) => {
     const eraserRadius = eraserSize / 2;
@@ -3222,14 +3319,14 @@ export default function EditorPage() {
   // ── Commit drawings, texts, and images to PDF ──
   const commitDrawingsToPdf = useCallback(async (pathsToCommit?: DrawnPath[], textsToCommit?: FloatingText[], imagesToCommit?: FloatingImage[]) => {
     await annotationCommitPendingRef.current;
+    await nativeEditPendingRef.current;
     const paths = pathsToCommit ?? drawnPathsRef.current;
     const fTexts = textsToCommit ?? floatingTextsRef.current;
     const fImages = imagesToCommit || floatingImages;
-    const signaturePlacements = signaturesRef.current
-      .filter((signature) => signature.pageIndex === currentPage)
-      .map((signature) => visualSignatureToImagePlacement(signature, getSignatureLibrary().get(signature.appearanceId)))
-      .filter((placement): placement is NonNullable<typeof placement> => placement !== null);
-    if (!doc || !engineRef.current || (paths.length === 0 && fTexts.length === 0 && fImages.length === 0 && signaturePlacements.length === 0)) return;
+    const pageSignatures = signaturesRef.current.filter(signature => signature.pageIndex === currentPage);
+    if (!doc || !engineRef.current || (paths.length === 0 && fTexts.length === 0 && fImages.length === 0 && pageSignatures.length === 0)) return;
+    const nativeSignatures = findVisualSignatureRefs(doc, new Set(pageSignatures.map(signature => signature.id)));
+    const uncommittedSignatures = pageSignatures.filter(signature => !nativeSignatures.has(signature.id));
     const engine = engineRef.current;
     const page = doc.pages[currentPage];
     // Check every floating box before drawings, fonts, images, or overlay cleanup can mutate state.
@@ -3240,7 +3337,7 @@ export default function EditorPage() {
     let nativeSession: SessionDocumentEditor | undefined;
     let nativeCommitted = false;
     try {
-      if (annotations.length > 0 || fTexts.some(ft => ft.text.trim())) {
+      if (annotations.length > 0 || fTexts.some(ft => ft.text.trim()) || uncommittedSignatures.length > 0) {
         nativeSession = new SessionDocumentEditor();
         await nativeSession.edit(doc, annotations.length > 0 ? 'commit-drawings' : 'add-text-box', async staged => {
           addDrawingAnnotations(staged, currentPage, annotations);
@@ -3258,12 +3355,17 @@ export default function EditorPage() {
             }
             await engine.updatePageContent(stagedPage.contentRefs, bytes, staged.objects);
           }
+          for (const signature of uncommittedSignatures) {
+            const entry = getSignatureLibrary().get(signature.appearanceId);
+            if (!entry) throw new Error('Signature appearance is unavailable');
+            await placeVisualSignature(staged, signature, entry.imageDataUrl);
+          }
         });
         nativeCommitted = true;
         currentObjNum = engine.getNextObjNum(doc);
       }
       let newContentBytes: Uint8Array;
-      if (fTexts.length > 0 || fImages.length > 0 || signaturePlacements.length > 0) {
+      if (fTexts.length > 0 || fImages.length > 0) {
         const contentBytes = engine.getPageContentBytes(page, doc.objects);
         newContentBytes = new Uint8Array(contentBytes);
     
@@ -3280,27 +3382,11 @@ export default function EditorPage() {
           newContentBytes = b;
         }
     
-        // Visual signatures are overlay state until export. Their model uses a
-        // lower-left PDF bbox, while insertImageRun accepts the top edge as y.
-        for (const signature of signaturePlacements) {
-          const { newContentBytes: b } = await engine.insertImageRun(
-            newContentBytes, page, doc.objects, signature.imageDataUrl,
-            signature.x, signature.y + signature.height, signature.width, signature.height,
-            () => {
-              const num = currentObjNum;
-              currentObjNum++;
-              return num;
-            },
-            { rotationDegrees: signature.rotation, opacity: signature.opacity },
-          );
-          newContentBytes = b;
-        }
-    
       }
     
       await commitThenCleanup(
         async () => {
-          if (fTexts.length > 0 || fImages.length > 0 || signaturePlacements.length > 0) {
+          if (fTexts.length > 0 || fImages.length > 0) {
             // Must finish before the caller saves — otherwise Download exports without the new text/images.
             await engine.updatePageContent(page.contentRefs, newContentBytes, doc.objects);
           }
@@ -3314,7 +3400,7 @@ export default function EditorPage() {
           setFloatingImages([]);
           setActiveFloatingTextId(null);
           setActiveFloatingImageId(null);
-          const committedSignatureIds = new Set(signaturePlacements.map((signature) => signature.signatureId));
+          const committedSignatureIds = new Set(pageSignatures.map(signature => signature.id));
           const remainingSignatures = signaturesRef.current.filter((signature) => !committedSignatureIds.has(signature.id));
           setSignatures(remainingSignatures);
           signaturesRef.current = remainingSignatures;
@@ -4488,33 +4574,28 @@ export default function EditorPage() {
   }, []);
 
   const handleSignatureMove = useCallback((id: string, dx: number, dy: number) => {
-    const next = updateSignature(signaturesRef.current, id, (s) => moveSignature(s, dx, dy));
-    pushSignatureSnapshot(next, 'move-signature');
-  }, [pushSignatureSnapshot]);
+    void commitSignatureChange(current => updateSignature(current, id, s => moveSignature(s, dx, dy)), 'move-signature');
+  }, [commitSignatureChange]);
 
   const handleSignatureResize = useCallback((id: string, width: number, height: number) => {
-    const next = updateSignature(signaturesRef.current, id, (s) => resizeSignature(s, width, height));
-    pushSignatureSnapshot(next, 'resize-signature');
-  }, [pushSignatureSnapshot]);
+    void commitSignatureChange(current => updateSignature(current, id, s => resizeSignature(s, width, height)), 'resize-signature');
+  }, [commitSignatureChange]);
 
   const handleSignatureRotate = useCallback((id: string, degrees: number) => {
-    const next = updateSignature(signaturesRef.current, id, (s) => rotateSignature(s, degrees));
-    pushSignatureSnapshot(next, 'rotate-signature');
-  }, [pushSignatureSnapshot]);
+    void commitSignatureChange(current => updateSignature(current, id, s => rotateSignature(s, degrees)), 'rotate-signature');
+  }, [commitSignatureChange]);
 
   const handleSignatureDelete = useCallback((id: string) => {
-    const next = deleteSignature(signaturesRef.current, id);
-    pushSignatureSnapshot(next, 'delete-signature');
+    void commitSignatureChange(current => deleteSignature(current, id), 'delete-signature');
     if (selectedSignatureId === id) setSelectedSignatureId(null);
-  }, [pushSignatureSnapshot, selectedSignatureId]);
+  }, [commitSignatureChange, selectedSignatureId]);
 
   const handleSignatureOpacity = useCallback((id: string, opacity: number) => {
-    const next = updateSignature(signaturesRef.current, id, (s) => setSignatureOpacity(s, opacity));
-    pushSignatureSnapshot(next, 'opacity-signature');
-  }, [pushSignatureSnapshot]);
+    void commitSignatureChange(current => updateSignature(current, id, s => setSignatureOpacity(s, opacity)), 'opacity-signature');
+  }, [commitSignatureChange]);
 
   const handleSignatureLockToggle = useCallback((id: string) => {
-    const next = updateSignature(signaturesRef.current, id, (s) => setSignatureLocked(s, !s.locked));
+    const next = updateSignature(signaturesRef.current, id, s => setSignatureLocked(s, !s.locked));
     pushSignatureSnapshot(next, 'lock-signature');
   }, [pushSignatureSnapshot]);
 
@@ -4592,6 +4673,7 @@ export default function EditorPage() {
       setIsSaving(true);
       setGlyphWarning(null);
       await annotationCommitPendingRef.current;
+      await nativeEditPendingRef.current;
       const result = await engineRef.current.exportDocument(doc, {
         mode: saveMode,
         prepare: () => prepareExportText(floatingTextsRef.current.map(ft => ft.text).join('\n')),
@@ -4629,6 +4711,7 @@ export default function EditorPage() {
       setError(null);
       setGlyphWarning(null);
       await annotationCommitPendingRef.current;
+      await nativeEditPendingRef.current;
       await prepareExportText(floatingTextsRef.current.map(ft => ft.text).join('\n'));
       if (editingLineRef.current && !await handleEditSubmit()) return;
       // Capture pending overlays before committing them; compare exportable
@@ -5193,6 +5276,7 @@ export default function EditorPage() {
         onToggleSearch={() => setIsSearchOpen(!isSearchOpen)}
         onExport={async () => {
           await annotationCommitPendingRef.current;
+          await nativeEditPendingRef.current;
           setShowExportPanel(true);
         }}
         doc={doc}

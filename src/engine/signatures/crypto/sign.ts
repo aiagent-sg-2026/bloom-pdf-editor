@@ -62,27 +62,22 @@ export function createSignatureField(
 
   addAnnotationToPage(page.dict, dict, ref, doc.objects);
 
-  // Ensure AcroForm
+  // Preserve indirect AcroForm and /Fields objects when appending a widget.
   const catalog = doc.catalog;
-  let acro = catalog.get('AcroForm');
-  if (!acro) {
-    const acroDict = new PDFDict();
-    acroDict.set('Fields', new PDFArray([ref]));
-    acroDict.set('SigFlags', new PDFNumber(3));
+  const acroEntry = catalog.get('AcroForm');
+  let acro = acroEntry instanceof PDFRef ? doc.objects.get(acroEntry.toKey()) : acroEntry;
+  if (!(acro instanceof PDFDict)) {
+    acro = new PDFDict();
+    acro.set('Fields', new PDFArray());
+    acro.set('SigFlags', new PDFNumber(3));
     const acroRef = new PDFRef(getNextObjNum(doc), 0);
-    doc.objects.set(acroRef.toKey(), acroDict);
+    doc.objects.set(acroRef.toKey(), acro);
     catalog.set('AcroForm', acroRef);
-  } else if (acro instanceof PDFDict) {
-    const fields = acro.get('Fields');
-    if (fields instanceof PDFArray) fields.push(ref);
-  } else if (acro instanceof PDFRef) {
-    const acroDict = doc.objects.get(acro.toKey());
-    if (acroDict instanceof PDFDict) {
-      const fields = acroDict.get('Fields');
-      if (fields instanceof PDFArray) fields.push(ref);
-      else acroDict.set('Fields', new PDFArray([ref]));
-    }
   }
+  const fieldsEntry = acro.get('Fields');
+  const fields = fieldsEntry instanceof PDFRef ? doc.objects.get(fieldsEntry.toKey()) : fieldsEntry;
+  if (fields instanceof PDFArray) fields.push(ref);
+  else acro.set('Fields', new PDFArray([ref]));
 
   return ref;
 }
