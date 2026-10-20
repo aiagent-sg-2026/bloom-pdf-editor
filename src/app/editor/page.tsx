@@ -55,6 +55,7 @@ import { useIsMobile } from './hooks/useIsMobile';
 import { editorKeyboardAction } from './keyboard-actions';
 import { floatingTextPdfDelta, shouldStartFloatingTextDrag } from './components/pointerDragGeometry';
 import { initialFloatingTextSelection } from './components/floatingTextSelection';
+import { resizeCorner } from './components/resizeGeometry';
 
 export interface SearchMatch {
   id: string;
@@ -6044,20 +6045,26 @@ export default function EditorPage() {
                     </>
                   )}
 
-                  {/* CSS Resize Handle (only active when hovered to avoid drag conflict) */}
+                  {/* Corner resize preserves proportions unless Shift is held. */}
                   <div
                     className="absolute bottom-0 right-0 w-3 h-3 cursor-se-resize bg-accent/50"
                     onPointerDown={e => {
                       e.stopPropagation(); // prevent dragging
                       const startX = e.clientX;
                       const startY = e.clientY;
-                      const startW = fi.pdfWidth * scale;
-                      const startH = fi.pdfHeight * scale;
+                      const origin = {
+                        x: fi.pdfX, y: fi.pdfY - fi.pdfHeight,
+                        width: fi.pdfWidth, height: fi.pdfHeight,
+                      };
 
                       const handleMove = (me: PointerEvent) => {
-                        const newW = startW + (me.clientX - startX);
-                        const newH = startH + (me.clientY - startY);
-                        setFloatingImages(prev => prev.map(p => p.id === fi.id ? { ...p, pdfWidth: Math.max(10, newW / scale), pdfHeight: Math.max(10, newH / scale) } : p));
+                        const resized = resizeCorner(origin, 'se', {
+                          dx: (me.clientX - startX) / scale,
+                          dy: -(me.clientY - startY) / scale,
+                          minWidth: 10, minHeight: 10, free: me.shiftKey,
+                        });
+                        // Floating images store their fixed top-left, not the PDF lower-left.
+                        setFloatingImages(prev => prev.map(p => p.id === fi.id ? { ...p, pdfWidth: resized.width, pdfHeight: resized.height } : p));
                       };
 
                       const handleUp = () => {
