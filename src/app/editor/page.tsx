@@ -4790,18 +4790,42 @@ export default function EditorPage() {
   }, [router]);
 
   // ── Page Operations ──
-  const refreshAfterPageOp = useCallback((nextDoc: PDFDocumentData, nextCurrentPage?: number) => {
+  const pageSelectionRef = useRef(currentPage);
+  pageSelectionRef.current = currentPage;
+  const refreshAfterPageOp = useCallback((nextDoc: PDFDocumentData, nextCurrentPage: number) => {
     setDoc({ ...nextDoc });
     setTotalPages(nextDoc.pages.length);
-    if (nextCurrentPage != null) {
-      setCurrentPage(Math.max(0, Math.min(nextCurrentPage, nextDoc.pages.length - 1)));
-    } else if (currentPage >= nextDoc.pages.length) {
-      setCurrentPage(Math.max(0, nextDoc.pages.length - 1));
-    }
+    const selected = Math.max(0, Math.min(nextCurrentPage, nextDoc.pages.length - 1));
+    pageSelectionRef.current = selected;
+    setCurrentPage(selected);
     setIsDirty(true);
     setRenderKey((k) => k + 1);
     setThumbnailKey((k) => k + 1);
-  }, [currentPage]);
+  }, []);
+
+  const commitPageOperation = useCallback(async (
+    label: string,
+    apply: (staged: PDFDocumentData, selectedPage: number) => Promise<number>,
+  ) => {
+    if (!doc) return;
+    await queueNativeEdit(async () => {
+      const editor = new SessionDocumentEditor();
+      const previousPages = doc.pages.map(page => page.ref.toKey());
+      let nextPage = pageSelectionRef.current;
+      await editor.edit(doc, label, async staged => {
+        nextPage = await apply(staged, pageSelectionRef.current);
+      });
+      const signatures = signaturesRef.current.flatMap(signature => {
+        const key = previousPages[signature.pageIndex];
+        const pageIndex = doc.pages.findIndex(page => page.ref.toKey() === key);
+        return pageIndex < 0 ? [] : [{ ...signature, pageIndex }];
+      });
+      signaturesRef.current = signatures;
+      setSignatures(signatures);
+      refreshAfterPageOp(doc, nextPage);
+      pushEditorHistory(label, { signatures }, nextPage, false, editor);
+    });
+  }, [doc, queueNativeEdit, refreshAfterPageOp, pushEditorHistory]);
 
   const downloadPdfBytes = useCallback((bytes: Uint8Array, name: string) => {
     const blob = new Blob([bytes as unknown as BlobPart], { type: 'application/pdf' });
@@ -4813,79 +4837,74 @@ export default function EditorPage() {
     URL.revokeObjectURL(url);
   }, []);
 
-  const handleDeletePage = useCallback((index: number) => {
+  const handleDeletePage = useCallback(async (index: number) => {
     if (!doc || !engineRef.current) return;
     try {
-      engineRef.current.deletePage(doc, index);
-      let nextPage = currentPage;
-      if (currentPage === index) {
-        nextPage = Math.min(index, doc.pages.length - 1);
-      } else if (currentPage > index) {
-        nextPage = currentPage - 1;
-      }
-      refreshAfterPageOp(doc, nextPage);
-      pushEditorHistory('delete-page', undefined, nextPage);
+      const engine = engineRef.current;
+      await commitPageOperation('delete-page', async (staged, selected) => {
+        engine.deletePage(staged, index);
+        return selected === index ? Math.min(index, staged.pages.length - 1)
+          : selected > index ? selected - 1 : selected;
+      });
     } catch (e) {
       setError(`Failed to delete page: ${e instanceof Error ? e.message : String(e)}`);
     }
-  }, [doc, currentPage, refreshAfterPageOp, pushEditorHistory]);
+  }, [doc, commitPageOperation]);
 
-  const handleRotatePage = useCallback((index: number) => {
+  const handleRotatePage = useCallback(async (index: number) => {
     if (!doc || !engineRef.current) return;
     try {
-      engineRef.current.rotatePageBy(doc, index, 90);
-      refreshAfterPageOp(doc);
-      pushEditorHistory('rotate-page', undefined, index);
+      const engine = engineRef.current;
+      await commitPageOperation('rotate-page', async (staged, selected) => {
+        engine.rotatePageBy(staged, index, 90);
+        return selected;
+      });
     } catch (e) {
       setError(`Failed to rotate page: ${e instanceof Error ? e.message : String(e)}`);
     }
-  }, [doc, refreshAfterPageOp, pushEditorHistory]);
+  }, [doc, commitPageOperation]);
 
-  const handleReorderPages = useCallback((fromIndex: number, toIndex: number) => {
+  const handleReorderPages = useCallback(async (fromIndex: number, toIndex: number) => {
     if (!doc || !engineRef.current || fromIndex === toIndex) return;
     try {
-      engineRef.current.movePage(doc, fromIndex, toIndex);
-      let nextPage = currentPage;
-      if (currentPage === fromIndex) {
-        nextPage = toIndex;
-      } else if (fromIndex < toIndex) {
-        if (currentPage > fromIndex && currentPage <= toIndex) nextPage = currentPage - 1;
-      } else if (currentPage >= toIndex && currentPage < fromIndex) {
-        nextPage = currentPage + 1;
-      }
-      refreshAfterPageOp(doc, nextPage);
-      pushEditorHistory('reorder-pages', undefined, nextPage);
+      const engine = engineRef.current;
+      await commitPageOperation('reorder-pages', async (staged, selected) => {
+        const selectedRef = staged.pages[selected].ref;
+        engine.movePage(staged, fromIndex, toIndex);
+        return staged.pages.findIndex(page => page.ref.equals(selectedRef));
+      });
     } catch (e) {
       setError(`Failed to reorder pages: ${e instanceof Error ? e.message : String(e)}`);
     }
-  }, [doc, currentPage, refreshAfterPageOp, pushEditorHistory]);
+  }, [doc, commitPageOperation]);
 
   const handleMergePdf = useCallback(async (file: File) => {
     if (!doc || !engineRef.current) return;
     try {
-      const buffer = await file.arrayBuffer();
-      const sourceDoc = await engineRef.current.parsePDF(new Uint8Array(buffer));
-      const insertAt = doc.pages.length;
-      engineRef.current.insertPagesFromDocument(doc, sourceDoc, insertAt);
-      refreshAfterPageOp(doc);
-      pushEditorHistory('insert-pages', undefined, Math.min(insertAt, doc.pages.length - 1));
+      const engine = engineRef.current;
+      await commitPageOperation('insert-pages', async (staged, selected) => {
+        const sourceDoc = await engine.parsePDF(new Uint8Array(await file.arrayBuffer()));
+        engine.insertPagesFromDocument(staged, sourceDoc, staged.pages.length);
+        return selected;
+      });
     } catch (e) {
       setError(`Failed to merge PDF: ${e instanceof Error ? e.message : String(e)}`);
     }
-  }, [doc, refreshAfterPageOp, pushEditorHistory]);
+  }, [doc, commitPageOperation]);
 
   const handleSplitCurrentPage = useCallback(async () => {
     if (!doc || !engineRef.current) return;
     try {
-      const engine = engineRef.current;
-      const extracted = engine.extractPages(doc, [currentPage]);
-      const bytes = await engine.saveQuick(extracted);
+      await annotationCommitPendingRef.current;
+      await nativeEditPendingRef.current;
+      await commitDrawingsToPdf();
+      const bytes = await new SessionDocumentEditor().extractPages(doc, [currentPage]);
       const base = (fileName || 'document').replace(/\.pdf$/i, '');
       downloadPdfBytes(bytes, `${base}-page-${currentPage + 1}.pdf`);
     } catch (e) {
       setError(`Failed to split page: ${e instanceof Error ? e.message : String(e)}`);
     }
-  }, [doc, currentPage, fileName, downloadPdfBytes]);
+  }, [doc, currentPage, fileName, downloadPdfBytes, commitDrawingsToPdf]);
 
   const handleSplitAllPages = useCallback(async () => {
     if (!doc || !engineRef.current) return;
@@ -4895,11 +4914,13 @@ export default function EditorPage() {
     );
     if (!ok) return;
     try {
-      const engine = engineRef.current;
+      await annotationCommitPendingRef.current;
+      await nativeEditPendingRef.current;
+      await commitDrawingsToPdf();
+      const editor = new SessionDocumentEditor();
       const base = (fileName || 'document').replace(/\.pdf$/i, '');
       for (let i = 0; i < doc.pages.length; i++) {
-        const extracted = engine.extractPages(doc, [i]);
-        const bytes = await engine.saveQuick(extracted);
+        const bytes = await editor.extractPages(doc, [i]);
         downloadPdfBytes(bytes, `${base}-page-${i + 1}.pdf`);
         // Brief pause so the browser doesn't coalesce / block downloads
         await new Promise((r) => setTimeout(r, 120));
@@ -4907,7 +4928,7 @@ export default function EditorPage() {
     } catch (e) {
       setError(`Failed to split pages: ${e instanceof Error ? e.message : String(e)}`);
     }
-  }, [doc, fileName, downloadPdfBytes]);
+  }, [doc, fileName, downloadPdfBytes, commitDrawingsToPdf]);
 
   const handleRemoveCurrentPage = useCallback(() => {
     if (!doc || doc.pages.length <= 1) return;
@@ -4957,30 +4978,32 @@ export default function EditorPage() {
     }
   }, [doc, currentPage, selectedDisplayItem, pushEditorHistory]);
 
-  const handleInsertBlankPage = useCallback((index: number) => {
+  const handleInsertBlankPage = useCallback(async (index: number) => {
     if (!doc || !engineRef.current) return;
     try {
-      engineRef.current.insertBlankPage(doc, index);
-      const nextPage = currentPage >= index ? currentPage + 1 : currentPage;
-      refreshAfterPageOp(doc, nextPage);
+      const engine = engineRef.current;
+      await commitPageOperation('insert-blank-page', async (staged, selected) => {
+        engine.insertBlankPage(staged, index);
+        return selected >= index ? selected + 1 : selected;
+      });
     } catch (e) {
       setError(`Failed to insert blank page: ${e instanceof Error ? e.message : String(e)}`);
     }
-  }, [doc, currentPage, refreshAfterPageOp]);
+  }, [doc, commitPageOperation]);
 
   const handleInsertPdf = useCallback(async (index: number, file: File) => {
     if (!doc || !engineRef.current) return;
     try {
-      const buffer = await file.arrayBuffer();
-      const sourceDoc = await engineRef.current.parsePDF(new Uint8Array(buffer));
-      engineRef.current.insertPagesFromDocument(doc, sourceDoc, index);
-      const nextPage = currentPage >= index ? currentPage + sourceDoc.pages.length : currentPage;
-      refreshAfterPageOp(doc, nextPage);
-      pushEditorHistory('insert-pages', undefined, Math.min(nextPage, doc.pages.length - 1));
+      const engine = engineRef.current;
+      await commitPageOperation('insert-pages', async (staged, selected) => {
+        const sourceDoc = await engine.parsePDF(new Uint8Array(await file.arrayBuffer()));
+        engine.insertPagesFromDocument(staged, sourceDoc, index);
+        return selected >= index ? selected + sourceDoc.pages.length : selected;
+      });
     } catch (e) {
       setError(`Failed to insert PDF: ${e instanceof Error ? e.message : String(e)}`);
     }
-  }, [doc, currentPage, refreshAfterPageOp, pushEditorHistory]);
+  }, [doc, commitPageOperation]);
 
 
   // ── Keyboard shortcuts (global — NOT during editing) ──

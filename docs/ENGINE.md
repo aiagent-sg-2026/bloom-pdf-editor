@@ -22,6 +22,12 @@ Page deletion removes the leaf from its containing `/Kids` array, decrements
 `/Count` on every ancestor, and prunes only intermediate `/Pages` nodes that
 become empty. Nonempty branches and surviving page order are preserved.
 
+`/Kids` and `/Count` may be indirect objects. Reordering and insertion flatten
+the tree only after materializing effective resources, MediaBox, CropBox, and
+rotation on each leaf and reparenting it to the root. Blank pages explicitly
+override inherited rotation with zero. New page and stream references are
+allocated above all retained objects, including objects retained after undo.
+
 Initial parsing and undo restoration use `resolvePageResources` for inline,
 indirect, and inherited `/Resources`. The nearest resource dictionary wins;
 resource categories are not merged across ancestors.
@@ -163,6 +169,9 @@ Object-map, page, dictionary, and single-use image-stream identities are retaine
 during commit; upload bytes and native encryption/save provenance are not replaced.
 Dictionary entries are rebuilt in draft insertion order so the published graph
 serializes identically to the committed snapshot, including image replacements.
+Page commits reconcile the page array by reference, retaining surviving page
+identities while publishing insertion/deletion, indices, geometry, and rotation.
+Draft geometry is detached so failed edits cannot change cached live dimensions.
 
 The bridge exposes `canUndo`/`canRedo` from its `DocumentSession` and asynchronous
 `undo(doc)`/`redo(doc)`. Restoration parses the session's exact byte snapshot into
@@ -262,6 +271,19 @@ Migrated native call paths in `src/app/editor/page.tsx`:
   export-panel opening, and overlay baking await them. Failures retain live
   bytes, history, and editable input. Successful commits refresh canvas and
   thumbnails; history restoration clears stale form/signature-field selections.
+- **Page operations:** deletion, rotation, reordering, blank insertion, PDF import,
+  and merge stage the existing native operations through the native-edit queue.
+  Each successful mutation publishes one session toolbar entry; failures leave
+  live bytes, page metadata, and the redo branch available for retry. Blank
+  insertion now records an undo boundary too. Selection follows surviving pages,
+  visual-signature overlay page indices follow their native pages, and commits
+  and history restores refresh page count, canvas, and thumbnails.
+- **Extract/split downloads:** the existing current-page and all-page download
+  controls await pending native edits and overlay baking. The bridge's
+  `extractPages(doc, indices)` transforms private `DocumentSession` bytes through
+  an `EditTransaction`, returning the extracted PDF only after successful commit.
+  Extraction does not mutate the source document or add a source toolbar entry.
+  There is no duplicate-page control in the current UI.
 
 
 `SessionEditorHistory` in `src/engine/session/editor-history.ts` is the page's
@@ -306,15 +328,19 @@ on the same toolbar entry, so the 50-entry limit is not a memory-size limit.
   creation, and visual signatures.
 - Signature-library management and overlay locking; cryptographic signing,
   validation/LTV-related mutations, and security-panel changes.
-- Page deletion/rotation/reordering, blank-page insertion, merge/import, and
-  extraction/splitting.
 - Watermark removal, initial text normalization,
   export/compression, autosave, recovery, and browser persistence.
 
 The text-edit, Add Text Box, highlight-family, drawing, Ink erasure, shape
-creation, signature placement/removal, and supported form-field production
-migrations are implemented. The remaining UI migration gate is page rotation,
-deletion, reordering, and insertion.
+creation, signature placement/removal, supported form-field, and page-operation
+production migrations are implemented. Legacy paths listed above remain outside
+the byte-identical session guarantee.
+
+`src/engine/__tests__/session-page-editor.test.ts` covers page operations with
+direct and indirect page-tree Kids/Count objects, inherited rotation and geometry,
+reopened page content/resources, repeated byte-identical undo/redo, failed
+staging and snapshot parsing, extraction isolation, allocation after undo, and
+ordered legacy/session history with selection, page counts, and redo branching.
 
 The text gate in `src/engine/__tests__/session-document-editor.test.ts` covers
 native existing-line replacement and styled text-box insertion: direct-operation

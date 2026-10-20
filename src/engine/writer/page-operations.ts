@@ -388,6 +388,9 @@ export function insertBlankPage(
   atIndex: number,
   size: PDFRectangle = { x: 0, y: 0, width: 612, height: 792 }, // US Letter
 ): void {
+  if (!Number.isInteger(atIndex) || atIndex < 0 || atIndex > doc.pages.length) {
+    throw new Error(`Page index ${atIndex} out of range`);
+  }
   const nextObj = getNextObjNum(doc);
 
   // Create page dictionary
@@ -406,6 +409,7 @@ export function insertBlankPage(
 
   // Empty resources
   pageDict.set('Resources', new PDFDict());
+  pageDict.set('Rotate', new PDFNumber(0));
 
   // Empty content stream
   const contentDict = new PDFDict();
@@ -427,11 +431,11 @@ export function insertBlankPage(
     cropBox: size,
     rotate: 0,
     ref: pageRef,
-    resources: new PDFDict(),
+    resources: pageDict.getDict('Resources')!,
     contentRefs: [contentRef],
   };
 
-  doc.pages.splice(atIndex, 0, pageInfo);
+  doc.pages.splice(atIndex, 0, bindPageContentRefs(pageInfo));
 
   // Re-index
   for (let i = atIndex; i < doc.pages.length; i++) {
@@ -452,6 +456,9 @@ export function insertPagesFromDocument(
   source: PDFDocumentData,
   insertAtIndex: number,
 ): void {
+  if (!Number.isInteger(insertAtIndex) || insertAtIndex < 0 || insertAtIndex > target.pages.length) {
+    throw new Error(`Page index ${insertAtIndex} out of range`);
+  }
   const refMap = new Map<string, PDFRef>(); // old source key → new target ref
 
   function copyObject(obj: PDFObject): PDFObject {
@@ -871,7 +878,11 @@ function removePageFromTree(
           kids.items.splice(i, 1);
         }
       }
-      node.set('Count', new PDFNumber((node.getNumber('Count') ?? 0) - 1));
+      const count = node.get('Count');
+      const resolvedCount = count ? resolveRef(count, objects) : undefined;
+      const nextCount = new PDFNumber((resolvedCount instanceof PDFNumber ? resolvedCount.value : 0) - 1);
+      if (count instanceof PDFRef) objects.set(count.toKey(), nextCount);
+      else node.set('Count', nextCount);
       return true;
     }
     return false;
@@ -887,8 +898,28 @@ function rebuildKidsArray(doc: PDFDocumentData): void {
   const pagesObj = resolveRef(pagesRef, doc.objects);
   if (!(pagesObj instanceof PDFDict)) return;
 
+  // Flattening changes inheritance. Materialize each leaf's effective values
+  // before reparenting, including an explicit zero rotation under a rotated root.
+  for (const page of doc.pages) {
+    if (!page.dict.has('Resources')) page.dict.set('Resources', page.resources);
+    if (!page.dict.has('MediaBox')) page.dict.set('MediaBox', rectangleArray(page.mediaBox));
+    if (!page.dict.has('CropBox')) page.dict.set('CropBox', rectangleArray(page.cropBox));
+    if (!page.dict.has('Rotate')) page.dict.set('Rotate', new PDFNumber(page.rotate));
+    page.dict.set('Parent', pagesRef);
+  }
   const newKids = new PDFArray(doc.pages.map((p) => p.ref));
-  pagesObj.set('Kids', newKids);
-  pagesObj.set('Count', new PDFNumber(doc.pages.length));
+  const kids = pagesObj.get('Kids');
+  if (kids instanceof PDFRef) doc.objects.set(kids.toKey(), newKids);
+  else pagesObj.set('Kids', newKids);
+  const count = pagesObj.get('Count');
+  const newCount = new PDFNumber(doc.pages.length);
+  if (count instanceof PDFRef) doc.objects.set(count.toKey(), newCount);
+  else pagesObj.set('Count', newCount);
 }
 
+
+function rectangleArray(rect: PDFRectangle): PDFArray {
+  return new PDFArray([
+    rect.x, rect.y, rect.x + rect.width, rect.y + rect.height,
+  ].map(value => new PDFNumber(value)));
+}
