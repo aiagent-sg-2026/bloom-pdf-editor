@@ -26,6 +26,8 @@ The editor supports native PDF content-stream editing, annotations, forms, page 
 
 Select an embedded image to edit **X (pt)**, **Y (pt)**, **W (pt)**, and **H (pt)** in the Options panel. Coordinates use the image's bottom-left corner in PDF points. Enter or blur commits a field; Escape cancels it. Aspect ratio is locked by default, and resizing keeps that corner fixed. Dimensions must be at least 8 pt; invalid entries revert, and positions are clamped to retain partial page overlap when page bounds are available. Panel edits use the same undo/redo history as drag-resize and keep the image selected. Position and size for drawings/signatures remain read-only.
 
+Selected embedded images and unlocked signature frames have eight resize handles. Corners preserve aspect ratio by default; hold Shift for free resizing. Edge-midpoint handles (N/S/E/W) resize only one axis, keep the opposite edge fixed, and ignore Shift. Image resizing and signature edge resizing stop at 8 pt; signature corners retain their existing 24 × 16 pt minimums. Every resize commit refreshes the selected frame and handles immediately; embedded-image Options fields use the same refreshed metadata as numeric edits. Undo and redo of a resize keep the resized object selected and restore its geometry.
+
 ## 🏗️ Architecture
 
 The browser UI and the client engine communicate directly. PDF bytes remain in the browser and may be persisted through IndexedDB for local document storage.

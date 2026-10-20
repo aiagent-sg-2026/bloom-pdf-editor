@@ -3,7 +3,8 @@
 import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { PenLine, Lock, Trash2, RotateCw, X } from 'lucide-react';
 import type { VisualSignature } from '@/engine/browser-core';
-import { resizeCorner } from '../resizeGeometry';
+import { resizeBox, type ResizeHandle } from '../resizeGeometry';
+import { Z_LAYERS } from '../../zLayers';
 
 export interface SignatureOverlayProps {
   signature: VisualSignature;
@@ -19,13 +20,13 @@ export interface SignatureOverlayProps {
   };
   onSelect: (id: string) => void;
   onCommitMove: (id: string, dx: number, dy: number) => void;
-  onCommitResize: (id: string, width: number, height: number) => void;
+  onCommitResize: (id: string, box: { x: number; y: number; width: number; height: number }) => void;
   onCommitRotate: (id: string, degrees: number) => void;
   onDelete: (id: string) => void;
   onDeselect: () => void;
 }
 
-type DragMode = 'move' | 'resize-se' | 'rotate' | null;
+type DragMode = 'move' | `resize-${ResizeHandle}` | 'rotate' | null;
 
 /**
  * Interactive signature overlay — select, move, resize, rotate, delete.
@@ -92,9 +93,11 @@ export function SignatureOverlay(props: SignatureOverlayProps) {
           x: origin.current.x + dx,
           y: origin.current.y + dy,
         });
-      } else if (mode === 'resize-se') {
-        const resized = resizeCorner(origin.current, 'se', {
-          dx, dy, minWidth: 24, minHeight: 16, free: e.shiftKey,
+      } else if (mode.startsWith('resize-')) {
+        const handle = mode.slice('resize-'.length) as ResizeHandle;
+        const edge = handle.length === 1;
+        const resized = resizeBox(origin.current, handle, {
+          dx, dy, minWidth: edge ? 8 : 24, minHeight: edge ? 8 : 16, free: e.shiftKey,
         });
         setLive({
           ...liveRef.current,
@@ -140,12 +143,12 @@ export function SignatureOverlay(props: SignatureOverlayProps) {
       if (Math.abs(dx) > 0.25 || Math.abs(dy) > 0.25) {
         onCommitMove(sig.id, dx, dy);
       }
-    } else if (mode === 'resize-se') {
+    } else if (mode.startsWith('resize-')) {
       if (
         Math.abs(cur.width - origin.current.width) > 0.25 ||
         Math.abs(cur.height - origin.current.height) > 0.25
       ) {
-        onCommitResize(sig.id, cur.width, cur.height);
+        onCommitResize(sig.id, { x: cur.x, y: cur.y, width: cur.width, height: cur.height });
       }
     } else if (mode === 'rotate') {
       if (Math.abs(cur.rotation - origin.current.rotation) > 0.5) {
@@ -189,8 +192,9 @@ export function SignatureOverlay(props: SignatureOverlayProps) {
 
   return (
     <div
-      className={`absolute z-40 ${selected ? 'pointer-events-auto' : 'pointer-events-auto'}`}
+      className="absolute pointer-events-auto"
       style={{
+        zIndex: Z_LAYERS.canvasOverlay,
         left: box.left + box.width / 2,
         top: box.top + box.height / 2,
         width: box.width,
@@ -269,14 +273,30 @@ export function SignatureOverlay(props: SignatureOverlayProps) {
 
           {!sig.locked && (
             <>
+              {([
+                ['nw', 0, 0, 'cursor-nwse-resize'], ['ne', 1, 0, 'cursor-nesw-resize'],
+                ['sw', 0, 1, 'cursor-nesw-resize'], ['se', 1, 1, 'cursor-nwse-resize'],
+                ['n', 0.5, 0, 'cursor-ns-resize'], ['s', 0.5, 1, 'cursor-ns-resize'],
+                ['e', 1, 0.5, 'cursor-ew-resize'], ['w', 0, 0.5, 'cursor-ew-resize'],
+              ] as const).map(([handle, hx, hy, cursor]) => (
+                <div
+                  key={handle}
+                  data-handle={handle}
+                  className={`absolute w-2.5 h-2.5 bg-accent border border-white rounded-sm pointer-events-auto ${cursor}`}
+                  style={{
+                    zIndex: Z_LAYERS.canvasHandle,
+                    left: hx === 0 ? -5 : hx === 0.5 ? '50%' : undefined,
+                    right: hx === 1 ? -5 : undefined,
+                    top: hy === 0 ? -5 : hy === 0.5 ? '50%' : undefined,
+                    bottom: hy === 1 ? -5 : undefined,
+                    transform: hx === 0.5 ? 'translateX(-50%)' : hy === 0.5 ? 'translateY(-50%)' : undefined,
+                  }}
+                  onPointerDown={(e) => begin(`resize-${handle}`, e)}
+                />
+              ))}
               <div
-                className="absolute w-2.5 h-2.5 bg-accent border border-white rounded-sm cursor-se-resize z-50"
-                style={{ right: -5, bottom: -5 }}
-                onPointerDown={(e) => begin('resize-se', e)}
-              />
-              <div
-                className="absolute w-2.5 h-2.5 bg-emerald-500 border border-white rounded-full cursor-grab z-50"
-                style={{ left: '50%', top: -18, transform: 'translateX(-50%)' }}
+                className="absolute w-2.5 h-2.5 bg-emerald-500 border border-white rounded-full cursor-grab"
+                style={{ zIndex: Z_LAYERS.canvasHandle, left: '50%', top: -18, transform: 'translateX(-50%)' }}
                 onPointerDown={(e) => begin('rotate', e)}
                 title="Drag to rotate"
               />

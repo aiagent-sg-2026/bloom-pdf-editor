@@ -23,7 +23,7 @@ import {
   hitTestTextLine, findNearestTextLine, caretIndexFromLineX,
   getLineBounds, getOverlayFontFamily, getOverlayFontStyle, getDisplayFontFamily,
 } from './utils';
-import { buildDisplayListIndex, hitTestDisplayList, isSelectableDisplayItem, captureHistoryEntry, restoreAnnotSnapshot, restoreDocumentStructure, parseOverlaySnapshot, deleteObject, visualFontSize, resolveRunStyleFlags, transformObject, applyObjectTransform, distributeTextChangeToSegments, segmentAtIndex, createVisualSignature, hitTestSignature, moveSignature, resizeSignature, rotateSignature, setSignatureOpacity, setSignatureLocked, deleteSignature, updateSignature, getSignatureLibrary, DEFAULT_SIGNATURE_SIZE, detectSignatureFieldsOnPage, hitTestSignatureField, createSignatureFieldAtPoint, applySignatureFieldAppearanceAsync, getCertificateManager, signDocumentCryptographic, validateDocumentSignatures, enableLongTermValidation, getLtvStatus, listManagedSignatures, buildRevisionViewer, lockSignaturesAfterSigning, pushRecentSignatureId, orderLibraryByRecent, SIGNATURE_SHORTCUTS } from '@/engine/browser-core';
+import { buildDisplayListIndex, hitTestDisplayList, isSelectableDisplayItem, captureHistoryEntry, restoreAnnotSnapshot, restoreDocumentStructure, parseOverlaySnapshot, deleteObject, visualFontSize, resolveRunStyleFlags, transformObject, applyObjectTransform, distributeTextChangeToSegments, segmentAtIndex, createVisualSignature, hitTestSignature, moveSignature, rotateSignature, setSignatureOpacity, setSignatureLocked, deleteSignature, updateSignature, getSignatureLibrary, DEFAULT_SIGNATURE_SIZE, detectSignatureFieldsOnPage, hitTestSignatureField, createSignatureFieldAtPoint, applySignatureFieldAppearanceAsync, getCertificateManager, signDocumentCryptographic, validateDocumentSignatures, enableLongTermValidation, getLtvStatus, listManagedSignatures, buildRevisionViewer, lockSignaturesAfterSigning, pushRecentSignatureId, orderLibraryByRecent, SIGNATURE_SHORTCUTS } from '@/engine/browser-core';
 import type { Annotation, QuadTree, SelectableItem, EditableObject, EditorHistoryEntry, PDFRef } from '@/engine/browser-core';
 import { UnsupportedGlyphsError, SessionDocumentEditor } from '@/engine/browser-core';
 import { SessionEditorHistory } from '@/engine/session/editor-history';
@@ -55,7 +55,8 @@ import { useIsMobile } from './hooks/useIsMobile';
 import { editorKeyboardAction } from './keyboard-actions';
 import { floatingTextPdfDelta, shouldStartFloatingTextDrag } from './components/pointerDragGeometry';
 import { initialFloatingTextSelection } from './components/floatingTextSelection';
-import { resizeCorner } from './components/resizeGeometry';
+import { resizeBox } from './components/resizeGeometry';
+import { findImagePlacement, sameImagePlacement } from './components/imageSelection';
 
 export interface SearchMatch {
   id: string;
@@ -470,6 +471,8 @@ export default function EditorPage() {
   /** Thin stroke paths (underlines) excluded from selection but needed for edit overlay. */
   const [strokePaths, setStrokePaths] = useState<PathItem[]>([]);
   const [selectedDisplayItem, setSelectedDisplayItem] = useState<ImageItem | PathItem | null>(null);
+  const selectionPageRef = useRef(doc?.pages[currentPage]);
+  selectionPageRef.current = doc?.pages[currentPage];
   const spatialIndexRef = useRef<QuadTree<SelectableItem> | null>(null);
 
   // AcroForm fields on current page
@@ -482,6 +485,8 @@ export default function EditorPage() {
 
   // One chronological toolbar stack for legacy snapshots and session boundaries.
   const historyRef = useRef(new SessionEditorHistory());
+  // Keep placement identity on both sides of a resize, even for reused XObjects.
+  const imageResizeHistoryRef = useRef(new WeakMap<EditorHistoryEntry, { pageKey: string; before: ImageItem; after: ImageItem }>());
   const sessionEditorRef = useRef(new SessionDocumentEditor());
   const historyBusyRef = useRef(false);
   const nativeEditPendingRef = useRef<Promise<void>>(Promise.resolve());
@@ -635,8 +640,12 @@ export default function EditorPage() {
       },
       label,
     );
-    if (replaceCurrent) historyRef.current.replace(entry, true, sessionEditor);
-    else historyRef.current.push(entry, sessionEditor);
+    if (replaceCurrent) {
+      const previous = historyRef.current.peek();
+      const resize = previous ? imageResizeHistoryRef.current.get(previous) : undefined;
+      historyRef.current.replace(entry, true, sessionEditor);
+      if (resize) imageResizeHistoryRef.current.set(entry, resize);
+    } else historyRef.current.push(entry, sessionEditor);
     syncTxState();
   }, [doc, currentPage, syncTxState]);
 
@@ -692,7 +701,11 @@ export default function EditorPage() {
     setIsDirty(true);
   }, [pushEditorHistory]);
 
-  const applyHistoryEntry = useCallback(async (entry: EditorHistoryEntry, restoredDocument = false) => {
+  const applyHistoryEntry = useCallback(async (
+    entry: EditorHistoryEntry,
+    restoredDocument = false,
+    resizeSelection?: { pageKey?: string; image?: ImageItem; signatureId?: string },
+  ) => {
     if (!doc || !engineRef.current) return;
     const engine = engineRef.current;
     if (!restoredDocument && entry.pages) {
@@ -716,15 +729,29 @@ export default function EditorPage() {
     const sigs = parseOverlaySnapshot<VisualSignature[]>(entry.overlays.signaturesJson);
     setSignatures(sigs);
     signaturesRef.current = sigs;
-    setSelectedSignatureId(null);
-    setSelectedDisplayItem(null);
+    const pageKey = resizeSelection?.image || resizeSelection?.signatureId ? resizeSelection.pageKey : entry.pageKey;
+    setSelectedSignatureId(resizeSelection?.signatureId && sigs.some(sig => sig.id === resizeSelection.signatureId)
+      ? resizeSelection.signatureId : null);
+    let restoredImage: ImageItem | null = null;
+    if (resizeSelection?.image) {
+      const page = pageKey ? doc.pages.find(candidate => candidate.ref.toKey() === pageKey) : doc.pages[entry.pageIndex];
+      if (page) {
+        const content = engine.getPageContentBytes(page, doc.objects);
+        const { displayList } = engine.interpretPage(content, page, doc.objects);
+        const items = displayList.filter(item => isSelectableDisplayItem(item, page.mediaBox)) as (ImageItem | PathItem)[];
+        setDisplayItems(items);
+        spatialIndexRef.current = buildDisplayListIndex(items, page.mediaBox);
+        restoredImage = findImagePlacement(items, resizeSelection.image);
+      }
+    }
+    setSelectedDisplayItem(restoredImage);
     setSelectedLine(null);
     setSelectedFormField(null);
     setFormFieldDraft('');
     setSelectedPdfSigFieldId(null);
     setTotalPages(doc.pages.length);
     setIsDirty(true);
-    const stablePageIndex = entry.pageKey ? doc.pages.findIndex((page) => page.ref.toKey() === entry.pageKey) : entry.pageIndex;
+    const stablePageIndex = pageKey ? doc.pages.findIndex((page) => page.ref.toKey() === pageKey) : entry.pageIndex;
     const nextPage = stablePageIndex >= 0 ? stablePageIndex : Math.min(entry.pageIndex, doc.pages.length - 1);
     if (nextPage !== currentPage) setCurrentPage(nextPage);
     syncTxState();
@@ -1243,7 +1270,12 @@ export default function EditorPage() {
             // Horizontal underline: short height, meaningful width
             return (p.height || 0) <= 8 && (p.width || 0) >= 10;
           }) as PathItem[];
-          if (!cancelled) setDisplayItems(visItems as (ImageItem | PathItem)[]);
+          if (!cancelled) {
+            setDisplayItems(visItems as (ImageItem | PathItem)[]);
+            // Share the canonical display item with the frame and Options.
+            setSelectedDisplayItem(current => current?.type === 'image'
+              ? findImagePlacement(visItems, current) ?? current : current);
+          }
           if (!cancelled) setStrokePaths(thinStrokes);
           if (!cancelled) {
             try {
@@ -2135,15 +2167,22 @@ export default function EditorPage() {
     try {
       await annotationCommitPendingRef.current;
       await nativeEditPendingRef.current;
+      const previousEntry = historyRef.current.peek();
+      const resize = previousEntry ? imageResizeHistoryRef.current.get(previousEntry) : undefined;
       const result = await historyRef.current.undo(doc);
-      if (result) await applyHistoryEntry(result.entry, result.restoredDocument);
+      if (result) await applyHistoryEntry(result.entry, result.restoredDocument, {
+        pageKey: doc.pages[currentPage]?.ref.toKey(),
+        image: resize && resize.pageKey === doc.pages[currentPage]?.ref.toKey() &&
+          sameImagePlacement(selectedDisplayItem, resize.after) ? resize.before : undefined,
+        signatureId: previousEntry?.label === 'resize-signature' ? selectedSignatureId ?? undefined : undefined,
+      });
     } catch (e) {
       console.error('[Editor] Undo failed:', e);
     } finally {
       historyBusyRef.current = false;
       syncTxState();
     }
-  }, [doc, applyHistoryEntry, syncTxState]);
+  }, [doc, currentPage, applyHistoryEntry, syncTxState, selectedDisplayItem, selectedSignatureId]);
 
   const handleRedo = useCallback(async () => {
     if (!doc || !engineRef.current || historyBusyRef.current) return;
@@ -2152,14 +2191,22 @@ export default function EditorPage() {
       await annotationCommitPendingRef.current;
       await nativeEditPendingRef.current;
       const result = await historyRef.current.redo(doc);
-      if (result) await applyHistoryEntry(result.entry, result.restoredDocument);
+      if (result) {
+        const resize = imageResizeHistoryRef.current.get(result.entry);
+        await applyHistoryEntry(result.entry, result.restoredDocument, {
+          pageKey: doc.pages[currentPage]?.ref.toKey(),
+          image: resize && resize.pageKey === doc.pages[currentPage]?.ref.toKey() &&
+            sameImagePlacement(selectedDisplayItem, resize.before) ? resize.after : undefined,
+          signatureId: result.entry.label === 'resize-signature' ? selectedSignatureId ?? undefined : undefined,
+        });
+      }
     } catch (e) {
       console.error('[Editor] Redo failed:', e);
     } finally {
       historyBusyRef.current = false;
       syncTxState();
     }
-  }, [doc, applyHistoryEntry, syncTxState]);
+  }, [doc, currentPage, applyHistoryEntry, syncTxState, selectedDisplayItem, selectedSignatureId]);
 
   const handleFormFieldSelect = useCallback((field: AcroFormWidget) => {
     setSelectedFormField(field);
@@ -4043,33 +4090,32 @@ export default function EditorPage() {
     setRenderKey(k => k + 1);
   }, [doc, currentPage, selectedDisplayItem, toEditableImage, pushEditorHistory]);
 
-  const handleEmbeddedImageResize = useCallback(async (box: { x: number; y: number; width: number; height: number }, keepSelection = false) => {
+  const handleEmbeddedImageResize = useCallback(async (box: { x: number; y: number; width: number; height: number }) => {
     const engine = engineRef.current;
     if (!doc || !engine || selectedDisplayItem?.type !== 'image') return;
     const item = selectedDisplayItem as ImageItem;
+    const page = doc.pages[currentPage];
     const editable = toEditableImage(item);
     const newCtm = [box.width, 0, 0, box.height, box.x, box.y];
     await applyObjectTransform(doc, currentPage, editable, newCtm);
-    pushEditorHistory('resize-image');
-    setIsDirty(true);
-    if (keepSelection) {
-      // The writer relocates the Do instruction; refresh its index for the next edit.
-      const page = doc.pages[currentPage];
-      const content = engine.getPageContentBytes(page, doc.objects);
-      const { displayList } = engine.interpretPage(content, page, doc.objects);
-      let resizedImage: ImageItem | null = null;
-      // The resize path appends the new placement at the end of the content stream.
-      for (let i = displayList.length - 1; i >= 0; i--) {
-        const candidate = displayList[i];
-        if (candidate.type === 'image' && candidate.name === item.name) {
-          resizedImage = candidate;
-          break;
-        }
-      }
-      setSelectedDisplayItem(current => current === item ? resizedImage : current);
-    } else {
-      setSelectedDisplayItem(null);
+    // Resolve by the committed box, not just the resource name: a PDF may
+    // place the same image more than once. The writer also relocates its Do.
+    const content = engine.getPageContentBytes(page, doc.objects);
+    const { displayList } = engine.interpretPage(content, page, doc.objects);
+    if (selectionPageRef.current === page) {
+      // A release click must hit the new placement, not the pre-drag cache.
+      const items = displayList.filter(candidate => isSelectableDisplayItem(candidate, page.mediaBox)) as (ImageItem | PathItem)[];
+      setDisplayItems(items);
+      spatialIndexRef.current = buildDisplayListIndex(items, page.mediaBox);
     }
+    const resizedImage = findImagePlacement(displayList, { name: item.name, ...box });
+    pushEditorHistory('resize-image');
+    const entry = historyRef.current.peek();
+    if (entry && resizedImage) imageResizeHistoryRef.current.set(entry, {
+      pageKey: page.ref.toKey(), before: item, after: resizedImage,
+    });
+    setIsDirty(true);
+    setSelectedDisplayItem(current => selectionPageRef.current === page && sameImagePlacement(current, item) ? resizedImage : current);
     setRenderKey(k => k + 1);
   }, [doc, currentPage, selectedDisplayItem, toEditableImage, pushEditorHistory]);
 
@@ -4596,8 +4642,9 @@ export default function EditorPage() {
     void commitSignatureChange(current => updateSignature(current, id, s => moveSignature(s, dx, dy)), 'move-signature');
   }, [commitSignatureChange]);
 
-  const handleSignatureResize = useCallback((id: string, width: number, height: number) => {
-    void commitSignatureChange(current => updateSignature(current, id, s => resizeSignature(s, width, height)), 'resize-signature');
+  const handleSignatureResize = useCallback((id: string, box: { x: number; y: number; width: number; height: number }) => {
+    // The overlay clamps size and fixes the opposite edge; commit all bounds together.
+    void commitSignatureChange(current => updateSignature(current, id, s => s.locked ? s : { ...s, ...box }), 'resize-signature');
   }, [commitSignatureChange]);
 
   const handleSignatureRotate = useCallback((id: string, degrees: number) => {
@@ -5466,7 +5513,7 @@ export default function EditorPage() {
           setSelectedDisplayItem={setSelectedDisplayItem}
           onDeleteSelectedDisplayItem={handleDeleteSelectedDisplayItem}
           onReplaceSelectedImage={handleReplaceEmbeddedImage}
-          onCommitSelectedImageBox={(box) => handleEmbeddedImageResize(box, true)}
+          onCommitSelectedImageBox={handleEmbeddedImageResize}
           selectedImagePageBox={doc?.pages[currentPage]?.mediaBox}
           onClearImageReplaceMode={() => { replacingEmbeddedImageRef.current = null; }}
           displayItems={displayItems}
@@ -6079,7 +6126,7 @@ export default function EditorPage() {
                       };
 
                       const handleMove = (me: PointerEvent) => {
-                        const resized = resizeCorner(origin, 'se', {
+                        const resized = resizeBox(origin, 'se', {
                           dx: (me.clientX - startX) / scale,
                           dy: -(me.clientY - startY) / scale,
                           minWidth: 10, minHeight: 10, free: me.shiftKey,
