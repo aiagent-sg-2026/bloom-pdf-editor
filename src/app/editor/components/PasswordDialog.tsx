@@ -31,11 +31,12 @@ export function PasswordDialog({
     [onSubmit, password],
   );
 
+  // Z_LAYERS.modalBackdrop (500) / modal (600); the form is a flex item.
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm p-4">
+    <div className="fixed inset-0 z-[500] flex items-center justify-center bg-black/60 backdrop-blur-sm p-4">
       <form
         onSubmit={handleSubmit}
-        className="w-full max-w-sm rounded-2xl border border-app bg-panel p-6 shadow-2xl"
+        className="z-[600] w-full max-w-sm rounded-2xl border border-app bg-panel p-6 shadow-2xl"
       >
         <div className="mb-4 flex items-center gap-3">
           <div className="rounded-xl bg-bloom-100 p-2.5 text-accent">

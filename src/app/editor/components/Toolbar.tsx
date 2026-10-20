@@ -66,9 +66,10 @@ export function Toolbar({
   onCompressedDownload,
 }: ToolbarProps) {
   const { theme, toggleTheme } = useTheme();
+  // Z_LAYERS.toolbar (120): above sidebars, below global drawers.
 
   return (
-    <header className="flex flex-wrap items-center justify-between gap-y-1 px-2 md:px-4 py-1 md:py-0 min-h-12 md:h-14 bg-panel/90 backdrop-blur-lg border-b border-app shrink-0 z-40">
+    <header className="flex flex-wrap items-center justify-between gap-y-1 px-2 md:px-4 py-1 md:py-0 min-h-12 md:h-14 bg-panel/90 backdrop-blur-lg border-b border-app shrink-0 z-[120]">
       {/* ── Left: close + logo + filename ── */}
       <div className="flex items-center gap-1.5 md:gap-3 shrink-0">
         <button 

@@ -45,6 +45,7 @@ function IconTip({
   side?: 'top' | 'bottom' | 'left' | 'right';
   children: React.ReactElement;
 }) {
+  // Portalled sidebar tooltips use Z_LAYERS.dropdown (200), below drawer backdrops.
   return (
     <Tooltip.Root delayDuration={250}>
       <Tooltip.Trigger asChild>{children}</Tooltip.Trigger>
@@ -143,7 +144,7 @@ export function ThumbnailsSidebar({
     rotatePageIndex: number;
   }) => (
     <div
-      className={`group/bar relative flex justify-center z-20 ${isExpanded ? 'flex-col px-1 h-auto self-stretch' : 'py-1 w-full'}`}
+      className={`group/bar relative flex justify-center z-[100] ${isExpanded ? 'flex-col px-1 h-auto self-stretch' : 'py-1 w-full'}`}
       onDragOver={(e) => {
         if (dragIndexRef.current == null) return;
         e.preventDefault();
@@ -204,19 +205,19 @@ export function ThumbnailsSidebar({
 
   return (
     <Tooltip.Provider delayDuration={250} skipDelayDuration={100}>
-      {/* Mobile backdrop */}
+      {/* Z_LAYERS: chrome 100, expandedSidebar 110, dropdown 200, drawerBackdrop 300 / drawer 400. */}
       {isMobile && (
         <div
-          className="fixed inset-0 z-40 mobile-backdrop"
+          className="fixed inset-0 z-[300] mobile-backdrop"
           onClick={onClose}
         />
       )}
       <div className={`transition-all duration-300 bg-panel/95 backdrop-blur-md border-l border-app flex flex-col shrink-0 min-h-0 h-full shadow-[0_0_40px_rgba(0,0,0,0.06)] ${
         isMobile
-          ? 'fixed right-0 top-0 bottom-0 w-[75vw] max-w-[320px] z-50 mobile-drawer-right overflow-y-auto'
+          ? 'fixed right-0 top-0 bottom-0 w-[75vw] max-w-[320px] z-[400] mobile-drawer-right overflow-y-auto'
           : isExpanded
-            ? 'absolute right-0 top-0 bottom-0 w-[80vw] z-30 overflow-hidden'
-            : 'relative w-56 z-10 overflow-hidden'
+            ? 'absolute right-0 top-0 bottom-0 w-[80vw] z-[110] overflow-hidden'
+            : 'relative w-56 z-[100] overflow-hidden'
       }`}>
         <input
           type="file"
@@ -234,7 +235,7 @@ export function ThumbnailsSidebar({
         />
 
         <div className={`flex-1 min-h-0 overflow-y-auto p-3 flex ${isExpanded ? 'flex-row flex-wrap gap-x-2 gap-y-6 items-stretch content-start' : 'flex-col gap-3'}`}>
-          <div className="flex items-center gap-2 text-[10px] font-bold tracking-widest text-app-muted uppercase px-1 pt-1 pb-1 sticky top-0 bg-panel/95 backdrop-blur-sm z-30 w-full">
+          <div className="flex items-center gap-2 text-[10px] font-bold tracking-widest text-app-muted uppercase px-1 pt-1 pb-1 sticky top-0 bg-panel/95 backdrop-blur-sm z-[100] w-full">
             <Layers size={12} />
             Pages
             <Tooltip.Root delayDuration={250}>
@@ -388,7 +389,7 @@ export function ThumbnailsSidebar({
                         <button
                           type="button"
                           aria-label="Delete page"
-                          className="absolute top-2 right-2 bg-red-500/90 text-white p-1 rounded-md opacity-0 group-hover:opacity-100 transition-all shadow-md hover:bg-red-500 hover:scale-110 z-20"
+                          className="absolute top-2 right-2 bg-red-500/90 text-white p-1 rounded-md opacity-0 group-hover:opacity-100 transition-all shadow-md hover:bg-red-500 hover:scale-110 z-[100]"
                           onClick={(e) => {
                             e.stopPropagation();
                             if (window.confirm('Do you really want to delete this page?')) {

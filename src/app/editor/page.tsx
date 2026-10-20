@@ -5555,10 +5555,11 @@ export default function EditorPage() {
           onChange={handleImageUpload}
         />
 
-        {/* ── Canvas area ── */}
+        {/* Canvas-local layers (0–99): see Z_LAYERS in ./zLayers. No new clipping. */}
         <div
           ref={scrollViewportRef}
-          className="flex-1 overflow-auto relative checkerboard"
+          data-canvas-stack="true"
+          className="flex-1 overflow-auto relative isolate checkerboard"
           style={{ cursor: cursorForTool, touchAction: isMobile ? 'manipulation' : (scale > 1 || spacePanHeld ? 'none' : undefined), paddingBottom: isMobile ? '56px' : undefined }}
           onPointerDown={handleViewportPointerDown}
           onPointerMove={handleViewportPointerMove}
@@ -6409,11 +6410,11 @@ export default function EditorPage() {
           />
         )}
 
-        {/* ── Mobile: Floating "Pages" button ── */}
+        {/* Mobile Pages button: Z_LAYERS.chrome (100). */}
         {isMobile && !showMobileThumbnails && (
           <button
             onClick={() => setShowMobileThumbnails(true)}
-            className="fixed bottom-16 right-3 z-30 flex items-center gap-1.5 px-3 py-2 bg-panel/95 backdrop-blur-md border border-app rounded-xl shadow-lg text-app-muted text-xs font-medium hover:text-app transition-colors"
+            className="fixed bottom-16 right-3 z-[100] flex items-center gap-1.5 px-3 py-2 bg-panel/95 backdrop-blur-md border border-app rounded-xl shadow-lg text-app-muted text-xs font-medium hover:text-app transition-colors"
             title="Show page thumbnails"
           >
             <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><rect x="2" y="3" width="20" height="18" rx="2"/><line x1="8" y1="3" x2="8" y2="21"/></svg>
@@ -6470,14 +6471,15 @@ export default function EditorPage() {
         />
       </div>
 
+      {/* Global notifications: Z_LAYERS.toast (700), above modal surfaces. */}
       {loadingFont && (
-        <div role="status" aria-live="polite" className="fixed bottom-10 left-1/2 -translate-x-1/2 bg-zinc-900 border border-app text-app-muted px-4 py-3 rounded-xl text-sm shadow-xl z-[100]">
+        <div role="status" aria-live="polite" className="fixed bottom-10 left-1/2 -translate-x-1/2 bg-zinc-900 border border-app text-app-muted px-4 py-3 rounded-xl text-sm shadow-xl z-[700]">
           Loading font...
         </div>
       )}
 
       {glyphWarning && (
-        <div role="status" aria-live="polite" className="fixed bottom-10 left-1/2 -translate-x-1/2 max-w-[90vw] bg-zinc-900 border border-amber-500/40 text-amber-200 px-4 py-3 rounded-xl text-sm flex items-center gap-4 shadow-xl z-[100]">
+        <div role="status" aria-live="polite" className="fixed bottom-10 left-1/2 -translate-x-1/2 max-w-[90vw] bg-zinc-900 border border-amber-500/40 text-amber-200 px-4 py-3 rounded-xl text-sm flex items-center gap-4 shadow-xl z-[700]">
           <span>{glyphWarning}</span>
           <button onClick={() => setGlyphWarning(null)} aria-label="Dismiss font warning" className="shrink-0">
             <X size={16} />
@@ -6487,16 +6489,17 @@ export default function EditorPage() {
 
       {/* Error toast */}
       {error && (
-        <div className="fixed bottom-10 left-1/2 -translate-x-1/2 bg-red-500/10 backdrop-blur-md border border-red-500/30 text-red-400 px-4 py-3 rounded-xl text-sm font-medium flex items-center gap-4 shadow-xl z-[100] animate-in slide-in-from-bottom-5 fade-in">
+        <div className="fixed bottom-10 left-1/2 -translate-x-1/2 bg-red-500/10 backdrop-blur-md border border-red-500/30 text-red-400 px-4 py-3 rounded-xl text-sm font-medium flex items-center gap-4 shadow-xl z-[700] animate-in slide-in-from-bottom-5 fade-in">
           {error}
           <button onClick={() => setError(null)} className="text-red-400 hover:text-red-300 transition-colors">
             <X size={16} />
           </button>
         </div>
       )}
+      {/* Z_LAYERS.modalBackdrop (500) / modal (600); content is a flex item. */}
       {isConfirmingRemoval && (
-        <div className="fixed inset-0 z-50 bg-black/80 flex items-center justify-center p-4 animate-in fade-in duration-200">
-          <div className="bg-zinc-900 border border-zinc-700/50 rounded-xl p-6 shadow-2xl max-w-sm w-full">
+        <div className="fixed inset-0 z-[500] bg-black/80 flex items-center justify-center p-4 animate-in fade-in duration-200">
+          <div className="z-[600] bg-zinc-900 border border-zinc-700/50 rounded-xl p-6 shadow-2xl max-w-sm w-full">
             <h3 className="text-white font-medium text-lg mb-2">Remove Watermarks</h3>
             <p className="text-zinc-400 text-sm mb-6">
               Do you really want to remove the detected watermarks from this document? This action cannot be undone.
@@ -6520,8 +6523,8 @@ export default function EditorPage() {
       )}
 
       {showApplySuccessModal && (
-        <div className="fixed inset-0 z-50 bg-black/80 flex items-center justify-center p-4 animate-in fade-in duration-200">
-          <div className="bg-zinc-900 border border-zinc-700/50 rounded-xl p-6 shadow-2xl max-w-sm w-full text-center">
+        <div className="fixed inset-0 z-[500] bg-black/80 flex items-center justify-center p-4 animate-in fade-in duration-200">
+          <div className="z-[600] bg-zinc-900 border border-zinc-700/50 rounded-xl p-6 shadow-2xl max-w-sm w-full text-center">
             <h3 className="text-white font-medium text-lg mb-4">Watermark Applied</h3>
             <p className="text-zinc-400 text-sm mb-6 leading-relaxed">
               Watermark has been applied and live preview is off. To add more watermarks, turn on the live preview to preview it live.
