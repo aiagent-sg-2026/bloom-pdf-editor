@@ -52,6 +52,23 @@ annotations are checked before and after serialization, including appearance
 Watermark checks distinguish MediaBox-relative presets from absolute user-space
 custom positions.
 
+### Image resize handles
+
+Embedded images, floating images, and visual signatures share
+`src/app/editor/components/resizeGeometry.ts`. Corner drags preserve the
+drag-start aspect ratio by default, using the larger absolute relative axis
+change (including its direction) and keeping the opposite corner fixed.
+Holding Shift allows independent width/height changes; releasing it during
+the drag restores proportional resizing from the same drag-start box on the
+next pointer movement.
+
+Proportional resizing clamps one scale so both minimum dimensions hold:
+8 × 8 pt for embedded images, 10 × 10 pt for floating images, and
+24 × 16 pt for signatures. Free resizing retains independent minimums.
+The helper uses upward-positive PDF y coordinates; callers convert pointer
+deltas from CSS units. Signature rotation/locking, numeric dimension inputs,
+and document commit payloads are unchanged.
+
 ## Image soft masks
 
 `src/engine/render/image-decoder.ts` applies image `/SMask` alpha to decoded RGBA, including browser-decoded JPEG base images. DeviceGray masks support 1-, 2-, 4-, 8-, and 16-bit samples with byte-padded rows, `/Decode` mapping, and nearest-neighbour resizing to the decoded base image dimensions. Images without a mask retain their existing opacity.

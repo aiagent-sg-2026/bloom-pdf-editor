@@ -8,6 +8,8 @@ import {
 import type { DrawMode, EditorTool } from '../types';
 import type { TextRun, ImageItem, PathItem, AcroFormWidget, VisualSignature, SignatureLibraryEntry, SignatureField, ManagedIdentity, ValidationReport, LtvStatus, ManagedSignature, RevisionViewEntry } from '@/engine/browser-core';
 import { BRAND_NAME } from '@/lib/brand';
+import { ImageBoxFields } from './ImageBoxFields';
+import type { ImageBox } from './imageBoxEdit';
 
 interface PropertiesSidebarProps {
   onClose?: () => void;
@@ -67,6 +69,8 @@ interface PropertiesSidebarProps {
   setSelectedDisplayItem: (item: ImageItem | PathItem | null) => void;
   onDeleteSelectedDisplayItem?: () => void;
   onReplaceSelectedImage?: () => void;
+  onCommitSelectedImageBox?: (box: ImageBox) => Promise<void> | void;
+  selectedImagePageBox?: ImageBox;
   onClearImageReplaceMode?: () => void;
   displayItems: (ImageItem | PathItem)[];
 
@@ -180,6 +184,7 @@ export function PropertiesSidebar(props: PropertiesSidebarProps) {
     selectedLinkUrl = '', onSelectedLinkUrlChange, onSaveSelectedLink, onRemoveSelectedLink,
     hasSelectedLink = false, linkCreatePending = false,
     selectedDisplayItem, setSelectedDisplayItem, onDeleteSelectedDisplayItem, onReplaceSelectedImage, onClearImageReplaceMode, displayItems,
+    onCommitSelectedImageBox, selectedImagePageBox,
     formFields = [], selectedFormField, formFieldDraft = '',
     onFormFieldSelect, onFormFieldChange, onFlattenForms,
     onDuplicateLineBelow,
@@ -818,14 +823,24 @@ export function PropertiesSidebar(props: PropertiesSidebarProps) {
               <span className="text-app-faint">Type</span>
               <span className="text-app font-medium capitalize">{selectedDisplayItem.type}</span>
             </div>
-            <div className="flex justify-between bg-panel-elevated rounded-md px-3 py-2 border border-app">
-              <span className="text-app-faint">Position</span>
-              <span className="text-app font-mono">{Math.round(selectedDisplayItem.x)}, {Math.round(selectedDisplayItem.y)}</span>
-            </div>
-            <div className="flex justify-between bg-panel-elevated rounded-md px-3 py-2 border border-app">
-              <span className="text-app-faint">Size</span>
-              <span className="text-app font-mono">{Math.round(selectedDisplayItem.width)} × {Math.round(selectedDisplayItem.height)} pt</span>
-            </div>
+            {selectedDisplayItem.type === 'image' ? (
+              <ImageBoxFields
+                box={selectedDisplayItem}
+                page={selectedImagePageBox}
+                onCommit={onCommitSelectedImageBox}
+              />
+            ) : (
+              <>
+                <div className="flex justify-between bg-panel-elevated rounded-md px-3 py-2 border border-app">
+                  <span className="text-app-faint">Position</span>
+                  <span className="text-app font-mono">{Math.round(selectedDisplayItem.x)}, {Math.round(selectedDisplayItem.y)}</span>
+                </div>
+                <div className="flex justify-between bg-panel-elevated rounded-md px-3 py-2 border border-app">
+                  <span className="text-app-faint">Size</span>
+                  <span className="text-app font-mono">{Math.round(selectedDisplayItem.width)} × {Math.round(selectedDisplayItem.height)} pt</span>
+                </div>
+              </>
+            )}
           </div>
           <div className="space-y-2 pt-2">
             {selectedDisplayItem.type === 'image' && (

@@ -3,6 +3,7 @@
 import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { PenLine, Lock, Trash2, RotateCw, X } from 'lucide-react';
 import type { VisualSignature } from '@/engine/browser-core';
+import { resizeCorner } from '../resizeGeometry';
 
 export interface SignatureOverlayProps {
   signature: VisualSignature;
@@ -92,15 +93,12 @@ export function SignatureOverlay(props: SignatureOverlayProps) {
           y: origin.current.y + dy,
         });
       } else if (mode === 'resize-se') {
-        const newW = Math.max(24, origin.current.width + dxCss / scale);
-        const newH = Math.max(16, origin.current.height + dyCss / scale);
-        const top = origin.current.y + origin.current.height;
+        const resized = resizeCorner(origin.current, 'se', {
+          dx, dy, minWidth: 24, minHeight: 16, free: e.shiftKey,
+        });
         setLive({
           ...liveRef.current,
-          x: origin.current.x,
-          y: top - newH,
-          width: newW,
-          height: newH,
+          ...resized,
         });
       } else if (mode === 'rotate') {
         const box = toCss({

@@ -4,6 +4,7 @@ import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { Image as ImageIcon, Replace, X } from 'lucide-react';
 import type { ImageItem } from '@/engine/browser-core';
 import { Z_LAYERS } from '../zLayers';
+import { resizeCorner, type ResizeCorner } from './resizeGeometry';
 
 interface EmbeddedImageOverlayProps {
   item: ImageItem;
@@ -27,7 +28,7 @@ export const EMBEDDED_IMAGE_OVERLAY_LAYERS = {
 } as const;
 
 /**
- * Interactive frame over a selected embedded PDF image — drag + SE resize.
+ * Interactive frame over a selected embedded PDF image — drag + corner resize.
  * Visual feedback is local; PDF mutation commits on pointer-up.
  */
 export function EmbeddedImageOverlay(props: EmbeddedImageOverlayProps) {
@@ -46,8 +47,7 @@ export function EmbeddedImageOverlay(props: EmbeddedImageOverlayProps) {
     setLive({ x: item.x, y: item.y, width: item.width, height: item.height });
   }, [item.x, item.y, item.width, item.height, item.name]);
 
-  type Corner = 'nw' | 'ne' | 'sw' | 'se';
-  const dragMode = useRef<'move' | `resize-${Corner}` | null>(null);
+  const dragMode = useRef<'move' | `resize-${ResizeCorner}` | null>(null);
   const origin = useRef({
     clientX: 0, clientY: 0,
     x: 0, y: 0, width: 0, height: 0,
@@ -69,19 +69,10 @@ export function EmbeddedImageOverlay(props: EmbeddedImageOverlayProps) {
         height: origin.current.height,
       });
     } else {
-      const corner = mode.slice('resize-'.length) as Corner;
-      const o = origin.current;
-      const east = corner === 'ne' || corner === 'se';
-      const north = corner === 'nw' || corner === 'ne';
-      // PDF y grows upward; screen-down drag (dy < 0 in PDF units) shrinks a north edge.
-      const newW = Math.max(8, east ? o.width + dx : o.width - dx);
-      const newH = Math.max(8, north ? o.height + dy : o.height - dy);
-      setLive({
-        x: east ? o.x : o.x + (o.width - newW),
-        y: north ? o.y : o.y + (o.height - newH),
-        width: newW,
-        height: newH,
-      });
+      const corner = mode.slice('resize-'.length) as ResizeCorner;
+      setLive(resizeCorner(origin.current, corner, {
+        dx, dy, minWidth: 8, minHeight: 8, free: e.shiftKey,
+      }));
     }
   }, [scale]);
 
@@ -117,7 +108,7 @@ export function EmbeddedImageOverlay(props: EmbeddedImageOverlayProps) {
     }
   }, [onCommitMove, onCommitResize, onPointerMove]);
 
-  const begin = useCallback((mode: 'move' | `resize-${Corner}`, e: React.PointerEvent) => {
+  const begin = useCallback((mode: 'move' | `resize-${ResizeCorner}`, e: React.PointerEvent) => {
     e.preventDefault();
     e.stopPropagation();
     dragMode.current = mode;

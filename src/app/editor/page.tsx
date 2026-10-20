@@ -55,6 +55,7 @@ import { useIsMobile } from './hooks/useIsMobile';
 import { editorKeyboardAction } from './keyboard-actions';
 import { floatingTextPdfDelta, shouldStartFloatingTextDrag } from './components/pointerDragGeometry';
 import { initialFloatingTextSelection } from './components/floatingTextSelection';
+import { resizeCorner } from './components/resizeGeometry';
 
 export interface SearchMatch {
   id: string;
@@ -4042,15 +4043,33 @@ export default function EditorPage() {
     setRenderKey(k => k + 1);
   }, [doc, currentPage, selectedDisplayItem, toEditableImage, pushEditorHistory]);
 
-  const handleEmbeddedImageResize = useCallback(async (box: { x: number; y: number; width: number; height: number }) => {
-    if (!doc || !engineRef.current || selectedDisplayItem?.type !== 'image') return;
+  const handleEmbeddedImageResize = useCallback(async (box: { x: number; y: number; width: number; height: number }, keepSelection = false) => {
+    const engine = engineRef.current;
+    if (!doc || !engine || selectedDisplayItem?.type !== 'image') return;
     const item = selectedDisplayItem as ImageItem;
     const editable = toEditableImage(item);
     const newCtm = [box.width, 0, 0, box.height, box.x, box.y];
     await applyObjectTransform(doc, currentPage, editable, newCtm);
     pushEditorHistory('resize-image');
     setIsDirty(true);
-    setSelectedDisplayItem(null);
+    if (keepSelection) {
+      // The writer relocates the Do instruction; refresh its index for the next edit.
+      const page = doc.pages[currentPage];
+      const content = engine.getPageContentBytes(page, doc.objects);
+      const { displayList } = engine.interpretPage(content, page, doc.objects);
+      let resizedImage: ImageItem | null = null;
+      // The resize path appends the new placement at the end of the content stream.
+      for (let i = displayList.length - 1; i >= 0; i--) {
+        const candidate = displayList[i];
+        if (candidate.type === 'image' && candidate.name === item.name) {
+          resizedImage = candidate;
+          break;
+        }
+      }
+      setSelectedDisplayItem(current => current === item ? resizedImage : current);
+    } else {
+      setSelectedDisplayItem(null);
+    }
     setRenderKey(k => k + 1);
   }, [doc, currentPage, selectedDisplayItem, toEditableImage, pushEditorHistory]);
 
@@ -5447,6 +5466,8 @@ export default function EditorPage() {
           setSelectedDisplayItem={setSelectedDisplayItem}
           onDeleteSelectedDisplayItem={handleDeleteSelectedDisplayItem}
           onReplaceSelectedImage={handleReplaceEmbeddedImage}
+          onCommitSelectedImageBox={(box) => handleEmbeddedImageResize(box, true)}
+          selectedImagePageBox={doc?.pages[currentPage]?.mediaBox}
           onClearImageReplaceMode={() => { replacingEmbeddedImageRef.current = null; }}
           displayItems={displayItems}
           formFields={formFields}
@@ -6045,20 +6066,26 @@ export default function EditorPage() {
                     </>
                   )}
 
-                  {/* CSS Resize Handle (only active when hovered to avoid drag conflict) */}
+                  {/* Corner resize preserves proportions unless Shift is held. */}
                   <div
                     className="absolute bottom-0 right-0 w-3 h-3 cursor-se-resize bg-accent/50"
                     onPointerDown={e => {
                       e.stopPropagation(); // prevent dragging
                       const startX = e.clientX;
                       const startY = e.clientY;
-                      const startW = fi.pdfWidth * scale;
-                      const startH = fi.pdfHeight * scale;
+                      const origin = {
+                        x: fi.pdfX, y: fi.pdfY - fi.pdfHeight,
+                        width: fi.pdfWidth, height: fi.pdfHeight,
+                      };
 
                       const handleMove = (me: PointerEvent) => {
-                        const newW = startW + (me.clientX - startX);
-                        const newH = startH + (me.clientY - startY);
-                        setFloatingImages(prev => prev.map(p => p.id === fi.id ? { ...p, pdfWidth: Math.max(10, newW / scale), pdfHeight: Math.max(10, newH / scale) } : p));
+                        const resized = resizeCorner(origin, 'se', {
+                          dx: (me.clientX - startX) / scale,
+                          dy: -(me.clientY - startY) / scale,
+                          minWidth: 10, minHeight: 10, free: me.shiftKey,
+                        });
+                        // Floating images store their fixed top-left, not the PDF lower-left.
+                        setFloatingImages(prev => prev.map(p => p.id === fi.id ? { ...p, pdfWidth: resized.width, pdfHeight: resized.height } : p));
                       };
 
                       const handleUp = () => {
