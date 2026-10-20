@@ -24,6 +24,8 @@ Paperloom PDF is a full-featured PDF editor built with Next.js and React. Its cu
 
 The editor supports native PDF content-stream editing, annotations, forms, page operations, signatures, browser-side PNG/JPEG/SVG/TXT export, and PDF save/optimization.
 
+Select an embedded image to edit **X (pt)**, **Y (pt)**, **W (pt)**, and **H (pt)** in the Options panel. Coordinates use the image's bottom-left corner in PDF points. Enter or blur commits a field; Escape cancels it. Aspect ratio is locked by default, and resizing keeps that corner fixed. Dimensions must be at least 8 pt; invalid entries revert, and positions are clamped to retain partial page overlap when page bounds are available. Panel edits use the same undo/redo history as drag-resize and keep the image selected. Position and size for drawings/signatures remain read-only.
+
 ## 🏗️ Architecture
 
 The browser UI and the client engine communicate directly. PDF bytes remain in the browser and may be persisted through IndexedDB for local document storage.
