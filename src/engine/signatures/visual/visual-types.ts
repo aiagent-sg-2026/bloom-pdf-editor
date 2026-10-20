@@ -1,5 +1,5 @@
 /**
- * Visual signature objects — overlay signatures (no digital signing / PDF write).
+ * Visual signature objects — editable appearances, independent of digital signing.
  *
  * Follows the same spatial model as floating images / watermarks:
  * page-local PDF user-space bbox + appearance reference.
@@ -10,7 +10,7 @@ export type SignatureAppearanceType = 'drawn' | 'uploaded' | 'typed' | 'composit
 
 /**
  * Placed signature on a page.
- * Renders above page contents; not written to the PDF content stream (Phase 1).
+ * Editor overlays share their id with a native Stamp or field appearance.
  */
 export interface VisualSignature {
   id: string;

@@ -58,7 +58,9 @@ export function removeWidgetAnnots(
     kept.push(ref!);
   }
 
-  if (kept.length === 0) {
+  if (annotsRef instanceof PDFRef) {
+    objects.set(annotsRef.toKey(), new PDFArray(kept));
+  } else if (kept.length === 0) {
     pageDict.delete('Annots');
   } else {
     pageDict.set('Annots', new PDFArray(kept));
@@ -82,4 +84,34 @@ export async function flattenFormFieldsOnPage(
   const merged = concatBytes(existing, stringToBytes(`\n${content}`));
   await updatePageContent(page.contentRefs, merged, doc.objects);
   removeWidgetAnnots(page.dict, removedRefs, doc.objects);
+  removeFields(doc, removedRefs);
+}
+
+/** Prune removed widgets and empty ancestors, preserving surviving field branches. */
+function removeFields(doc: PDFDocumentData, removedRefs: PDFRef[]): void {
+  const acroEntry = doc.catalog.get('AcroForm');
+  const acro = acroEntry ? resolveRef(acroEntry, doc.objects) : undefined;
+  if (!(acro instanceof PDFDict)) return;
+  const removed = new Set(removedRefs.map(ref => ref.toKey()));
+  const visited = new Set<string>();
+  function prune(owner: PDFDict, key: string): void {
+    const entry = owner.get(key);
+    const array = entry ? resolveRef(entry, doc.objects) : undefined;
+    if (!(array instanceof PDFArray)) return;
+    const kept = array.items.filter(item => {
+      if (!(item instanceof PDFRef)) return true;
+      if (removed.has(item.toKey())) return false;
+      const field = doc.objects.get(item.toKey());
+      if (!(field instanceof PDFDict) || visited.has(item.toKey())) return true;
+      visited.add(item.toKey());
+      const hadKids = field.has('Kids');
+      prune(field, 'Kids');
+      const kidsEntry = field.get('Kids');
+      const kids = kidsEntry ? resolveRef(kidsEntry, doc.objects) : undefined;
+      return !hadKids || !(kids instanceof PDFArray) || kids.length > 0;
+    });
+    if (entry instanceof PDFRef) doc.objects.set(entry.toKey(), new PDFArray(kept));
+    else owner.set(key, new PDFArray(kept));
+  }
+  prune(acro, 'Fields');
 }

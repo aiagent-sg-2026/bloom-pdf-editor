@@ -231,6 +231,38 @@ Migrated native call paths in `src/app/editor/page.tsx`:
   Squiggly, and overlays still use the existing legacy Clear behavior.
   Undo/redo, Download, compressed Download, export-panel opening, and overlay
   baking await pending drawing/shape creation and annotation-erase commits.
+- **Visual signatures:** drawn, typed, and uploaded library appearances are placed
+  transactionally as native Stamp annotations, identified by the overlay id in
+  `/NM`. Their indirect Form appearances reuse `insertImageRun`, including PNG
+  alpha, centre rotation, and opacity. A per-insertion monotonic allocator gives
+  RGB images and soft masks distinct references before either object is stored.
+  Appearance resources are private, so
+  removing a signature leaves no reachable signature images in a full save.
+  The existing overlays remain the interactive surface; the canvas hides the
+  corresponding native annotation while that overlay exists, whereas thumbnails
+  and export use the native appearance. Movement, resizing, rotation, and opacity
+  update the same signature transactionally. Placement/removal publish one
+  `add-signature`/`delete-signature` toolbar boundary only after successful staging.
+  The existing bake boundary stages recovered overlays without native appearances
+  and never duplicates already committed signatures.
+- **Signature-field appearances:** stage `applySignatureFieldAppearanceAsync`
+  against the detached field reference, then publish the aligned overlay with
+  one `place-in-field` entry. `/PaperloomSignatureId` associates that appearance
+  with its overlay. Removing the visual signature removes its appearance, not
+  the field or its cryptographic `/V`.
+- **AcroForm fields:** automatic signature-field creation stages the existing
+  `createSignatureFieldAtPoint` operation before signing; the signing pipeline
+  itself is unchanged. Text, button, and choice values re-detect widgets by
+  reference in the draft instead of mutating live widget dictionaries. Each
+  successful value edit publishes one `form-value` entry. Existing Flatten Forms
+  stages content updates and removal from `/Annots` and the `/Fields` tree,
+  pruning only empty ancestors and preserving other fields. Detection, creation,
+  and removal resolve indirect `/Fields`, `/Kids`, and `/Annots` objects.
+  Rapid field input and signature edits are serialized; undo/redo, download,
+  export-panel opening, and overlay baking await them. Failures retain live
+  bytes, history, and editable input. Successful commits refresh canvas and
+  thumbnails; history restoration clears stale form/signature-field selections.
+
 
 `SessionEditorHistory` in `src/engine/session/editor-history.ts` is the page's
 single ordered toolbar stack (50 post-edit states, including the initial state).
@@ -268,22 +300,21 @@ on the same toolbar entry, so the 50-entry limit is not a memory-size limit.
 - Shape/Squiggly erasure, Ink/shape/non-text-markup clearing, and overlay erasing
   or clearing; floating text preview editing, movement and deletion;
   floating image insertion, editing, movement, replacement and deletion;
-  non-text/non-drawing overlay flattening.
+  non-text/non-drawing/non-signature overlay flattening.
 - Embedded-image movement/resizing/deletion and other selected-object transforms.
-- Form value edits and flattening; links and other annotation types beyond
-  migrated text-markup, Ink, and shape creation.
-- Visual signatures, signature fields/appearances, cryptographic signing,
+- Links and other annotation types beyond migrated text-markup, Ink, shape
+  creation, and visual signatures.
+- Signature-library management and overlay locking; cryptographic signing,
   validation/LTV-related mutations, and security-panel changes.
 - Page deletion/rotation/reordering, blank-page insertion, merge/import, and
   extraction/splitting.
 - Watermark removal, initial text normalization,
   export/compression, autosave, recovery, and browser persistence.
 
-The text-edit, Add Text Box, highlight-family, drawing, Ink erasure, and shape
-creation production migrations are implemented. Remaining UI migration gates:
-
-1. Signatures and form-field edits.
-2. Page rotation, deletion, reordering, and insertion.
+The text-edit, Add Text Box, highlight-family, drawing, Ink erasure, shape
+creation, signature placement/removal, and supported form-field production
+migrations are implemented. The remaining UI migration gate is page rotation,
+deletion, reordering, and insertion.
 
 The text gate in `src/engine/__tests__/session-document-editor.test.ts` covers
 native existing-line replacement and styled text-box insertion: direct-operation
@@ -316,6 +347,15 @@ each shape, legacy overlay snapshots, and multi-hit Ink/text-markup erasure;
 failed creation and erasure preserve bytes, the toolbar cursor, and redo.
 Mixed legacy boundaries retain legacy snapshot restoration rather than gaining
 byte-identical guarantees.
+
+`src/engine/__tests__/session-signature-form-editor.test.ts` covers native
+signature image/alpha/geometry restoration and removal, field creation with
+and without an AcroForm, text/button/choice values, flattening/removal with
+surviving siblings and indirect field branches, and failed draft isolation.
+`src/engine/__tests__/session-signature-form-history.test.ts` interleaves those
+boundaries with legacy snapshots, checks repeated exact undo/redo bytes, and
+checks retained redo and toolbar position after failed edits or restores.
+
 
 ## Export
 
