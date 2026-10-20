@@ -3,6 +3,7 @@ import { addAnnotationToPage, createAnnotationDict, type Annotation } from '../e
 import { bindPageContentRefs } from '../editor/stream-compiler';
 import { parsePDF } from '../parser/parser';
 import { PDFArray, PDFDict, PDFRef, PDFStream, type PDFDocumentData, type PDFObject } from '../types';
+import { extractPages } from '../writer/page-operations';
 import { getNextObjNum, serializeDocument } from '../writer/serializer';
 import { DocumentSession } from './document-session';
 import type { EditTransaction } from './edit-transaction';
@@ -143,15 +144,20 @@ function publishDraft(doc: PDFDocumentData, staged: PDFDocumentData, clones: Map
   }
   for (const key of doc.objects.keys()) if (!staged.objects.has(key)) doc.objects.delete(key);
   for (const [key, object] of staged.objects) doc.objects.set(key, adopt(object));
-  for (let index = 0; index < doc.pages.length; index++) {
-    const page = doc.pages[index];
-    const draft = staged.pages[index];
+  const previousPages = new Map(doc.pages.map(page => [page.ref.toKey(), page]));
+  const pages = staged.pages.map(draft => {
+    const page = previousPages.get(draft.ref.toKey()) ?? { ...draft };
+    page.index = draft.index;
+    page.ref = draft.ref;
     page.dict = adopt(draft.dict) as PDFDict;
     page.resources = adopt(draft.resources) as PDFDict;
-    page.contentRefs.length = 0;
-    for (const ref of draft.contentRefs) page.contentRefs.push(ref);
-    bindPageContentRefs(page);
-  }
+    page.mediaBox = { ...draft.mediaBox };
+    page.cropBox = { ...draft.cropBox };
+    page.rotate = draft.rotate;
+    page.contentRefs = [...draft.contentRefs];
+    return bindPageContentRefs(page);
+  });
+  doc.pages.splice(0, doc.pages.length, ...pages);
   doc.catalog = adopt(staged.catalog) as PDFDict;
   doc.xref.trailerDict = adopt(staged.xref.trailerDict) as PDFDict;
 }
@@ -183,6 +189,25 @@ export class SessionDocumentEditor {
   /** Reapply a baked toolbar state after crossing a neighbouring session boundary. */
   async restoreCurrent(doc: PDFDocumentData): Promise<boolean> {
     return this.restore(doc, 'current');
+  }
+
+  /** Split downloads transform private session bytes, not the live graph or
+   * toolbar cursor. Failed extraction cannot publish a partial PDF.
+   */
+  async extractPages(doc: PDFDocumentData, indices: number[]): Promise<Uint8Array> {
+    const session = new DocumentSession(await serializeSessionBytes(doc));
+    const transaction = session.beginTransaction('extract-pages');
+    try {
+      await transaction.apply(async bytes => {
+        const source = await parsePDF(bytes);
+        return serializeDocument(extractPages(source, indices));
+      });
+      transaction.commit();
+      return session.getBytes();
+    } catch (error) {
+      transaction.rollback();
+      throw error;
+    }
   }
 
   private async restore(doc: PDFDocumentData, direction: 'undo' | 'redo' | 'current'): Promise<boolean> {
@@ -259,6 +284,8 @@ export class SessionDocumentEditor {
         catalog: clonePDFObject(doc.catalog, seen) as PDFDict,
         pages: doc.pages.map(page => ({
           ...page,
+          mediaBox: { ...page.mediaBox },
+          cropBox: { ...page.cropBox },
           dict: clonePDFObject(page.dict, seen) as PDFDict,
           resources: clonePDFObject(page.resources, seen) as PDFDict,
           contentRefs: [...page.contentRefs],
