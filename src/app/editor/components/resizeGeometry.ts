@@ -1,4 +1,5 @@
 export type ResizeCorner = 'nw' | 'ne' | 'sw' | 'se';
+export type ResizeHandle = ResizeCorner | 'n' | 's' | 'e' | 'w';
 
 interface ResizeBox {
   x: number;
@@ -16,14 +17,33 @@ interface ResizeOptions {
   free: boolean;
 }
 
-/** Resize a positive-size PDF box, keeping the opposite corner fixed. */
-export function resizeCorner(
+/** Resize a positive-size PDF box, keeping the opposite edge or corner fixed. */
+export function resizeBox(
   origin: ResizeBox,
-  corner: ResizeCorner,
+  handle: ResizeHandle,
   { dx, dy, minWidth, minHeight, free }: ResizeOptions,
 ): ResizeBox {
-  const east = corner === 'ne' || corner === 'se';
-  const north = corner === 'nw' || corner === 'ne';
+  if (handle === 'n' || handle === 's') {
+    const height = Math.max(minHeight, origin.height + (handle === 'n' ? dy : -dy));
+    return {
+      x: origin.x,
+      y: handle === 'n' ? origin.y : origin.y + origin.height - height,
+      width: origin.width,
+      height,
+    };
+  }
+  if (handle === 'e' || handle === 'w') {
+    const width = Math.max(minWidth, origin.width + (handle === 'e' ? dx : -dx));
+    return {
+      x: handle === 'e' ? origin.x : origin.x + origin.width - width,
+      y: origin.y,
+      width,
+      height: origin.height,
+    };
+  }
+
+  const east = handle === 'ne' || handle === 'se';
+  const north = handle === 'nw' || handle === 'ne';
   const dw = east ? dx : -dx;
   const dh = north ? dy : -dy;
   let width: number;

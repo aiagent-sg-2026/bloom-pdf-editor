@@ -23,7 +23,7 @@ import {
   hitTestTextLine, findNearestTextLine, caretIndexFromLineX,
   getLineBounds, getOverlayFontFamily, getOverlayFontStyle, getDisplayFontFamily,
 } from './utils';
-import { buildDisplayListIndex, hitTestDisplayList, isSelectableDisplayItem, captureHistoryEntry, restoreAnnotSnapshot, restoreDocumentStructure, parseOverlaySnapshot, deleteObject, visualFontSize, resolveRunStyleFlags, transformObject, applyObjectTransform, distributeTextChangeToSegments, segmentAtIndex, createVisualSignature, hitTestSignature, moveSignature, resizeSignature, rotateSignature, setSignatureOpacity, setSignatureLocked, deleteSignature, updateSignature, getSignatureLibrary, DEFAULT_SIGNATURE_SIZE, detectSignatureFieldsOnPage, hitTestSignatureField, createSignatureFieldAtPoint, applySignatureFieldAppearanceAsync, getCertificateManager, signDocumentCryptographic, validateDocumentSignatures, enableLongTermValidation, getLtvStatus, listManagedSignatures, buildRevisionViewer, lockSignaturesAfterSigning, pushRecentSignatureId, orderLibraryByRecent, SIGNATURE_SHORTCUTS } from '@/engine/browser-core';
+import { buildDisplayListIndex, hitTestDisplayList, isSelectableDisplayItem, captureHistoryEntry, restoreAnnotSnapshot, restoreDocumentStructure, parseOverlaySnapshot, deleteObject, visualFontSize, resolveRunStyleFlags, transformObject, applyObjectTransform, distributeTextChangeToSegments, segmentAtIndex, createVisualSignature, hitTestSignature, moveSignature, rotateSignature, setSignatureOpacity, setSignatureLocked, deleteSignature, updateSignature, getSignatureLibrary, DEFAULT_SIGNATURE_SIZE, detectSignatureFieldsOnPage, hitTestSignatureField, createSignatureFieldAtPoint, applySignatureFieldAppearanceAsync, getCertificateManager, signDocumentCryptographic, validateDocumentSignatures, enableLongTermValidation, getLtvStatus, listManagedSignatures, buildRevisionViewer, lockSignaturesAfterSigning, pushRecentSignatureId, orderLibraryByRecent, SIGNATURE_SHORTCUTS } from '@/engine/browser-core';
 import type { Annotation, QuadTree, SelectableItem, EditableObject, EditorHistoryEntry, PDFRef } from '@/engine/browser-core';
 import { UnsupportedGlyphsError, SessionDocumentEditor } from '@/engine/browser-core';
 import { SessionEditorHistory } from '@/engine/session/editor-history';
@@ -55,7 +55,7 @@ import { useIsMobile } from './hooks/useIsMobile';
 import { editorKeyboardAction } from './keyboard-actions';
 import { floatingTextPdfDelta, shouldStartFloatingTextDrag } from './components/pointerDragGeometry';
 import { initialFloatingTextSelection } from './components/floatingTextSelection';
-import { resizeCorner } from './components/resizeGeometry';
+import { resizeBox } from './components/resizeGeometry';
 
 export interface SearchMatch {
   id: string;
@@ -4596,8 +4596,9 @@ export default function EditorPage() {
     void commitSignatureChange(current => updateSignature(current, id, s => moveSignature(s, dx, dy)), 'move-signature');
   }, [commitSignatureChange]);
 
-  const handleSignatureResize = useCallback((id: string, width: number, height: number) => {
-    void commitSignatureChange(current => updateSignature(current, id, s => resizeSignature(s, width, height)), 'resize-signature');
+  const handleSignatureResize = useCallback((id: string, box: { x: number; y: number; width: number; height: number }) => {
+    // The overlay clamps size and fixes the opposite edge; commit all bounds together.
+    void commitSignatureChange(current => updateSignature(current, id, s => s.locked ? s : { ...s, ...box }), 'resize-signature');
   }, [commitSignatureChange]);
 
   const handleSignatureRotate = useCallback((id: string, degrees: number) => {
@@ -5784,7 +5785,7 @@ export default function EditorPage() {
                     };
                   }}
                   onCommitMove={handleEmbeddedImageMove}
-                  onCommitResize={handleEmbeddedImageResize}
+                  onCommitResize={(box) => handleEmbeddedImageResize(box, true)}
                   onReplace={handleReplaceEmbeddedImage}
                   onDeselect={() => setSelectedDisplayItem(null)}
                 />
@@ -6079,7 +6080,7 @@ export default function EditorPage() {
                       };
 
                       const handleMove = (me: PointerEvent) => {
-                        const resized = resizeCorner(origin, 'se', {
+                        const resized = resizeBox(origin, 'se', {
                           dx: (me.clientX - startX) / scale,
                           dy: -(me.clientY - startY) / scale,
                           minWidth: 10, minHeight: 10, free: me.shiftKey,
