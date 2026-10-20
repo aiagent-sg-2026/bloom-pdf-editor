@@ -4042,15 +4042,33 @@ export default function EditorPage() {
     setRenderKey(k => k + 1);
   }, [doc, currentPage, selectedDisplayItem, toEditableImage, pushEditorHistory]);
 
-  const handleEmbeddedImageResize = useCallback(async (box: { x: number; y: number; width: number; height: number }) => {
-    if (!doc || !engineRef.current || selectedDisplayItem?.type !== 'image') return;
+  const handleEmbeddedImageResize = useCallback(async (box: { x: number; y: number; width: number; height: number }, keepSelection = false) => {
+    const engine = engineRef.current;
+    if (!doc || !engine || selectedDisplayItem?.type !== 'image') return;
     const item = selectedDisplayItem as ImageItem;
     const editable = toEditableImage(item);
     const newCtm = [box.width, 0, 0, box.height, box.x, box.y];
     await applyObjectTransform(doc, currentPage, editable, newCtm);
     pushEditorHistory('resize-image');
     setIsDirty(true);
-    setSelectedDisplayItem(null);
+    if (keepSelection) {
+      // The writer relocates the Do instruction; refresh its index for the next edit.
+      const page = doc.pages[currentPage];
+      const content = engine.getPageContentBytes(page, doc.objects);
+      const { displayList } = engine.interpretPage(content, page, doc.objects);
+      let resizedImage: ImageItem | null = null;
+      // The resize path appends the new placement at the end of the content stream.
+      for (let i = displayList.length - 1; i >= 0; i--) {
+        const candidate = displayList[i];
+        if (candidate.type === 'image' && candidate.name === item.name) {
+          resizedImage = candidate;
+          break;
+        }
+      }
+      setSelectedDisplayItem(current => current === item ? resizedImage : current);
+    } else {
+      setSelectedDisplayItem(null);
+    }
     setRenderKey(k => k + 1);
   }, [doc, currentPage, selectedDisplayItem, toEditableImage, pushEditorHistory]);
 
@@ -5447,6 +5465,8 @@ export default function EditorPage() {
           setSelectedDisplayItem={setSelectedDisplayItem}
           onDeleteSelectedDisplayItem={handleDeleteSelectedDisplayItem}
           onReplaceSelectedImage={handleReplaceEmbeddedImage}
+          onCommitSelectedImageBox={(box) => handleEmbeddedImageResize(box, true)}
+          selectedImagePageBox={doc?.pages[currentPage]?.mediaBox}
           onClearImageReplaceMode={() => { replacingEmbeddedImageRef.current = null; }}
           displayItems={displayItems}
           formFields={formFields}
