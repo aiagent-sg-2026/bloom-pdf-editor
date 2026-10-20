@@ -125,9 +125,10 @@ export function DownloadDropdown({
         </button>
       </div>
 
+      {/* Z_LAYERS.drawer (400) on mobile; dropdown (200) and tooltips on desktop. */}
       {isOpen && (
         <div
-          className="fixed inset-x-0 bottom-0 md:absolute md:inset-auto md:right-0 md:top-full md:mt-2 w-full md:w-[380px] bg-panel/98 backdrop-blur-2xl border border-app md:rounded-2xl rounded-t-2xl shadow-2xl shadow-black/50 overflow-hidden z-50 text-app max-h-[80vh] md:max-h-none overflow-y-auto"
+          className="fixed inset-x-0 bottom-0 md:absolute md:inset-auto md:right-0 md:top-full md:mt-2 w-full md:w-[380px] bg-panel/98 backdrop-blur-2xl border border-app md:rounded-2xl rounded-t-2xl shadow-2xl shadow-black/50 overflow-hidden z-[400] md:z-[200] text-app max-h-[80vh] md:max-h-none overflow-y-auto"
           style={{ animation: 'dropdownIn 0.25s cubic-bezier(0.16, 1, 0.3, 1)' }}
         >
           <div className="px-5 pt-4 pb-3 border-b border-app">
@@ -152,7 +153,7 @@ export function DownloadDropdown({
               </label>
               <div className="group relative flex items-center justify-center">
                 <Info size={12} className="text-app-muted hover:text-app cursor-help transition-colors" />
-                <div className="absolute bottom-full mb-2 left-1/2 -translate-x-1/2 w-56 p-2.5 bg-panel-elevated border border-app rounded-xl shadow-xl text-[10.5px] text-app opacity-0 invisible group-hover:opacity-100 group-hover:visible transition-all duration-200 z-[60] leading-relaxed">
+                <div className="absolute bottom-full mb-2 left-1/2 -translate-x-1/2 w-56 p-2.5 bg-panel-elevated border border-app rounded-xl shadow-xl text-[10.5px] text-app opacity-0 invisible group-hover:opacity-100 group-hover:visible transition-all duration-200 z-[200] leading-relaxed">
                   <strong className="text-app font-semibold">Save Mode</strong> determines how changes are saved.
                   <ul className="mt-1.5 space-y-1 list-disc pl-3.5 text-app-muted">
                     <li><strong className="text-app">Optimized:</strong> Rebuilds the file and removes unused data. Slower, but results in a smaller file.</li>
@@ -192,7 +193,7 @@ export function DownloadDropdown({
                 </label>
                 <div className="group relative flex items-center justify-center">
                   <Info size={12} className="text-app-muted hover:text-app cursor-help transition-colors" />
-                  <div className="absolute bottom-full mb-2 left-1/2 -translate-x-1/2 w-56 p-2.5 bg-panel-elevated border border-app rounded-xl shadow-xl text-[10.5px] text-app opacity-0 invisible group-hover:opacity-100 group-hover:visible transition-all duration-200 z-[60] leading-relaxed">
+                  <div className="absolute bottom-full mb-2 left-1/2 -translate-x-1/2 w-56 p-2.5 bg-panel-elevated border border-app rounded-xl shadow-xl text-[10.5px] text-app opacity-0 invisible group-hover:opacity-100 group-hover:visible transition-all duration-200 z-[200] leading-relaxed">
                     <strong className="text-app font-semibold">DPI (Dots Per Inch)</strong> controls image clarity. Higher DPI looks better but makes the file bigger.
                     <ul className="mt-1.5 space-y-1 list-disc pl-3.5 text-app-muted">
                       <li><strong className="text-app">Original:</strong> No downsampling.</li>
@@ -240,7 +241,7 @@ export function DownloadDropdown({
                 </label>
                 <div className="group relative flex items-center justify-center">
                   <Info size={12} className="text-app-muted hover:text-app cursor-help transition-colors" />
-                  <div className="absolute bottom-full mb-2 left-1/2 -translate-x-1/2 w-56 p-2.5 bg-panel-elevated border border-app rounded-xl shadow-xl text-[10.5px] text-app opacity-0 invisible group-hover:opacity-100 group-hover:visible transition-all duration-200 z-[60] leading-relaxed">
+                  <div className="absolute bottom-full mb-2 left-1/2 -translate-x-1/2 w-56 p-2.5 bg-panel-elevated border border-app rounded-xl shadow-xl text-[10.5px] text-app opacity-0 invisible group-hover:opacity-100 group-hover:visible transition-all duration-200 z-[200] leading-relaxed">
                     <strong className="text-app font-semibold">Compression</strong> shrinks the file size.
                     <p className="mt-1.5 text-app-muted">Original passes image bytes through unchanged. Lower quality makes images smaller but slightly blurrier.</p>
                     <div className="absolute -bottom-1.5 left-1/2 -translate-x-1/2 border-[6px] border-transparent border-t-app" />

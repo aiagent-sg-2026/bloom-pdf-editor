@@ -51,6 +51,7 @@ export function LinkPopover({
     }
   }, [mode]);
 
+  // Canvas-local z-50 (Z_LAYERS.canvasMin..canvasMax), not a global dropdown.
   return (
     <div
       className="absolute z-50"

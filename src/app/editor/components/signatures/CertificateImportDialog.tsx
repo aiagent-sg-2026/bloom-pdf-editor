@@ -92,8 +92,9 @@ export function CertificateImportDialog({
   return (
     <Dialog.Root open={open} onOpenChange={onOpenChange}>
       <Dialog.Portal>
-        <Dialog.Overlay className="fixed inset-0 z-[80] bg-black/60 backdrop-blur-sm" />
-        <Dialog.Content className="fixed left-1/2 top-1/2 z-[81] w-[min(520px,94vw)] max-h-[88vh] -translate-x-1/2 -translate-y-1/2 overflow-hidden rounded-xl border border-zinc-700 bg-zinc-900 shadow-2xl flex flex-col">
+        {/* Z_LAYERS.modalBackdrop (500) / modal (600). */}
+        <Dialog.Overlay className="fixed inset-0 z-[500] bg-black/60 backdrop-blur-sm" />
+        <Dialog.Content className="fixed left-1/2 top-1/2 z-[600] w-[min(520px,94vw)] max-h-[88vh] -translate-x-1/2 -translate-y-1/2 overflow-hidden rounded-xl border border-zinc-700 bg-zinc-900 shadow-2xl flex flex-col">
           <div className="flex items-center justify-between px-4 py-3 border-b border-zinc-700/80">
             <Dialog.Title className="text-sm font-semibold text-zinc-100 flex items-center gap-2">
               <KeyRound size={16} /> Certificates

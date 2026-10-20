@@ -3,6 +3,7 @@
 import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { Image as ImageIcon, Replace, X } from 'lucide-react';
 import type { ImageItem } from '@/engine/browser-core';
+import { Z_LAYERS } from '../zLayers';
 import { resizeCorner, type ResizeCorner } from './resizeGeometry';
 
 interface EmbeddedImageOverlayProps {
@@ -20,7 +21,11 @@ interface EmbeddedImageOverlayProps {
   onDeselect: () => void;
 }
 
-export const EMBEDDED_IMAGE_OVERLAY_LAYERS = { overlay: 70, handle: 80 } as const;
+/** Canvas-local layers, contained by the isolated workspace. */
+export const EMBEDDED_IMAGE_OVERLAY_LAYERS = {
+  overlay: Z_LAYERS.canvasOverlay,
+  handle: Z_LAYERS.canvasHandle,
+} as const;
 
 /**
  * Interactive frame over a selected embedded PDF image — drag + corner resize.
@@ -123,8 +128,8 @@ export function EmbeddedImageOverlay(props: EmbeddedImageOverlayProps) {
 
   return (
     <div
-      className="absolute z-[70] pointer-events-auto border-2 border-[#3b82f6] border-dashed bg-[#3b82f6]/10 cursor-move"
-      style={{ left: box.left, top: box.top, width: box.width, height: box.height }}
+      className="absolute pointer-events-auto border-2 border-[#3b82f6] border-dashed bg-[#3b82f6]/10 cursor-move"
+      style={{ zIndex: EMBEDDED_IMAGE_OVERLAY_LAYERS.overlay, left: box.left, top: box.top, width: box.width, height: box.height }}
       onClick={(e) => e.stopPropagation()}
       onPointerDown={(e) => begin('move', e)}
     >
@@ -162,10 +167,11 @@ export function EmbeddedImageOverlay(props: EmbeddedImageOverlayProps) {
         <div
           key={corner}
           data-handle={corner}
-          className={`absolute w-2.5 h-2.5 bg-[#3b82f6] border border-white rounded-sm z-[80] pointer-events-auto ${
+          className={`absolute w-2.5 h-2.5 bg-[#3b82f6] border border-white rounded-sm pointer-events-auto ${
             corner === 'nw' || corner === 'se' ? 'cursor-nwse-resize' : 'cursor-nesw-resize'
           }`}
           style={{
+            zIndex: EMBEDDED_IMAGE_OVERLAY_LAYERS.handle,
             left: hx === 0 ? -5 : undefined,
             right: hx === 1 ? -5 : undefined,
             top: hy === 0 ? -5 : undefined,

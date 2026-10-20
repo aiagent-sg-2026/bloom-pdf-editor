@@ -165,8 +165,9 @@ export function ExportPanel({
 
   return (
     <>
+      {/* Z_LAYERS.drawerBackdrop (300) / drawer (400). */}
       <div
-        className="fixed inset-0 z-40 bg-black/60 backdrop-blur-sm"
+        className="fixed inset-0 z-[300] bg-black/60 backdrop-blur-sm"
         style={{ animation: 'fadeIn 0.2s ease-out' }}
         onClick={onClose}
       />
@@ -174,7 +175,7 @@ export function ExportPanel({
       <div
         ref={panelRef}
         data-theme="dark"
-        className="fixed right-0 top-0 bottom-0 z-50 w-full max-w-[520px] flex flex-col"
+        className="fixed right-0 top-0 bottom-0 z-[400] w-full max-w-[520px] flex flex-col"
         style={{
           animation: 'slideInRight 0.35s cubic-bezier(0.16, 1, 0.3, 1)',
         }}

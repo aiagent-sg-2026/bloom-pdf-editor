@@ -64,10 +64,11 @@ export function ToolsSidebar({
     }
   };
 
+  // Z_LAYERS.chrome (100); nested tooltips use Z_LAYERS.dropdown (200).
   /* ── Mobile: horizontal bottom strip ── */
   if (isMobile) {
     return (
-      <aside className="fixed bottom-0 left-0 right-0 z-30 bg-panel/95 backdrop-blur-md border-t border-app shadow-[0_-4px_24px_rgba(0,0,0,0.12)]">
+      <aside className="fixed bottom-0 left-0 right-0 z-[100] bg-panel/95 backdrop-blur-md border-t border-app shadow-[0_-4px_24px_rgba(0,0,0,0.12)]">
         <div className="flex items-center gap-1 px-2 py-1.5 overflow-x-auto scrollbar-hide">
           {TOOLS.map((tool) => {
             const isActive = activeTool === tool.id;
@@ -137,7 +138,7 @@ export function ToolsSidebar({
       className={`
         ${isCollapsed ? 'w-12' : 'w-16'} 
         bg-panel/95 backdrop-blur-md border-r border-app flex flex-col items-center pt-3 pb-3 gap-2 
-        shrink-0 z-30 relative transition-all duration-300
+        shrink-0 z-[100] relative transition-all duration-300
         shadow-[4px_0_24px_rgba(0,0,0,0.08)] min-h-0 h-full overflow-hidden
       `}
     >
@@ -187,7 +188,7 @@ export function ToolsSidebar({
               <div 
                 className="
                   absolute left-full top-1/2 -translate-y-1/2 ml-3.5 px-3 py-1.5 
-                  rounded-xl bg-panel-elevated/98 backdrop-blur-xl border shadow-2xl z-[100]
+                  rounded-xl bg-panel-elevated/98 backdrop-blur-xl border shadow-2xl z-[200]
                   pointer-events-none opacity-0 invisible group-hover:opacity-100 group-hover:visible
                   transition-all duration-200 flex items-center gap-2.5 whitespace-nowrap text-xs font-semibold
                 "

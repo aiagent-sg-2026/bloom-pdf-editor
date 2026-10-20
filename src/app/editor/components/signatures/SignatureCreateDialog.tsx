@@ -220,8 +220,9 @@ export function SignatureCreateDialog({ open, onOpenChange, onSave }: SignatureC
   return (
     <Dialog.Root open={open} onOpenChange={onOpenChange}>
       <Dialog.Portal>
-        <Dialog.Overlay className="fixed inset-0 bg-black/60 z-[100]" />
-        <Dialog.Content data-theme="dark" className="fixed left-1/2 top-1/2 z-[101] w-[min(560px,94vw)] -translate-x-1/2 -translate-y-1/2 rounded-xl border border-zinc-700 bg-zinc-900 shadow-2xl focus:outline-none">
+        {/* Z_LAYERS.modalBackdrop (500) / modal (600). */}
+        <Dialog.Overlay className="fixed inset-0 bg-black/60 z-[500]" />
+        <Dialog.Content data-theme="dark" className="fixed left-1/2 top-1/2 z-[600] w-[min(560px,94vw)] -translate-x-1/2 -translate-y-1/2 rounded-xl border border-zinc-700 bg-zinc-900 shadow-2xl focus:outline-none">
           <div className="flex items-center justify-between px-4 py-3 border-b border-zinc-700">
             <Dialog.Title className="text-sm font-semibold text-zinc-100">
               Create signature

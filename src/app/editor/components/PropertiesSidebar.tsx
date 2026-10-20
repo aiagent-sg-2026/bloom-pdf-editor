@@ -275,17 +275,17 @@ export function PropertiesSidebar(props: PropertiesSidebarProps) {
 
   return (
     <>
-      {/* Mobile backdrop */}
+      {/* Z_LAYERS: chrome 100; mobile drawerBackdrop 300 / drawer 400. */}
       {isMobile && (
         <div
-          className="fixed inset-0 z-40 mobile-backdrop"
+          className="fixed inset-0 z-[300] mobile-backdrop"
           onClick={onClose}
         />
       )}
       <div
         className={isMobile
-          ? 'fixed bottom-0 left-0 right-0 z-50 bg-panel/98 backdrop-blur-xl border-t border-app flex flex-col overflow-y-auto mobile-sheet-up shadow-[0_-8px_40px_rgba(0,0,0,0.15)]'
-          : 'w-64 bg-panel/95 backdrop-blur-md border-r border-app flex flex-col shrink-0 z-10 overflow-y-auto shadow-[4px_0_24px_rgba(0,0,0,0.08)] min-h-0 h-full'
+          ? 'fixed bottom-0 left-0 right-0 z-[400] bg-panel/98 backdrop-blur-xl border-t border-app flex flex-col overflow-y-auto mobile-sheet-up shadow-[0_-8px_40px_rgba(0,0,0,0.15)]'
+          : 'w-64 bg-panel/95 backdrop-blur-md border-r border-app flex flex-col shrink-0 z-[100] overflow-y-auto shadow-[4px_0_24px_rgba(0,0,0,0.08)] min-h-0 h-full'
         }
         style={isMobile ? { maxHeight: '65vh' } : undefined}
         data-keep-text-edit
