@@ -7,6 +7,20 @@ import type { ImageItem, VisualSignature } from '@/engine/browser-core';
 import { EmbeddedImageOverlay } from './EmbeddedImageOverlay';
 import { SignatureOverlay } from './signatures/SignatureOverlay';
 import { Z_LAYERS } from '../zLayers';
+import { PDFDict, PDFRef, type PDFPageInfo } from '@/engine/types';
+
+vi.mock('@/engine/render/renderer', () => ({
+  renderImagePreviewLayers: async () => ({
+    background: document.createElement('canvas'),
+    image: document.createElement('canvas'),
+  }),
+}));
+
+const page: PDFPageInfo = {
+  index: 0, ref: new PDFRef(1, 0), dict: new PDFDict(), resources: new PDFDict(), contentRefs: [],
+  mediaBox: { x: 0, y: 0, width: 600, height: 800 },
+  cropBox: { x: 0, y: 0, width: 600, height: 800 }, rotate: 0,
+};
 const bounds = { x: 30, y: 50, width: 200, height: 100 };
 const scale = 2;
 const toCssAtScale = (scale: number) => (box: typeof bounds) => ({
@@ -56,6 +70,7 @@ function embeddedProps(zoom = scale) {
   };
   return {
     item, toCss: toCssAtScale(zoom), scale: zoom,
+    page, objects: new Map(),
     onCommitMove: vi.fn(async () => {}),
     onCommitResize: vi.fn(async () => {}),
     onReplace: vi.fn(), onDeselect: vi.fn(),
@@ -269,5 +284,58 @@ describe.each(overlayKinds)('$kind eight-handle resizing', ({ kind, setup }) => 
       expect(handle.style.transform).toBe('translateY(-50%)');
       expect(handle.style[direction === 'e' ? 'right' : 'left']).toBe('-5px');
     }
+  });
+});
+
+describe('embedded image preview lifecycle', () => {
+  it.each(['nw', 'ne', 'sw', 'se', 'n', 's', 'e', 'w'])('captures the %s gesture and isolates its release click', async handle => {
+    const props = embeddedProps();
+    const canvasClick = vi.fn();
+    // Match the canvas's React handler, not a native listener on React's delegation root.
+    const canvas = await mount(createElement('div', { onClick: canvasClick },
+      createElement(EmbeddedImageOverlay, props),
+    ));
+    const overlay = canvas.firstElementChild as HTMLElement;
+    const control = overlay.querySelector<HTMLElement>(`[data-handle="${handle}"]`)!;
+    await pointer(control, 'pointerdown', 400, 400);
+    expect(control.hasPointerCapture(1)).toBe(true);
+    await pointer(window, 'pointermove', 440, 420, true);
+    await pointer(control, 'pointerup', 440, 420, true);
+    await act(async () => control.click());
+    expect(props.onCommitResize).toHaveBeenCalledTimes(1);
+    expect(control.hasPointerCapture(1)).toBe(false);
+    expect(canvasClick).not.toHaveBeenCalled();
+    expect(overlay.querySelectorAll('[data-handle]')).toHaveLength(8);
+    await act(async () => canvas.click());
+    expect(canvasClick).toHaveBeenCalledTimes(1);
+  });
+
+  it('moves the frame with a numeric preview and restores it on cancel without committing', async () => {
+    const props = embeddedProps();
+    const overlay = await mount(createElement(EmbeddedImageOverlay, props));
+    await act(async () => root!.render(createElement(EmbeddedImageOverlay, {
+      ...props, previewBox: { x: 60, y: 80, width: 300, height: 150 },
+    })));
+    expect(overlay.style.left).toBe('120px');
+    expect(overlay.style.top).toBe('1140px');
+    expect(overlay.style.width).toBe('600px');
+    expect(overlay.style.height).toBe('300px');
+    expect(overlay.querySelectorAll('[data-handle]')).toHaveLength(8);
+    await act(async () => root!.render(createElement(EmbeddedImageOverlay, props)));
+    expect(overlay.style.left).toBe('60px');
+    expect(overlay.style.width).toBe('400px');
+    expect(props.onCommitResize).not.toHaveBeenCalled();
+    expect(props.onCommitMove).not.toHaveBeenCalled();
+  });
+
+  it('removes an active gesture on unmount without committing it later', async () => {
+    const props = embeddedProps();
+    const overlay = await mount(createElement(EmbeddedImageOverlay, props));
+    await pointer(overlay.querySelector('[data-handle="se"]')!, 'pointerdown', 400, 400);
+    await pointer(window, 'pointermove', 440, 420);
+    await act(async () => root!.unmount());
+    root = undefined;
+    await pointer(window, 'pointerup', 440, 420);
+    expect(props.onCommitResize).not.toHaveBeenCalled();
   });
 });

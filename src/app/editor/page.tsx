@@ -57,6 +57,7 @@ import { floatingTextPdfDelta, shouldStartFloatingTextDrag } from './components/
 import { initialFloatingTextSelection } from './components/floatingTextSelection';
 import { resizeBox } from './components/resizeGeometry';
 import { findImagePlacement, sameImagePlacement } from './components/imageSelection';
+import type { ImageBox } from './components/imageBoxEdit';
 
 export interface SearchMatch {
   id: string;
@@ -471,6 +472,10 @@ export default function EditorPage() {
   /** Thin stroke paths (underlines) excluded from selection but needed for edit overlay. */
   const [strokePaths, setStrokePaths] = useState<PathItem[]>([]);
   const [selectedDisplayItem, setSelectedDisplayItem] = useState<ImageItem | PathItem | null>(null);
+  const [imageBoxPreview, setImageBoxPreview] = useState<{ item: ImageItem; box: ImageBox } | null>(null);
+  const handleImageBoxPreview = useCallback((box: ImageBox | null) => {
+    setImageBoxPreview(box && selectedDisplayItem?.type === 'image' ? { item: selectedDisplayItem, box } : null);
+  }, [selectedDisplayItem]);
   const selectionPageRef = useRef(doc?.pages[currentPage]);
   selectionPageRef.current = doc?.pages[currentPage];
   const spatialIndexRef = useRef<QuadTree<SelectableItem> | null>(null);
@@ -5514,6 +5519,7 @@ export default function EditorPage() {
           onDeleteSelectedDisplayItem={handleDeleteSelectedDisplayItem}
           onReplaceSelectedImage={handleReplaceEmbeddedImage}
           onCommitSelectedImageBox={handleEmbeddedImageResize}
+          onPreviewSelectedImageBox={handleImageBoxPreview}
           selectedImagePageBox={doc?.pages[currentPage]?.mediaBox}
           onClearImageReplaceMode={() => { replacingEmbeddedImageRef.current = null; }}
           displayItems={displayItems}
@@ -5806,13 +5812,16 @@ export default function EditorPage() {
             )}
 
             {/* Interactive overlay for selected embedded PDF image */}
-            {selectedDisplayItem?.type === 'image' && renderResult && doc && (() => {
+            {activeTool === 'select' && selectedDisplayItem?.type === 'image' && renderResult && doc && (() => {
               const item = selectedDisplayItem as ImageItem;
               const page = doc.pages[currentPage];
               const { mediaBox } = page;
               return (
                 <EmbeddedImageOverlay
                   item={item}
+                  previewBox={activeTool === 'select' && imageBoxPreview?.item === item ? imageBoxPreview.box : null}
+                  page={page}
+                  objects={doc.objects}
                   scale={scale}
                   toCss={(b) => {
                     const tl = pdfToCanvas(

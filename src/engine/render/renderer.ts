@@ -61,6 +61,8 @@ export interface RenderOptions {
    * Pass `1` for export/compression so Retina screens don't inflate file size.
    */
   devicePixelRatio?: number;
+  /** Omit one selected placement when preparing a cached edit-preview background. */
+  omitImage?: ImageItem;
 }
 
 // ─── Render result ──────────────────────────────────────────────────────────
@@ -97,6 +99,38 @@ export async function renderPage(
 
   const page = doc.pages[pageIndex];
   return renderPageToCanvas(page, doc.objects, options);
+}
+
+function isOmittedImage(item: ImageItem, omitted?: ImageItem): boolean {
+  return !!omitted && item.name === omitted.name &&
+    item.sourceInstructionIndex === omitted.sourceInstructionIndex &&
+    item.x === omitted.x && item.y === omitted.y &&
+    item.width === omitted.width && item.height === omitted.height;
+}
+
+export interface ImagePreviewLayers {
+  background: HTMLCanvasElement;
+  image: HTMLCanvasElement;
+}
+
+/** Render once per selected geometry; subsequent previews only move/scale DOM layers. */
+export async function renderImagePreviewLayers(
+  page: PDFPageInfo,
+  objects: Map<string, PDFObject>,
+  item: ImageItem,
+  scale: number,
+): Promise<ImagePreviewLayers> {
+  const { canvas: background } = await renderPageToCanvas(page, objects, { scale, omitImage: item });
+  const image = document.createElement('canvas');
+  const density = scale * (window.devicePixelRatio || 1);
+  image.width = Math.max(1, Math.ceil(item.width * density));
+  image.height = Math.max(1, Math.ceil(item.height * density));
+  const ctx = image.getContext('2d')!;
+  ctx.scale(image.width / item.width, -image.height / item.height);
+  ctx.translate(-item.x, -item.y - item.height);
+  const masks = await buildSoftMaskMap([item], page, objects, { scale });
+  await drawImage(ctx, item, page, objects, masks);
+  return { background, image };
 }
 
 /**
@@ -186,7 +220,7 @@ export async function renderPageToCanvas(
         }
         break;
       case 'image':
-        if (renderImages) await drawImage(ctx, item, page, objects, softMaskMap);
+        if (renderImages && !isOmittedImage(item, options.omitImage)) await drawImage(ctx, item, page, objects, softMaskMap);
         break;
       case 'form':
         await drawFormItem(ctx, item, page, objects, options);

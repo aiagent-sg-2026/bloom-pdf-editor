@@ -1,10 +1,11 @@
 import { useEffect, useRef, useState } from 'react';
-import { editImageBox, MIN_IMAGE_SIZE_PT, type ImageBox, type ImageBoxField } from './imageBoxEdit';
+import { previewImageBoxEdit, MIN_IMAGE_SIZE_PT, type ImageBox, type ImageBoxDraft } from './imageBoxEdit';
 
 interface ImageBoxFieldsProps {
   box: ImageBox;
   page?: ImageBox;
   onCommit?: (box: ImageBox) => Promise<void> | void;
+  onPreview?: (box: ImageBox | null) => void;
 }
 
 const ROWS = [
@@ -12,33 +13,41 @@ const ROWS = [
   { title: 'Size', fields: [['width', 'W (pt)'], ['height', 'H (pt)']] },
 ] as const;
 
-export function ImageBoxFields({ box, page, onCommit }: ImageBoxFieldsProps) {
+export function ImageBoxFields({ box, page, onCommit, onPreview }: ImageBoxFieldsProps) {
   const [lockAspectRatio, setLockAspectRatio] = useState(true);
-  const [drafts, setDrafts] = useState<Partial<Record<ImageBoxField, string>>>({});
-  const draftsRef = useRef(drafts);
+  const [draft, setDraft] = useState<ImageBoxDraft>({ inputs: {}, box });
+  const draftRef = useRef(draft);
+  const blurTimerRef = useRef<number | undefined>(undefined);
   const pendingRef = useRef(false);
   const [pending, setPending] = useState(false);
   const [error, setError] = useState('');
 
   useEffect(() => {
-    draftsRef.current = {};
-    setDrafts({});
+    draftRef.current = { inputs: {}, box };
+    setDraft(draftRef.current);
     setError('');
-  }, [box]);
+    return () => {
+      window.clearTimeout(blurTimerRef.current);
+      onPreview?.(null);
+    };
+  }, [box, onPreview]);
 
-  function resetField(field: ImageBoxField) {
-    const next = { ...draftsRef.current };
-    delete next[field];
-    draftsRef.current = next;
-    setDrafts(next);
+  function reset() {
+    draftRef.current = { inputs: {}, box };
+    setDraft(draftRef.current);
+    onPreview?.(null);
   }
 
-  async function commitField(field: ImageBoxField) {
-    const input = draftsRef.current[field];
-    resetField(field);
-    if (input === undefined || pendingRef.current || !onCommit) return;
-    const next = editImageBox(box, field, input, lockAspectRatio, page);
-    if (!next || (next.x === box.x && next.y === box.y && next.width === box.width && next.height === box.height)) return;
+  async function commitField() {
+    if (pendingRef.current || !onCommit) return;
+    const next = draftRef.current.box;
+    if (!Object.keys(draftRef.current.inputs).length) return;
+    // Consume the edit before blur can submit it a second time.
+    draftRef.current = { inputs: {}, box: next };
+    if (next.x === box.x && next.y === box.y && next.width === box.width && next.height === box.height) {
+      reset();
+      return;
+    }
 
     pendingRef.current = true;
     setPending(true);
@@ -48,6 +57,7 @@ export function ImageBoxFields({ box, page, onCommit }: ImageBoxFieldsProps) {
     } catch (err) {
       console.error('[Editor] Image box edit failed:', err);
       setError('Could not update the image. Please try again.');
+      reset();
     } finally {
       pendingRef.current = false;
       setPending(false);
@@ -68,21 +78,26 @@ export function ImageBoxFields({ box, page, onCommit }: ImageBoxFieldsProps) {
                   type="number"
                   step="any"
                   min={field === 'width' || field === 'height' ? MIN_IMAGE_SIZE_PT : undefined}
-                  value={drafts[field] ?? String(Number(box[field].toFixed(2)))}
+                  value={draft.inputs[field] ?? String(Number(box[field].toFixed(2)))}
                   onChange={(event) => {
-                    const next = { ...draftsRef.current, [field]: event.target.value };
-                    draftsRef.current = next;
-                    setDrafts(next);
+                    const next = previewImageBoxEdit(box, draftRef.current, field, event.target.value, lockAspectRatio, page);
+                    draftRef.current = next;
+                    setDraft(next);
+                    onPreview?.(next.box);
                   }}
-                  onBlur={() => { void commitField(field); }}
+                  onBlur={() => {
+                    // A selection/tool change must unmount or reset before a blur commits.
+                    blurTimerRef.current = window.setTimeout(() => { void commitField(); }, 0);
+                  }}
                   onKeyDown={(event) => {
                     event.stopPropagation();
                     if (event.key === 'Enter') {
                       event.preventDefault();
+                      void commitField();
                       event.currentTarget.blur();
                     } else if (event.key === 'Escape') {
                       event.preventDefault();
-                      resetField(field);
+                      reset();
                       event.currentTarget.blur();
                     }
                   }}
