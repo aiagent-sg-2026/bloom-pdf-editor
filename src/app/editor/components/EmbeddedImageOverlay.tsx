@@ -3,11 +3,17 @@
 import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { Image as ImageIcon, Replace, X } from 'lucide-react';
 import type { ImageItem } from '@/engine/browser-core';
+import type { PDFObject, PDFPageInfo } from '@/engine/types';
+import { renderImagePreviewLayers, type ImagePreviewLayers } from '@/engine/render/renderer';
+import type { ImageBox } from './imageBoxEdit';
 import { Z_LAYERS } from '../zLayers';
 import { resizeBox, type ResizeHandle } from './resizeGeometry';
 
 interface EmbeddedImageOverlayProps {
   item: ImageItem;
+  previewBox?: ImageBox | null;
+  page: PDFPageInfo;
+  objects: Map<string, PDFObject>;
   /** Convert PDF → CSS for the live bbox */
   toCss: (pdf: { x: number; y: number; width: number; height: number }) => {
     left: number; top: number; width: number; height: number;
@@ -33,7 +39,7 @@ export const EMBEDDED_IMAGE_OVERLAY_LAYERS = {
  */
 export function EmbeddedImageOverlay(props: EmbeddedImageOverlayProps) {
   const {
-    item, toCss, scale,
+    item, toCss, scale, previewBox, page, objects,
     onCommitMove, onCommitResize, onReplace, onDeselect,
   } = props;
 
@@ -42,10 +48,24 @@ export function EmbeddedImageOverlay(props: EmbeddedImageOverlayProps) {
   });
   const liveRef = useRef(live);
   liveRef.current = live;
+  const [layers, setLayers] = useState<ImagePreviewLayers | null>(null);
+  const cleanupDragRef = useRef<() => void>(() => {});
+  const backgroundRef = useRef<HTMLDivElement>(null);
+  const imageRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
     setLive({ x: item.x, y: item.y, width: item.width, height: item.height });
-  }, [item.x, item.y, item.width, item.height, item.name]);
+    return () => cleanupDragRef.current();
+  }, [item]);
+
+  useEffect(() => {
+    let cancelled = false;
+    setLayers(null);
+    void renderImagePreviewLayers(page, objects, item, scale).then(result => {
+      if (!cancelled) setLayers(result);
+    }).catch(error => console.error('[EmbeddedImageOverlay] preview failed', error));
+    return () => { cancelled = true; };
+  }, [page, objects, item, scale]);
 
   const dragMode = useRef<'move' | `resize-${ResizeHandle}` | null>(null);
   const origin = useRef({
@@ -62,25 +82,44 @@ export function EmbeddedImageOverlay(props: EmbeddedImageOverlayProps) {
     const dy = -dyCss / scale; // screen down → PDF down (y decreases)
 
     if (mode === 'move') {
-      setLive({
+      const next = {
         x: origin.current.x + dx,
         y: origin.current.y + dy,
         width: origin.current.width,
         height: origin.current.height,
-      });
+      };
+      liveRef.current = next;
+      setLive(next);
     } else {
       const handle = mode.slice('resize-'.length) as ResizeHandle;
-      setLive(resizeBox(origin.current, handle, {
+      const next = resizeBox(origin.current, handle, {
         dx, dy, minWidth: 8, minHeight: 8, free: e.shiftKey,
-      }));
+      });
+      liveRef.current = next;
+      setLive(next);
     }
   }, [scale]);
 
+  const visibleBox = previewBox ?? live;
+  const previewing = visibleBox.x !== item.x || visibleBox.y !== item.y ||
+    visibleBox.width !== item.width || visibleBox.height !== item.height;
+  useEffect(() => {
+    if (!previewing || !layers) return;
+    const background = backgroundRef.current;
+    const image = imageRef.current;
+    background?.replaceChildren(layers.background);
+    image?.replaceChildren(layers.image);
+    layers.image.style.width = '100%';
+    layers.image.style.height = '100%';
+    return () => {
+      background?.replaceChildren();
+      image?.replaceChildren();
+    };
+  }, [layers, previewing]);
+
   const endDragStable = useCallback(async () => {
     const mode = dragMode.current;
-    dragMode.current = null;
-    window.removeEventListener('pointermove', onPointerMove);
-    window.removeEventListener('pointerup', endDragStable);
+    cleanupDragRef.current();
 
     if (!mode) return;
     const cur = liveRef.current;
@@ -112,6 +151,20 @@ export function EmbeddedImageOverlay(props: EmbeddedImageOverlayProps) {
     e.preventDefault();
     e.stopPropagation();
     dragMode.current = mode;
+    e.currentTarget.setPointerCapture(e.pointerId);
+    const target = e.currentTarget;
+    const pointerId = e.pointerId;
+    const cancel = () => {
+      cleanupDragRef.current();
+      setLive({ x: item.x, y: item.y, width: item.width, height: item.height });
+    };
+    cleanupDragRef.current = () => {
+      dragMode.current = null;
+      window.removeEventListener('pointermove', onPointerMove);
+      window.removeEventListener('pointerup', endDragStable);
+      window.removeEventListener('pointercancel', cancel);
+      if (target.hasPointerCapture(pointerId)) target.releasePointerCapture(pointerId);
+    };
     origin.current = {
       clientX: e.clientX,
       clientY: e.clientY,
@@ -122,11 +175,27 @@ export function EmbeddedImageOverlay(props: EmbeddedImageOverlayProps) {
     };
     window.addEventListener('pointermove', onPointerMove);
     window.addEventListener('pointerup', endDragStable);
-  }, [onPointerMove, endDragStable]);
+    window.addEventListener('pointercancel', cancel);
+  }, [onPointerMove, endDragStable, item]);
 
-  const box = toCss(live);
+  const box = toCss(visibleBox);
 
   return (
+    <>
+    {previewing && layers && (
+      <div
+        ref={backgroundRef}
+        className="absolute inset-0 pointer-events-none"
+        style={{ zIndex: EMBEDDED_IMAGE_OVERLAY_LAYERS.overlay }}
+      />
+    )}
+    {previewing && layers && (
+      <div
+        ref={imageRef}
+        className="absolute pointer-events-none"
+        style={{ zIndex: EMBEDDED_IMAGE_OVERLAY_LAYERS.overlay, left: box.left, top: box.top, width: box.width, height: box.height }}
+      />
+    )}
     <div
       className="absolute pointer-events-auto border-2 border-[#3b82f6] border-dashed bg-[#3b82f6]/10 cursor-move"
       style={{ zIndex: EMBEDDED_IMAGE_OVERLAY_LAYERS.overlay, left: box.left, top: box.top, width: box.width, height: box.height }}
@@ -185,5 +254,6 @@ export function EmbeddedImageOverlay(props: EmbeddedImageOverlayProps) {
         />
       ))}
     </div>
+    </>
   );
 }

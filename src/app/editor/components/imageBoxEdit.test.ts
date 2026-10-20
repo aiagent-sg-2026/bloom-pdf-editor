@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { editImageBox, type ImageBoxField } from './imageBoxEdit';
+import { editImageBox, previewImageBoxEdit, type ImageBoxDraft, type ImageBoxField } from './imageBoxEdit';
 
 const box = { x: 20, y: 30, width: 120, height: 80 };
 
@@ -80,5 +80,47 @@ describe('image box edits', () => {
       expect(editImageBox({ ...box, width }, 'height', '100', true)).toBeNull();
     }
     expect(editImageBox({ ...box, width: 0 }, 'width', '100', false)).toEqual({ ...box, width: 100 });
+  });
+});
+
+describe('image box live preview drafts', () => {
+  const initial = (): ImageBoxDraft => ({ inputs: {}, box });
+
+  it.each(['x', 'y', 'width', 'height'] as const)('retains the last valid %s through empty and invalid input', field => {
+    const valid = previewImageBoxEdit(box, initial(), field, '160', true);
+    for (const input of ['', '-', 'NaN', 'Infinity', '1e999']) {
+      const rejected = previewImageBoxEdit(box, valid, field, input, true);
+      expect(rejected.box).toEqual(valid.box);
+      expect(rejected.inputs[field]).toBe(input);
+    }
+  });
+
+  it('updates the coupled input without accumulating proportional rounding', () => {
+    let draft = previewImageBoxEdit(box, initial(), 'width', '121.234', true);
+    expect(draft.inputs).toEqual({ width: '121.234', height: '80.82' });
+    draft = previewImageBoxEdit(box, draft, 'width', '150', true);
+    expect(draft.box).toEqual({ ...box, width: 150, height: 100 });
+    expect(draft.inputs.height).toBe('100');
+    draft = previewImageBoxEdit(box, draft, 'height', '100.001', true);
+    expect(draft.box).toEqual({ ...box, width: 150, height: 100.001 });
+    expect(draft.inputs.width).toBe('150');
+  });
+
+  it('rejects undersized previews on either axis and resumes at the next valid edit', () => {
+    const valid = previewImageBoxEdit(box, initial(), 'width', '150', true);
+    const rejected = previewImageBoxEdit(box, valid, 'width', '8', true);
+    expect(rejected.box).toEqual(valid.box);
+    expect(rejected.inputs.height).toBe('100');
+    expect(previewImageBoxEdit(box, rejected, 'width', '180', true).box)
+      .toEqual({ ...box, width: 180, height: 120 });
+  });
+
+  it('previews unlocked sizes independently and clamps positions to the existing page bounds', () => {
+    expect(previewImageBoxEdit(box, initial(), 'height', '100', false).box)
+      .toEqual({ ...box, height: 100 });
+    const page = { x: 10, y: -20, width: 600, height: 800 };
+    const draft = previewImageBoxEdit(box, initial(), 'x', '10000', false, page);
+    expect(draft.box).toEqual({ ...box, x: 609 });
+    expect(draft.inputs.x).toBe('10000');
   });
 });

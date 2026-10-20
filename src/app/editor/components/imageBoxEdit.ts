@@ -47,3 +47,28 @@ export function editImageBox(
     || next.width < MIN_IMAGE_SIZE_PT || next.height < MIN_IMAGE_SIZE_PT) return null;
   return next;
 }
+
+export interface ImageBoxDraft {
+  inputs: Partial<Record<ImageBoxField, string>>;
+  box: ImageBox;
+}
+
+/** Preserve the last valid preview while allowing incomplete numeric input. */
+export function previewImageBoxEdit(
+  original: ImageBox,
+  previous: ImageBoxDraft,
+  field: ImageBoxField,
+  input: string,
+  lockAspectRatio: boolean,
+  page?: ImageBox,
+): ImageBoxDraft {
+  const inputs = { ...previous.inputs, [field]: input };
+  // Always use the original ratio, not the rounded proportional draft.
+  const next = editImageBox(original, field, input, lockAspectRatio, page);
+  if (!next) return { inputs, box: previous.box };
+  if (lockAspectRatio && (field === 'width' || field === 'height')) {
+    const other = field === 'width' ? 'height' : 'width';
+    inputs[other] = String(next[other]);
+  }
+  return { inputs, box: next };
+}

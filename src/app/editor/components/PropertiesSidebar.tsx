@@ -70,6 +70,7 @@ interface PropertiesSidebarProps {
   onDeleteSelectedDisplayItem?: () => void;
   onReplaceSelectedImage?: () => void;
   onCommitSelectedImageBox?: (box: ImageBox) => Promise<void> | void;
+  onPreviewSelectedImageBox?: (box: ImageBox | null) => void;
   selectedImagePageBox?: ImageBox;
   onClearImageReplaceMode?: () => void;
   displayItems: (ImageItem | PathItem)[];
@@ -184,7 +185,7 @@ export function PropertiesSidebar(props: PropertiesSidebarProps) {
     selectedLinkUrl = '', onSelectedLinkUrlChange, onSaveSelectedLink, onRemoveSelectedLink,
     hasSelectedLink = false, linkCreatePending = false,
     selectedDisplayItem, setSelectedDisplayItem, onDeleteSelectedDisplayItem, onReplaceSelectedImage, onClearImageReplaceMode, displayItems,
-    onCommitSelectedImageBox, selectedImagePageBox,
+    onCommitSelectedImageBox, onPreviewSelectedImageBox, selectedImagePageBox,
     formFields = [], selectedFormField, formFieldDraft = '',
     onFormFieldSelect, onFormFieldChange, onFlattenForms,
     onDuplicateLineBelow,
@@ -828,6 +829,7 @@ export function PropertiesSidebar(props: PropertiesSidebarProps) {
                 box={selectedDisplayItem}
                 page={selectedImagePageBox}
                 onCommit={onCommitSelectedImageBox}
+                onPreview={onPreviewSelectedImageBox}
               />
             ) : (
               <>
