@@ -7,6 +7,7 @@ import {
   PDFArray,
   PDFBoolean,
   PDFDict,
+  PDFHexString,
   PDFName,
   PDFNumber,
   PDFObject,
@@ -24,10 +25,11 @@ import type {
   AcroFormWidget,
 } from './types';
 import { parseWidgetRect } from './flatten-field';
+import { formText, inherited } from './text-appearance';
 
 function strVal(obj: PDFObject | undefined): string {
   if (obj instanceof PDFName) return obj.name;
-  if (obj instanceof PDFString) return obj.value;
+  if (obj instanceof PDFString || obj instanceof PDFHexString) return formText(obj);
   if (obj instanceof PDFNumber) return String(obj.value);
   return '';
 }
@@ -54,13 +56,14 @@ function buildWidget(
   fieldName: string,
   fieldType: AcroFormFieldType,
   pageRef: PDFRef | null,
-  objects: Map<string, PDFObject>,
+  doc: PDFDocumentData,
 ): AcroFormWidget {
-  const ff = intVal(dict.get('Ff'));
+  const objects = doc.objects;
+  const ff = intVal(inherited(doc, dict, 'Ff'));
   const rect = parseWidgetRect(dict);
-  const v = dict.get('V');
+  const v = fieldType === 'Sig' ? dict.get('V') : inherited(doc, dict, 'V');
   let value: string | boolean | string[] | null = null;
-  if (v instanceof PDFString || v instanceof PDFName) value = strVal(v);
+  if (v instanceof PDFString || v instanceof PDFHexString || v instanceof PDFName) value = strVal(v);
   else if (v instanceof PDFArray) value = v.items.map(i => strVal(i));
   else if (v instanceof PDFRef) {
     // Signature fields store /V → Sig dictionary ref
@@ -82,7 +85,7 @@ function buildWidget(
     fieldName,
     fieldType,
     value,
-    defaultAppearance: strVal(dict.get('DA')),
+    defaultAppearance: strVal(inherited(doc, dict, 'DA')),
     borderWidth: widgetBorderWidth(dict, objects),
     backgroundColor: bg,
     borderColor: [0, 0, 0],
@@ -121,15 +124,16 @@ function resolvePageRef(dict: PDFDict, objects: Map<string, PDFObject>): PDFRef 
 
 function walkField(
   fieldRef: PDFRef,
-  objects: Map<string, PDFObject>,
+  doc: PDFDocumentData,
   parentName: string,
 ): AcroFormField | null {
+  const objects = doc.objects;
   const obj = resolveRef(fieldRef, objects);
   if (!(obj instanceof PDFDict)) return null;
 
   const partial = strVal(obj.get('T'));
   const fullName = parentName ? `${parentName}.${partial}` : partial;
-  const ft = fieldTypeFromFT(obj.get('FT'));
+  const ft = fieldTypeFromFT(inherited(doc, obj, 'FT'));
   const subtype = obj.get('Subtype');
   const isWidget = subtype instanceof PDFName && subtype.name === 'Widget';
 
@@ -137,7 +141,7 @@ function walkField(
   const kids: AcroFormField[] = [];
 
   if (isWidget) {
-    widgets.push(buildWidget(obj, fieldRef, fullName || partial, ft, resolvePageRef(obj, objects), objects));
+    widgets.push(buildWidget(obj, fieldRef, fullName || partial, ft, resolvePageRef(obj, objects), doc));
   }
 
   const kidsEntry = obj.get('Kids');
@@ -151,13 +155,13 @@ function walkField(
 
       const kidSubtype = kidObj.get('Subtype');
       if (kidSubtype instanceof PDFName && kidSubtype.name === 'Widget') {
-        const kidFt = fieldTypeFromFT(kidObj.get('FT') ?? obj.get('FT'));
+        const kidFt = fieldTypeFromFT(inherited(doc, kidObj, 'FT'));
         widgets.push(buildWidget(
           kidObj, kidRef, fullName || partial, kidFt,
-          resolvePageRef(kidObj, objects), objects,
+          resolvePageRef(kidObj, objects), doc,
         ));
       } else {
-        const child = walkField(kidRef, objects, fullName);
+        const child = walkField(kidRef, doc, fullName);
         if (child) kids.push(child);
         widgets.push(...child?.widgets ?? []);
       }
@@ -166,7 +170,7 @@ function walkField(
 
   const v = obj.get('V');
   let value: string | boolean | string[] | null = null;
-  if (v instanceof PDFString || v instanceof PDFName) value = strVal(v);
+  if (v instanceof PDFString || v instanceof PDFHexString || v instanceof PDFName) value = strVal(v);
   else if (v instanceof PDFArray) value = v.items.map(i => strVal(i));
   else if (v instanceof PDFRef && ft === 'Sig') {
     value = `[Sig:${v.toKey()}]`;
@@ -204,7 +208,7 @@ export function parseAcroFormCatalog(doc: PDFDocumentData): AcroFormCatalog | nu
     for (let i = 0; i < fieldsArr.length; i++) {
       const ref = fieldsArr.get(i);
       if (ref instanceof PDFRef) {
-        const field = walkField(ref, doc.objects, '');
+        const field = walkField(ref, doc, '');
         if (field) fields.push(field);
       }
     }

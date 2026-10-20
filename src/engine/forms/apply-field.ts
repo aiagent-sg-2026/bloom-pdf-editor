@@ -15,6 +15,7 @@ import {
 } from '../types';
 import type { AcroFormWidget } from './types';
 import { flattenWidgets } from './flatten-field';
+import { setTextFieldValue } from './text-appearance';
 
 function stringToBytes(str: string): Uint8Array {
   const bytes = new Uint8Array(str.length);
@@ -22,7 +23,7 @@ function stringToBytes(str: string): Uint8Array {
   return bytes;
 }
 
-/** Set a widget's /V value in the object graph. */
+/** Set a field value and regenerate text/choice widgets on the same draft. */
 export function setFormFieldValue(
   doc: PDFDocumentData,
   widget: AcroFormWidget,
@@ -32,6 +33,9 @@ export function setFormFieldValue(
   if (typeof value === 'boolean') {
     dict.set('V', new PDFName(value ? 'Yes' : 'Off'));
     dict.set('AS', new PDFName(value ? 'Yes' : 'Off'));
+  } else if (widget.fieldType === 'Tx' || widget.fieldType === 'Ch') {
+    setTextFieldValue(doc, widget, value);
+    return;
   } else {
     dict.set('V', new PDFString(value));
   }
