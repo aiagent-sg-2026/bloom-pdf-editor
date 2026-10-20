@@ -288,6 +288,16 @@ Migrated native call paths in `src/app/editor/page.tsx`:
   export-panel opening, and overlay baking await them. Failures retain live
   bytes, history, and editable input. Successful commits refresh canvas and
   thumbnails; history restoration clears stale form/signature-field selections.
+  Text and choice value setters replace widget `/AP /N` on the same draft,
+  including sibling widgets sharing a terminal field. Appearances resolve
+  inherited `/DA`, `/Q`, `/Ff`, and `/MaxLen`, AcroForm `/DR` fonts, and widget
+  `/Rect` and `/MK` colors; layout supports auto-fit, multiline wrapping, and
+  comb cells. Missing font coverage falls back to indirect Helvetica with
+  WinAnsi encoding; unsupported appearance glyphs become `?`, while `/V`
+  retains Unicode as a PDF text string. An existing `/NeedAppearances true`
+  triggers regeneration of remaining supported widgets and is removed only
+  when all widgets regenerate; otherwise the original hint remains. Session
+  snapshots retain the previous appearance bytes for exact undo/redo.
 - **Page operations:** deletion, rotation, reordering, blank insertion, PDF import,
   and merge stage the existing native operations through the native-edit queue.
   Each successful mutation publishes one session toolbar entry; failures leave
@@ -398,6 +408,10 @@ surviving siblings and indirect field branches, and failed draft isolation.
 `src/engine/__tests__/session-signature-form-history.test.ts` interleaves those
 boundaries with legacy snapshots, checks repeated exact undo/redo bytes, and
 checks retained redo and toolbar position after failed edits or restores.
+`src/engine/__tests__/form-value-appearances.test.ts` adds synthetic exported-PDF
+regressions for stale appearance replacement, inherited fonts and layout,
+choice labels, string escaping, encoding fallback, appearance hints, and exact
+text/choice session undo/redo with preexisting appearance streams.
 
 
 ## Export

@@ -10,12 +10,12 @@ import {
   PDFNumber,
   PDFRef,
   PDFStream,
-  PDFString,
   type PDFDocumentData,
 } from '../types';
 import { resolveRef } from '../parser/parser';
 import { setFormFieldValue } from './apply-field';
 import type { AcroFormWidget } from './types';
+import { formText } from './text-appearance';
 import { getNextObjNum } from '../writer/serializer';
 
 function buildCheckAppearance(on: boolean, w: number, h: number): PDFStream {
@@ -70,7 +70,6 @@ export function setChoiceFieldValue(
   value: string,
 ): void {
   setFormFieldValue(doc, widget, value);
-  widget.dict.set('V', new PDFString(value));
 }
 
 /** Mark NeedAppearances so viewers regenerate widget appearances. */
@@ -125,8 +124,7 @@ export function runCalculationOrder(
     if (!(ref instanceof PDFRef)) continue;
     const dict = resolveRef(ref, doc.objects);
     if (!(dict instanceof PDFDict)) continue;
-    const t = dict.get('T');
-    const name = t instanceof PDFString ? t.value : '';
+    const name = formText(dict.get('T'));
     const target = byName.get(name);
     if (!target) continue;
 
