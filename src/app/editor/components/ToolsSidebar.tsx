@@ -153,6 +153,7 @@ export function ToolsSidebar({
           return (
             <div key={tool.id} className="relative group w-full overflow-visible">
               <button
+                aria-label={tool.label}
                 onClick={() => {
                   setActiveTool(tool.id);
                   // Auto re-open properties panel when choosing a tool if closed
