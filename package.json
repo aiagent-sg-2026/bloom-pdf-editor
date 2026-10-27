@@ -10,6 +10,9 @@
     "lint": "eslint",
     "test": "vitest run",
     "test:watch": "vitest",
+    "pretest:e2e": "node e2e/fixtures/make-fixtures.mjs",
+    "test:e2e": "playwright test",
+    "test:e2e:serve": "node e2e/serve.mjs",
     "verify:browser-only": "node scripts/verify-browser-only.mjs",
     "verify:browser-core": "node scripts/verify-browser-core.mjs"
   },
@@ -37,6 +40,7 @@
     "zustand": "^5.0.13"
   },
   "devDependencies": {
+    "@playwright/test": "^1.58.2",
     "@tailwindcss/postcss": "^4",
     "@types/node": "^20",
     "@types/react": "^19",
